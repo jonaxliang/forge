@@ -1,11 +1,13 @@
 import {
   createProject,
   getServerHealth,
+  importWorkflowFile,
   listProjects,
   type ArtifactStorageMode,
   type DbStrategy,
   type Project,
-  type ServerHealth
+  type ServerHealth,
+  type WorkflowFile
 } from "@forge/sdk";
 import { StatusBadge } from "@forge/ui";
 import { type FormEvent, useEffect, useState } from "react";
@@ -15,6 +17,26 @@ type ConnectionState =
   | { status: "checking"; message: string }
   | { status: "connected"; message: string; health: ServerHealth }
   | { status: "unavailable"; message: string };
+
+const defaultWorkflowSource = `name: Coding workflow
+scope: task
+nodes:
+  - id: analyze
+    type: requirement-analysis
+    executor: skill:requirements
+    outputs:
+      - analysis.md
+    exit:
+      maxRetries: 2
+  - id: implement
+    type: coding
+    after: analyze
+    executor: skill:code
+    outputs:
+      - diff.patch
+    exit:
+      maxRetries: 1
+`;
 
 export function App() {
   const [connection, setConnection] = useState<ConnectionState>({
@@ -28,6 +50,13 @@ export function App() {
   const [dbStrategy, setDbStrategy] = useState<DbStrategy>("sqlite");
   const [projectStatus, setProjectStatus] = useState(
     "No project created yet"
+  );
+  const [workflowSource, setWorkflowSource] = useState(defaultWorkflowSource);
+  const [workflowPreview, setWorkflowPreview] = useState<WorkflowFile | null>(
+    null
+  );
+  const [workflowImportStatus, setWorkflowImportStatus] = useState(
+    "No workflow imported yet"
   );
 
   useEffect(() => {
@@ -93,6 +122,23 @@ export function App() {
       setProjectStatus(`Created ${project.name}`);
     } catch {
       setProjectStatus("Project creation failed");
+    }
+  }
+
+  async function handleImportWorkflow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkflowImportStatus("Importing workflow file");
+
+    try {
+      const result = await importWorkflowFile(workflowSource);
+
+      setWorkflowPreview(result.workflow);
+      setWorkflowImportStatus(`Imported ${result.workflowFile.name}`);
+    } catch (error) {
+      setWorkflowPreview(null);
+      setWorkflowImportStatus(
+        error instanceof Error ? error.message : "Workflow import failed"
+      );
     }
   }
 
@@ -180,6 +226,58 @@ export function App() {
             ))
           )}
         </div>
+      </section>
+      <section className="workflow-panel" aria-labelledby="workflow-heading">
+        <div>
+          <p className="eyebrow">Workflow file</p>
+          <h2 id="workflow-heading">Import .wf and preview nodes</h2>
+          <p className="panel-copy">
+            Paste a workflow file to validate DAG dependencies, node exits and
+            retry limits before creating runnable templates.
+          </p>
+        </div>
+        <form className="workflow-form" onSubmit={handleImportWorkflow}>
+          <label>
+            .wf source
+            <textarea
+              onChange={(event) => setWorkflowSource(event.target.value)}
+              spellCheck={false}
+              value={workflowSource}
+            />
+          </label>
+          <button type="submit">Import workflow</button>
+        </form>
+        <p className="project-status" aria-live="polite">
+          {workflowImportStatus}
+        </p>
+        {workflowPreview ? (
+          <div className="workflow-preview" aria-label="Workflow node preview">
+            <div className="workflow-summary">
+              <h3>{workflowPreview.name}</h3>
+              <p>
+                Scope: {workflowPreview.scope} / Nodes:{" "}
+                {workflowPreview.nodes.length}
+              </p>
+            </div>
+            <div className="project-list">
+              {workflowPreview.nodes.map((node) => (
+                <article className="project-card" key={node.id}>
+                  <h3>{node.id}</h3>
+                  <p>
+                    {node.type} / executor: {node.executor} / max retries:{" "}
+                    {node.exit.maxRetries}
+                  </p>
+                  <p>
+                    Depends on:{" "}
+                    {node.dependsOn.length > 0
+                      ? node.dependsOn.join(", ")
+                      : "none"}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
     </main>
   );

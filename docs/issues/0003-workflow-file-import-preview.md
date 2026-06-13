@@ -10,14 +10,14 @@ AFK
 
 ## Acceptance criteria
 
-- [ ] `packages/core` 定义 `.wf` Zod schema。
-- [ ] 支持 `scope: requirement | task`。
-- [ ] 支持节点字段：`id`、`type`、`after` 或 `dependsOn`、`executor`、`outputs`、`exit.maxRetries`。
-- [ ] 校验 MVP 只允许 DAG，不允许循环。
-- [ ] Server 提供 `.wf` 导入 API，并保存 WorkflowFile metadata。
-- [ ] Web 提供 `.wf` 导入入口和节点预览。
-- [ ] 无效 `.wf` 能展示明确错误。
-- [ ] Vitest 覆盖 parser、DAG 校验和 API。
+- [x] `packages/core` 定义 `.wf` Zod schema。
+- [x] 支持 `scope: requirement | task`。
+- [x] 支持节点字段：`id`、`type`、`after` 或 `dependsOn`、`executor`、`outputs`、`exit.maxRetries`。
+- [x] 校验 MVP 只允许 DAG，不允许循环。
+- [x] Server 提供 `.wf` 导入 API，并保存 WorkflowFile metadata。
+- [x] Web 提供 `.wf` 导入入口和节点预览。
+- [x] 无效 `.wf` 能展示明确错误。
+- [x] Vitest 覆盖 parser、DAG 校验和 API。
 
 ## Blocked by
 

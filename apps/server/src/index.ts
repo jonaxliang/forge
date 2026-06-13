@@ -1,10 +1,14 @@
-import { createSqliteProjectRepository } from "@forge/db";
+import {
+  createSqliteProjectRepository,
+  createSqliteWorkflowFileRepository
+} from "@forge/db";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app";
 
 const port = Number(process.env.PORT ?? 3001);
 const app = createApp({
-  projectRepository: createSqliteProjectRepository()
+  projectRepository: createSqliteProjectRepository(),
+  workflowFileRepository: createSqliteWorkflowFileRepository()
 });
 
 serve({

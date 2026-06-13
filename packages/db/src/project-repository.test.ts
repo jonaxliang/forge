@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createInMemoryProjectRepository } from "./index";
+import {
+  createInMemoryProjectRepository,
+  createInMemoryWorkflowFileRepository
+} from "./index";
 
 describe("ProjectRepository", () => {
   it("persists projects with artifact storage mode and database strategy", async () => {
@@ -29,5 +32,28 @@ describe("ProjectRepository", () => {
 
     expect(project.artifactStorageMode).toBe("local-only");
     expect(project.dbStrategy).toBe("sqlite");
+  });
+});
+
+describe("WorkflowFileRepository", () => {
+  it("persists workflow file metadata", async () => {
+    const repository = createInMemoryWorkflowFileRepository();
+
+    const workflowFile = await repository.createWorkflowFileMetadata({
+      name: "Coding workflow",
+      nodeCount: 2,
+      scope: "task"
+    });
+
+    expect(workflowFile).toMatchObject({
+      name: "Coding workflow",
+      nodeCount: 2,
+      scope: "task"
+    });
+    expect(workflowFile.id).toMatch(/^wff_/);
+
+    await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([
+      workflowFile
+    ]);
   });
 });

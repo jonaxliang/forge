@@ -4,13 +4,15 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { asc } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const artifactStorageModes = ["local-only", "cloud"] as const;
 export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
+export const workflowScopes = ["requirement", "task"] as const;
 
 export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
 export type DbStrategy = (typeof dbStrategies)[number];
+export type WorkflowScope = (typeof workflowScopes)[number];
 
 export type DatabaseStatus = {
   configured: boolean;
@@ -37,6 +39,27 @@ export type ProjectRepository = {
   listProjects(): Promise<Project[]>;
 };
 
+export type WorkflowFileMetadata = {
+  id: string;
+  name: string;
+  scope: WorkflowScope;
+  nodeCount: number;
+  createdAt: string;
+};
+
+export type CreateWorkflowFileMetadataInput = {
+  name: string;
+  scope: WorkflowScope;
+  nodeCount: number;
+};
+
+export type WorkflowFileRepository = {
+  createWorkflowFileMetadata(
+    input: CreateWorkflowFileMetadataInput
+  ): Promise<WorkflowFileMetadata>;
+  listWorkflowFileMetadata(): Promise<WorkflowFileMetadata[]>;
+};
+
 const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -47,6 +70,16 @@ const projects = sqliteTable("projects", {
 });
 
 type ProjectRow = typeof projects.$inferSelect;
+
+const workflowFiles = sqliteTable("workflow_files", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  scope: text("scope").notNull(),
+  nodeCount: integer("node_count").notNull(),
+  createdAt: text("created_at").notNull()
+});
+
+type WorkflowFileRow = typeof workflowFiles.$inferSelect;
 
 export function createDatabaseStatus(): DatabaseStatus {
   return {
@@ -59,11 +92,22 @@ export function createInMemoryProjectRepository(): ProjectRepository {
   return createProjectRepository(new Database(":memory:"));
 }
 
+export function createInMemoryWorkflowFileRepository(): WorkflowFileRepository {
+  return createWorkflowFileRepository(new Database(":memory:"));
+}
+
 export function createSqliteProjectRepository(
   filename = ".forge/forge.sqlite"
 ): ProjectRepository {
   mkdirSync(dirname(filename), { recursive: true });
   return createProjectRepository(new Database(filename));
+}
+
+export function createSqliteWorkflowFileRepository(
+  filename = ".forge/forge.sqlite"
+): WorkflowFileRepository {
+  mkdirSync(dirname(filename), { recursive: true });
+  return createWorkflowFileRepository(new Database(filename));
 }
 
 function createProjectRepository(sqlite: Database.Database): ProjectRepository {
@@ -106,6 +150,50 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       updated_at TEXT NOT NULL
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workflow_files (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      node_count INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+}
+
+function createWorkflowFileRepository(
+  sqlite: Database.Database
+): WorkflowFileRepository {
+  const db = drizzle(sqlite);
+  initializeSqliteSchema(db);
+
+  return {
+    async createWorkflowFileMetadata(input) {
+      const workflowFile: WorkflowFileMetadata = {
+        id: `wff_${randomUUID()}`,
+        name: input.name.trim(),
+        scope: input.scope,
+        nodeCount: input.nodeCount,
+        createdAt: new Date().toISOString()
+      };
+
+      await db
+        .insert(workflowFiles)
+        .values(workflowFile)
+        .run();
+
+      return workflowFile;
+    },
+
+    async listWorkflowFileMetadata() {
+      const rows = await db
+        .select()
+        .from(workflowFiles)
+        .orderBy(asc(workflowFiles.createdAt));
+
+      return rows.map(toWorkflowFileMetadata);
+    }
+  };
 }
 
 function toProject(row: ProjectRow): Project {
@@ -116,5 +204,15 @@ function toProject(row: ProjectRow): Project {
     dbStrategy: row.dbStrategy as DbStrategy,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
+  };
+}
+
+function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
+  return {
+    id: row.id,
+    name: row.name,
+    scope: row.scope as WorkflowScope,
+    nodeCount: row.nodeCount,
+    createdAt: row.createdAt
   };
 }
