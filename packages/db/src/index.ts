@@ -164,6 +164,7 @@ export type Task = {
 
 export type TaskRepository = {
   createTaskFromDraft(draft: TaskDraft): Promise<Task>;
+  getTask(id: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
 };
 
@@ -722,6 +723,16 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
       await db.insert(tasks).values(task).run();
 
       return task;
+    },
+
+    async getTask(id) {
+      const row = await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.id, id))
+        .get();
+
+      return row ? toTask(row) : null;
     },
 
     async listTasks() {

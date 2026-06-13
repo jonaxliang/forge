@@ -233,6 +233,8 @@ describe("TaskDraftRepository", () => {
       title: "Second draft"
     });
     expect(task.id).toMatch(/^tsk_/);
+    await expect(tasks.getTask(task.id)).resolves.toEqual(task);
+    await expect(tasks.getTask("tsk_missing")).resolves.toBeNull();
 
     await taskDrafts.deleteTaskDraft(second.id);
     await expect(taskDrafts.getTaskDraft(second.id)).resolves.toBeNull();

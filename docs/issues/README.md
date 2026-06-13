@@ -27,6 +27,7 @@
 14. [0014 MCP Connector 接入 Codex 风格 agent](./0014-mcp-connector-codex.md)
 15. [0015 内置三类 `.wf` 工作流文件](./0015-builtin-workflows.md)
 16. [0016 Forge 自举 dogfood 准入](./0016-self-hosting-readiness.md)
+17. [0017 禁止孤儿 Task Workflow Run](./0017-prevent-orphan-workflow-runs.md)
 
 ## 建议执行顺序
 
@@ -41,6 +42,7 @@
               -> 0008
             -> 0009
               -> 0010
+            -> 0017
   -> 0011
     -> 0012
       -> 0013
