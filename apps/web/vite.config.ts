@@ -8,6 +8,8 @@ export default defineConfig({
     proxy: {
       "/health": "http://localhost:3001",
       "/projects": "http://localhost:3001",
+      "/requirements": "http://localhost:3001",
+      "/task-drafts": "http://localhost:3001",
       "/workflow-files": "http://localhost:3001"
     }
   }

@@ -168,3 +168,116 @@ nodes:
     });
   });
 });
+
+describe("Requirement API", () => {
+  it("creates a requirement with a requirement workflow and generates task drafts", async () => {
+    const app = createApp();
+
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "Build the minimum Requirement to Task Draft flow.",
+        title: "Generate draft tasks",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      requirement: {
+        body: "Build the minimum Requirement to Task Draft flow.",
+        status: "completed",
+        title: "Generate draft tasks",
+        workflowFileId: workflowBody.workflowFile.id
+      },
+      taskDrafts: [
+        {
+          sortOrder: 0,
+          title: "Draft: Generate draft tasks"
+        }
+      ]
+    });
+
+    const taskDraftsResponse = await app.request("/task-drafts");
+
+    expect(taskDraftsResponse.status).toBe(200);
+    await expect(taskDraftsResponse.json()).resolves.toMatchObject({
+      taskDrafts: [
+        {
+          title: "Draft: Generate draft tasks"
+        }
+      ]
+    });
+  });
+
+  it("marks the requirement failed when the selected workflow is not requirement-scoped", async () => {
+    const app = createApp();
+
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task workflow
+scope: task
+nodes:
+  - id: implement
+    type: coding
+    executor: skill:code
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "This should fail.",
+        title: "Wrong workflow",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      requirement: {
+        status: "failed"
+      },
+      error: expect.stringMatching(/requirement-scoped/i)
+    });
+  });
+});
