@@ -1,6 +1,7 @@
 node_modules
 dist
 .turbo
+.forge
 .DS_Store
 *.log
 coverage

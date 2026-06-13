@@ -10,14 +10,14 @@ AFK
 
 ## Acceptance criteria
 
-- [ ] `packages/db` 定义 Project schema，兼容 SQLite/Postgres/MySQL 设计约束。
-- [ ] 本地默认使用 SQLite。
-- [ ] Server 提供创建 Project 和查询 Project 列表 API。
-- [ ] Web 提供 Project 创建表单。
-- [ ] 表单允许选择 `local-only` 或 `cloud` Artifact Storage Mode。
-- [ ] 初始化配置中预留 `sqlite`、`postgres`、`mysql` DB strategy 字段。
-- [ ] 创建成功后 Project 出现在 Project 列表。
-- [ ] Vitest 覆盖 Project API 与 DB 持久化。
+- [x] `packages/db` 定义 Project schema，兼容 SQLite/Postgres/MySQL 设计约束。
+- [x] 本地默认使用 SQLite。
+- [x] Server 提供创建 Project 和查询 Project 列表 API。
+- [x] Web 提供 Project 创建表单。
+- [x] 表单允许选择 `local-only` 或 `cloud` Artifact Storage Mode。
+- [x] 初始化配置中预留 `sqlite`、`postgres`、`mysql` DB strategy 字段。
+- [x] 创建成功后 Project 出现在 Project 列表。
+- [x] Vitest 覆盖 Project API 与 DB 持久化。
 
 ## Blocked by
 
