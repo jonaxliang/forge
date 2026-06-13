@@ -1,3 +1,3 @@
-# General AI Work Orchestration
+# 通用 AI 工作编排
 
-Forge will be designed as a general AI work orchestration platform rather than an AI coding-only platform. Coding workflows are supported as first-class templates, but the core model centers on requirements, tasks, workflow runs, agent bindings, and artifacts so the same platform can orchestrate document writing, research, creative work, software delivery, and other knowledge work.
+Forge 将被设计为通用 AI 工作编排平台，而不是只服务于 AI coding 的平台。Coding workflow 是一等模板，但核心模型围绕 Requirement、Task、Workflow Run、Agent Binding 和 Artifact 展开，因此同一套平台可以编排文档写作、研究、创意工作、软件交付和其他知识工作。
