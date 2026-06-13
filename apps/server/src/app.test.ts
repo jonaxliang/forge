@@ -401,3 +401,187 @@ nodes:
     expect(deleteResponse.status).toBe(204);
   });
 });
+
+describe("Workflow Run API", () => {
+  async function createTask(app: ReturnType<typeof createApp>) {
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "Turn this into a task.",
+        title: "Run this task",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      taskDrafts: [{ id: string }];
+    };
+    const approveResponse = await app.request(
+      `/task-drafts/${requirementBody.taskDrafts[0].id}/approve`,
+      {
+        method: "POST"
+      }
+    );
+
+    return (await approveResponse.json()) as {
+      task: { id: string };
+    };
+  }
+
+  it("starts a task workflow run and advances node runs in DAG order", async () => {
+    const app = createApp();
+    const createdTask = await createTask(app);
+    const taskWorkflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+nodes:
+  - id: plan
+    type: planning
+    executor: skill:plan
+    exit:
+      maxRetries: 1
+  - id: code
+    type: coding
+    after: plan
+    executor: skill:code
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      nodeRuns: [
+        {
+          nodeId: "plan",
+          status: "succeeded"
+        },
+        {
+          dependsOn: ["plan"],
+          nodeId: "code",
+          status: "succeeded"
+        }
+      ],
+      workflowRun: {
+        status: "succeeded",
+        taskId: createdTask.task.id,
+        workflowFileId: taskWorkflowBody.workflowFile.id
+      }
+    });
+
+    const runsResponse = await app.request(
+      `/tasks/${createdTask.task.id}/workflow-runs`
+    );
+
+    expect(runsResponse.status).toBe(200);
+    await expect(runsResponse.json()).resolves.toMatchObject({
+      workflowRuns: [
+        {
+          workflowRun: {
+            status: "succeeded"
+          },
+          nodeRuns: [
+            {
+              nodeId: "plan",
+              status: "succeeded"
+            },
+            {
+              nodeId: "code",
+              status: "succeeded"
+            }
+          ]
+        }
+      ]
+    });
+  });
+
+  it("rejects non task-scoped workflow files", async () => {
+    const app = createApp();
+    const createdTask = await createTask(app);
+    const requirementWorkflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement workflow
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementWorkflowBody = (await requirementWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: requirementWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/task-scoped/i)
+    });
+  });
+});

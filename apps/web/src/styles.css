@@ -196,6 +196,35 @@ button:disabled {
   background: #fbfcf8;
 }
 
+.task-run-controls,
+.node-run-list,
+.node-run-group {
+  display: grid;
+  gap: 8px;
+}
+
+.task-run-controls {
+  margin-top: 12px;
+}
+
+.node-run-list {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #dde3d8;
+}
+
+.node-run-group {
+  padding: 10px;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.node-run-group p,
+.node-run-list p {
+  margin: 0;
+  color: #526068;
+}
+
 .project-card {
   padding: 14px;
   border: 1px solid #dde3d8;

@@ -4,6 +4,7 @@ import {
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
   createInMemoryTaskDraftRepository,
+  createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository
 } from "./index";
 
@@ -43,6 +44,11 @@ describe("WorkflowFileRepository", () => {
     const repository = createInMemoryWorkflowFileRepository();
 
     const workflowFile = await repository.createWorkflowFileMetadata({
+      definition: JSON.stringify({
+        name: "Coding workflow",
+        nodes: [],
+        scope: "task"
+      }),
       name: "Coding workflow",
       nodeCount: 2,
       scope: "task"
@@ -57,6 +63,66 @@ describe("WorkflowFileRepository", () => {
 
     await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([
       workflowFile
+    ]);
+  });
+});
+
+describe("WorkflowRunRepository", () => {
+  it("persists workflow runs and node runs in DAG order", async () => {
+    const repository = createInMemoryWorkflowRunRepository();
+
+    const workflowRun = await repository.createWorkflowRun({
+      taskId: "tsk_task",
+      workflowFileId: "wff_task"
+    });
+    const firstNode = await repository.createNodeRun({
+      dependsOn: [],
+      nodeId: "plan",
+      sortOrder: 0,
+      status: "queued",
+      workflowRunId: workflowRun.id
+    });
+    const secondNode = await repository.createNodeRun({
+      dependsOn: ["plan"],
+      nodeId: "code",
+      sortOrder: 1,
+      status: "queued",
+      workflowRunId: workflowRun.id
+    });
+
+    await repository.updateNodeRunStatus({
+      id: firstNode.id,
+      status: "succeeded"
+    });
+    await repository.updateNodeRunStatus({
+      id: secondNode.id,
+      status: "succeeded"
+    });
+    const completedRun = await repository.updateWorkflowRunStatus({
+      id: workflowRun.id,
+      status: "succeeded"
+    });
+
+    expect(completedRun).toMatchObject({
+      id: workflowRun.id,
+      status: "succeeded"
+    });
+    await expect(repository.listWorkflowRuns()).resolves.toMatchObject([
+      {
+        id: workflowRun.id,
+        taskId: "tsk_task",
+        workflowFileId: "wff_task"
+      }
+    ]);
+    await expect(repository.listNodeRuns(workflowRun.id)).resolves.toMatchObject([
+      {
+        nodeId: "plan",
+        status: "succeeded"
+      },
+      {
+        nodeId: "code",
+        status: "succeeded"
+      }
     ]);
   });
 });

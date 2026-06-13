@@ -10,13 +10,13 @@ AFK
 
 ## Acceptance criteria
 
-- [ ] `packages/core` 定义 Node Status：`idle`、`queued`、`running`、`waiting`、`blocked`、`reviewing`、`failed`、`succeeded`、`skipped`。
-- [ ] `packages/core` 提供 DAG planning 和 next-node 纯逻辑。
-- [ ] DB 支持 WorkflowRun 和 NodeRun。
-- [ ] Server 提供启动 Workflow Run API。
-- [ ] 使用 mock executor 推进一个 task-scope workflow。
-- [ ] Task Detail 展示当前 Workflow Run 和 Node Run 列表。
-- [ ] 测试覆盖状态转换和 DAG 执行顺序。
+- [x] `packages/core` 定义 Node Status：`idle`、`queued`、`running`、`waiting`、`blocked`、`reviewing`、`failed`、`succeeded`、`skipped`。
+- [x] `packages/core` 提供 DAG planning 和 next-node 纯逻辑。
+- [x] DB 支持 WorkflowRun 和 NodeRun。
+- [x] Server 提供启动 Workflow Run API。
+- [x] 使用 mock executor 推进一个 task-scope workflow。
+- [x] Task Detail 展示当前 Workflow Run 和 Node Run 列表。
+- [x] 测试覆盖状态转换和 DAG 执行顺序。
 
 ## Blocked by
 
