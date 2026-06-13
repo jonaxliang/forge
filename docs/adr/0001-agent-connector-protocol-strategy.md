@@ -1,3 +1,3 @@
-# Agent Connector Protocol Strategy
+# Agent Connector 协议策略
 
-Forge will use Agent Connector as its stable abstraction for binding local and remote agents. The first supported connector path is MCP because Codex and other agent runtimes can expose local capabilities through MCP servers; CLI connectors provide a low-friction fallback for agents without protocol support, while A2A remains the forward-looking path for richer agent-to-agent discovery and delegation.
+Forge 使用 Agent Connector 作为绑定本地和远端 agent 的稳定抽象。首个支持路径是 MCP，因为 Codex 和其他 agent runtime 可以通过 MCP server 暴露本地能力；CLI connector 为不支持协议的 agent 提供低门槛兜底；A2A 则作为未来更丰富的 agent 发现和委派方向。
