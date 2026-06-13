@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
+  createInMemoryTaskRepository,
   createInMemoryTaskDraftRepository,
   createInMemoryWorkflowFileRepository
 } from "./index";
@@ -116,5 +117,59 @@ describe("TaskDraftRepository", () => {
     expect(taskDraft.id).toMatch(/^tdf_/);
 
     await expect(repository.listTaskDrafts()).resolves.toEqual([taskDraft]);
+  });
+
+  it("updates, reorders, deletes and approves task drafts", async () => {
+    const taskDrafts = createInMemoryTaskDraftRepository();
+    const tasks = createInMemoryTaskRepository();
+    const first = await taskDrafts.createTaskDraft({
+      body: "First draft body",
+      requirementId: "req_requirement",
+      sortOrder: 0,
+      title: "First draft"
+    });
+    const second = await taskDrafts.createTaskDraft({
+      body: "Second draft body",
+      requirementId: "req_requirement",
+      sortOrder: 1,
+      title: "Second draft"
+    });
+
+    await expect(
+      taskDrafts.updateTaskDraft({
+        body: "Updated draft body",
+        id: first.id,
+        title: "Updated draft"
+      })
+    ).resolves.toMatchObject({
+      body: "Updated draft body",
+      title: "Updated draft"
+    });
+
+    await taskDrafts.reorderTaskDrafts([
+      { id: second.id, sortOrder: 0 },
+      { id: first.id, sortOrder: 1 }
+    ]);
+    await expect(taskDrafts.listTaskDrafts()).resolves.toMatchObject([
+      { id: second.id, sortOrder: 0 },
+      { id: first.id, sortOrder: 1 }
+    ]);
+
+    const approvedDraft = await taskDrafts.getTaskDraft(second.id);
+
+    expect(approvedDraft).not.toBeNull();
+
+    const task = await tasks.createTaskFromDraft(approvedDraft!);
+
+    expect(task).toMatchObject({
+      requirementId: "req_requirement",
+      status: "todo",
+      title: "Second draft"
+    });
+    expect(task.id).toMatch(/^tsk_/);
+
+    await taskDrafts.deleteTaskDraft(second.id);
+    await expect(taskDrafts.getTaskDraft(second.id)).resolves.toBeNull();
+    await expect(tasks.listTasks()).resolves.toEqual([task]);
   });
 });

@@ -3,6 +3,7 @@ import {
   artifactStorageModes,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
+  createInMemoryTaskRepository,
   createInMemoryTaskDraftRepository,
   createInMemoryWorkflowFileRepository,
   dbStrategies,
@@ -11,6 +12,7 @@ import {
   type RequirementRepository,
   type TaskDraft,
   type TaskDraftRepository,
+  type TaskRepository,
   type WorkflowFileRepository
 } from "@forge/db";
 import { Hono } from "hono";
@@ -32,10 +34,25 @@ const createRequirementSchema = z.object({
   workflowFileId: z.string().trim().min(1)
 });
 
+const updateTaskDraftSchema = z.object({
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1)
+});
+
+const reorderTaskDraftsSchema = z.object({
+  order: z.array(
+    z.object({
+      id: z.string().trim().min(1),
+      sortOrder: z.number().int().min(0)
+    })
+  )
+});
+
 type AppDependencies = {
   projectRepository?: ProjectRepository;
   requirementRepository?: RequirementRepository;
   taskDraftRepository?: TaskDraftRepository;
+  taskRepository?: TaskRepository;
   workflowFileRepository?: WorkflowFileRepository;
 };
 
@@ -43,6 +60,7 @@ export function createApp({
   projectRepository,
   requirementRepository,
   taskDraftRepository,
+  taskRepository,
   workflowFileRepository
 }: AppDependencies = {}) {
   const app = new Hono();
@@ -50,6 +68,7 @@ export function createApp({
   const requirements =
     requirementRepository ?? createInMemoryRequirementRepository();
   const taskDrafts = taskDraftRepository ?? createInMemoryTaskDraftRepository();
+  const tasks = taskRepository ?? createInMemoryTaskRepository();
   const workflowFiles =
     workflowFileRepository ?? createInMemoryWorkflowFileRepository();
 
@@ -163,6 +182,64 @@ export function createApp({
 
   app.get("/task-drafts", async (c) => {
     return c.json({ taskDrafts: await taskDrafts.listTaskDrafts() });
+  });
+
+  app.patch("/task-drafts/:id", async (c) => {
+    const payload = updateTaskDraftSchema.safeParse(
+      await c.req.json().catch(() => null)
+    );
+
+    if (!payload.success) {
+      return c.json({ error: "Invalid task draft payload" }, 400);
+    }
+
+    try {
+      return c.json(
+        await taskDrafts.updateTaskDraft({
+          id: c.req.param("id"),
+          ...payload.data
+        })
+      );
+    } catch (error) {
+      return c.json({ error: getErrorMessage(error) }, 404);
+    }
+  });
+
+  app.delete("/task-drafts/:id", async (c) => {
+    await taskDrafts.deleteTaskDraft(c.req.param("id"));
+
+    return c.body(null, 204);
+  });
+
+  app.post("/task-drafts/reorder", async (c) => {
+    const payload = reorderTaskDraftsSchema.safeParse(
+      await c.req.json().catch(() => null)
+    );
+
+    if (!payload.success) {
+      return c.json({ error: "Invalid task draft order payload" }, 400);
+    }
+
+    return c.json({
+      taskDrafts: await taskDrafts.reorderTaskDrafts(payload.data.order)
+    });
+  });
+
+  app.post("/task-drafts/:id/approve", async (c) => {
+    const taskDraft = await taskDrafts.getTaskDraft(c.req.param("id"));
+
+    if (!taskDraft) {
+      return c.json({ error: "Task draft not found" }, 404);
+    }
+
+    const task = await tasks.createTaskFromDraft(taskDraft);
+    await taskDrafts.deleteTaskDraft(taskDraft.id);
+
+    return c.json({ task }, 201);
+  });
+
+  app.get("/tasks", async (c) => {
+    return c.json({ tasks: await tasks.listTasks() });
   });
 
   return app;

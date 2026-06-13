@@ -1,6 +1,7 @@
 import {
   createSqliteProjectRepository,
   createSqliteRequirementRepository,
+  createSqliteTaskRepository,
   createSqliteTaskDraftRepository,
   createSqliteWorkflowFileRepository
 } from "@forge/db";
@@ -12,6 +13,7 @@ const app = createApp({
   projectRepository: createSqliteProjectRepository(),
   requirementRepository: createSqliteRequirementRepository(),
   taskDraftRepository: createSqliteTaskDraftRepository(),
+  taskRepository: createSqliteTaskRepository(),
   workflowFileRepository: createSqliteWorkflowFileRepository()
 });
 
