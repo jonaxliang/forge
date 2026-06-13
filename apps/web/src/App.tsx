@@ -1,12 +1,19 @@
 import {
   createProject,
+  createRequirement,
   getServerHealth,
   importWorkflowFile,
+  listRequirements,
   listProjects,
+  listTaskDrafts,
+  listWorkflowFiles,
   type ArtifactStorageMode,
   type DbStrategy,
   type Project,
+  type Requirement,
   type ServerHealth,
+  type TaskDraft,
+  type WorkflowFileMetadata,
   type WorkflowFile
 } from "@forge/sdk";
 import { StatusBadge } from "@forge/ui";
@@ -18,8 +25,8 @@ type ConnectionState =
   | { status: "connected"; message: string; health: ServerHealth }
   | { status: "unavailable"; message: string };
 
-const defaultWorkflowSource = `name: Coding workflow
-scope: task
+const defaultWorkflowSource = `name: Requirement split
+scope: requirement
 nodes:
   - id: analyze
     type: requirement-analysis
@@ -29,7 +36,7 @@ nodes:
     exit:
       maxRetries: 2
   - id: implement
-    type: coding
+    type: task-drafting
     after: analyze
     executor: skill:code
     outputs:
@@ -55,8 +62,18 @@ export function App() {
   const [workflowPreview, setWorkflowPreview] = useState<WorkflowFile | null>(
     null
   );
+  const [workflowFiles, setWorkflowFiles] = useState<WorkflowFileMetadata[]>([]);
   const [workflowImportStatus, setWorkflowImportStatus] = useState(
     "No workflow imported yet"
+  );
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [taskDrafts, setTaskDrafts] = useState<TaskDraft[]>([]);
+  const [requirementTitle, setRequirementTitle] = useState("");
+  const [requirementBody, setRequirementBody] = useState("");
+  const [selectedRequirementWorkflowId, setSelectedRequirementWorkflowId] =
+    useState("");
+  const [requirementStatus, setRequirementStatus] = useState(
+    "No requirement created yet"
   );
 
   useEffect(() => {
@@ -78,6 +95,36 @@ export function App() {
             status: "unavailable",
             message: "Server unavailable"
           });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      listWorkflowFiles(),
+      listRequirements(),
+      listTaskDrafts()
+    ])
+      .then(([nextWorkflowFiles, nextRequirements, nextTaskDrafts]) => {
+        if (!cancelled) {
+          setWorkflowFiles(nextWorkflowFiles);
+          setRequirements(nextRequirements);
+          setTaskDrafts(nextTaskDrafts);
+          setSelectedRequirementWorkflowId(
+            nextWorkflowFiles.find((workflowFile) => workflowFile.scope === "requirement")
+              ?.id ?? ""
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRequirementStatus("Requirement resources unavailable");
         }
       });
 
@@ -133,6 +180,13 @@ export function App() {
       const result = await importWorkflowFile(workflowSource);
 
       setWorkflowPreview(result.workflow);
+      setWorkflowFiles((currentWorkflowFiles) => [
+        ...currentWorkflowFiles,
+        result.workflowFile
+      ]);
+      if (result.workflowFile.scope === "requirement") {
+        setSelectedRequirementWorkflowId(result.workflowFile.id);
+      }
       setWorkflowImportStatus(`Imported ${result.workflowFile.name}`);
     } catch (error) {
       setWorkflowPreview(null);
@@ -141,6 +195,39 @@ export function App() {
       );
     }
   }
+
+  async function handleCreateRequirement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRequirementStatus("Running requirement workflow");
+
+    try {
+      const result = await createRequirement({
+        body: requirementBody,
+        title: requirementTitle,
+        workflowFileId: selectedRequirementWorkflowId
+      });
+
+      setRequirements((currentRequirements) => [
+        ...currentRequirements,
+        result.requirement
+      ]);
+      setTaskDrafts((currentTaskDrafts) => [
+        ...currentTaskDrafts,
+        ...result.taskDrafts
+      ]);
+      setRequirementTitle("");
+      setRequirementBody("");
+      setRequirementStatus(`Generated ${result.taskDrafts.length} task draft`);
+    } catch (error) {
+      setRequirementStatus(
+        error instanceof Error ? error.message : "Requirement creation failed"
+      );
+    }
+  }
+
+  const requirementWorkflowFiles = workflowFiles.filter(
+    (workflowFile) => workflowFile.scope === "requirement"
+  );
 
   return (
     <main className="shell">
@@ -278,6 +365,105 @@ export function App() {
             </div>
           </div>
         ) : null}
+      </section>
+      <section className="workflow-panel" aria-labelledby="requirement-heading">
+        <div>
+          <p className="eyebrow">Requirements</p>
+          <h2 id="requirement-heading">Create Requirement and draft tasks</h2>
+          <p className="panel-copy">
+            Select a requirement workflow and run the mock executor to generate
+            editable Task Drafts.
+          </p>
+        </div>
+        <form className="workflow-form" onSubmit={handleCreateRequirement}>
+          <label>
+            Requirement title
+            <input
+              minLength={1}
+              onChange={(event) => setRequirementTitle(event.target.value)}
+              placeholder="Plan Forge dogfooding"
+              required
+              value={requirementTitle}
+            />
+          </label>
+          <label>
+            Requirement body
+            <textarea
+              onChange={(event) => setRequirementBody(event.target.value)}
+              placeholder="Describe the desired outcome"
+              required
+              value={requirementBody}
+            />
+          </label>
+          <label>
+            Requirement workflow
+            <select
+              disabled={requirementWorkflowFiles.length === 0}
+              onChange={(event) =>
+                setSelectedRequirementWorkflowId(event.target.value)
+              }
+              required
+              value={selectedRequirementWorkflowId}
+            >
+              {requirementWorkflowFiles.length === 0 ? (
+                <option value="">Import a requirement .wf first</option>
+              ) : null}
+              {requirementWorkflowFiles.map((workflowFile) => (
+                <option key={workflowFile.id} value={workflowFile.id}>
+                  {workflowFile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            disabled={requirementWorkflowFiles.length === 0}
+            type="submit"
+          >
+            Run requirement workflow
+          </button>
+        </form>
+        <p className="project-status" aria-live="polite">
+          {requirementStatus}
+        </p>
+        <div className="workflow-preview" aria-label="Requirement results">
+          <div className="workflow-summary">
+            <h3>Requirements</h3>
+            <p>{requirements.length} total</p>
+          </div>
+          <div className="project-list">
+            {requirements.length === 0 ? (
+              <p className="empty-state">Requirements will appear here.</p>
+            ) : (
+              requirements.map((requirement) => (
+                <article className="project-card" key={requirement.id}>
+                  <h3>{requirement.title}</h3>
+                  <p>
+                    Status: {requirement.status}
+                    {requirement.errorMessage
+                      ? ` / ${requirement.errorMessage}`
+                      : ""}
+                  </p>
+                </article>
+              ))
+            )}
+          </div>
+          <div className="workflow-summary">
+            <h3>Task Drafts</h3>
+            <p>{taskDrafts.length} total</p>
+          </div>
+          <div className="project-list">
+            {taskDrafts.length === 0 ? (
+              <p className="empty-state">Task Drafts will appear here.</p>
+            ) : (
+              taskDrafts.map((taskDraft) => (
+                <article className="project-card" key={taskDraft.id}>
+                  <h3>{taskDraft.title}</h3>
+                  <p>{taskDraft.body}</p>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
       </section>
     </main>
   );
