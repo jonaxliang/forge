@@ -7,7 +7,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/health": "http://localhost:3001",
-      "/projects": "http://localhost:3001"
+      "/projects": "http://localhost:3001",
+      "/workflow-files": "http://localhost:3001"
     }
   }
 });

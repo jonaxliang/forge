@@ -5,3 +5,13 @@ export function createHealthPayload() {
     status: "healthy"
   } as const;
 }
+
+export {
+  parseWorkflowFile,
+  workflowFileSchema,
+  workflowNodeSchema,
+  workflowScopes,
+  type WorkflowFile,
+  type WorkflowNode,
+  type WorkflowScope
+} from "./workflow-file";
