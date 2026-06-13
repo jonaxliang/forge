@@ -268,6 +268,12 @@ export function createApp({
     }
 
     try {
+      const task = await tasks.getTask(c.req.param("id"));
+
+      if (!task) {
+        return c.json({ error: "Task not found" }, 404);
+      }
+
       const workflowFile = await workflowFiles.getWorkflowFileMetadata(
         payload.data.workflowFileId
       );
@@ -320,6 +326,12 @@ export function createApp({
   });
 
   app.get("/tasks/:id/workflow-runs", async (c) => {
+    const task = await tasks.getTask(c.req.param("id"));
+
+    if (!task) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+
     const runs = await workflowRuns.listWorkflowRuns(c.req.param("id"));
     const workflowRunsWithNodes = await Promise.all(
       runs.map(async (workflowRun) => ({

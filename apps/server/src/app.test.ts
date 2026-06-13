@@ -584,4 +584,51 @@ nodes:
       error: expect.stringMatching(/task-scoped/i)
     });
   });
+
+  it("rejects workflow runs for missing tasks", async () => {
+    const app = createApp();
+    const taskWorkflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+nodes:
+  - id: plan
+    type: planning
+    executor: skill:plan
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const startResponse = await app.request("/tasks/tsk_missing/workflow-runs", {
+      body: JSON.stringify({
+        workflowFileId: taskWorkflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(startResponse.status).toBe(404);
+    await expect(startResponse.json()).resolves.toMatchObject({
+      error: "Task not found"
+    });
+
+    const listResponse = await app.request("/tasks/tsk_missing/workflow-runs");
+
+    expect(listResponse.status).toBe(404);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      error: "Task not found"
+    });
+  });
 });
