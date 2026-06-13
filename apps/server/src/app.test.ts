@@ -281,3 +281,123 @@ nodes:
     });
   });
 });
+
+describe("Task Draft approval API", () => {
+  async function createDraft(app: ReturnType<typeof createApp>) {
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "Turn this into a task.",
+        title: "Approve this draft",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    return (await requirementResponse.json()) as {
+      taskDrafts: [{ id: string; requirementId: string }];
+    };
+  }
+
+  it("edits, reorders, deletes and approves task drafts into tasks", async () => {
+    const app = createApp();
+    const created = await createDraft(app);
+    const draftId = created.taskDrafts[0].id;
+
+    const updateResponse = await app.request(`/task-drafts/${draftId}`, {
+      body: JSON.stringify({
+        body: "Updated body",
+        title: "Updated title"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      body: "Updated body",
+      title: "Updated title"
+    });
+
+    const reorderResponse = await app.request("/task-drafts/reorder", {
+      body: JSON.stringify({
+        order: [{ id: draftId, sortOrder: 3 }]
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(reorderResponse.status).toBe(200);
+    await expect(reorderResponse.json()).resolves.toMatchObject({
+      taskDrafts: [
+        {
+          id: draftId,
+          sortOrder: 3
+        }
+      ]
+    });
+
+    const approveResponse = await app.request(`/task-drafts/${draftId}/approve`, {
+      method: "POST"
+    });
+
+    expect(approveResponse.status).toBe(201);
+    await expect(approveResponse.json()).resolves.toMatchObject({
+      task: {
+        requirementId: created.taskDrafts[0].requirementId,
+        status: "todo",
+        title: "Updated title"
+      }
+    });
+
+    const tasksResponse = await app.request("/tasks");
+
+    expect(tasksResponse.status).toBe(200);
+    await expect(tasksResponse.json()).resolves.toMatchObject({
+      tasks: [
+        {
+          requirementId: created.taskDrafts[0].requirementId,
+          status: "todo",
+          title: "Updated title"
+        }
+      ]
+    });
+
+    const secondCreated = await createDraft(app);
+    const deleteResponse = await app.request(
+      `/task-drafts/${secondCreated.taskDrafts[0].id}`,
+      {
+        method: "DELETE"
+      }
+    );
+
+    expect(deleteResponse.status).toBe(204);
+  });
+});

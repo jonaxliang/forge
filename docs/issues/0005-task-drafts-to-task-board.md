@@ -10,14 +10,14 @@ AFK
 
 ## Acceptance criteria
 
-- [ ] Web 支持编辑 Task Draft 标题和描述。
-- [ ] Web 支持删除 Task Draft。
-- [ ] Web 支持调整 Task Draft 顺序。
-- [ ] Server 提供批准 Task Draft 的 API。
-- [ ] 批准后创建正式 Task，并保留 Requirement 关联。
-- [ ] Task Board 显示 Task 状态列。
-- [ ] Task card 显示标题、状态、来源 Requirement。
-- [ ] 测试覆盖 Task Draft 到 Task 的转换。
+- [x] Web 支持编辑 Task Draft 标题和描述。
+- [x] Web 支持删除 Task Draft。
+- [x] Web 支持调整 Task Draft 顺序。
+- [x] Server 提供批准 Task Draft 的 API。
+- [x] 批准后创建正式 Task，并保留 Requirement 关联。
+- [x] Task Board 显示 Task 状态列。
+- [x] Task card 显示标题、状态、来源 Requirement。
+- [x] 测试覆盖 Task Draft 到 Task 的转换。
 
 ## Blocked by
 

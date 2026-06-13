@@ -11,12 +11,14 @@ export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
 export const workflowScopes = ["requirement", "task"] as const;
 export const requirementStatuses = ["running", "completed", "failed"] as const;
 export const taskDraftStatuses = ["draft"] as const;
+export const taskStatuses = ["todo", "in_progress", "done"] as const;
 
 export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
 export type DbStrategy = (typeof dbStrategies)[number];
 export type WorkflowScope = (typeof workflowScopes)[number];
 export type RequirementStatus = (typeof requirementStatuses)[number];
 export type TaskDraftStatus = (typeof taskDraftStatuses)[number];
+export type TaskStatus = (typeof taskStatuses)[number];
 
 export type DatabaseStatus = {
   configured: boolean;
@@ -116,7 +118,37 @@ export type CreateTaskDraftInput = {
 
 export type TaskDraftRepository = {
   createTaskDraft(input: CreateTaskDraftInput): Promise<TaskDraft>;
+  deleteTaskDraft(id: string): Promise<void>;
+  getTaskDraft(id: string): Promise<TaskDraft | null>;
   listTaskDrafts(): Promise<TaskDraft[]>;
+  reorderTaskDrafts(order: TaskDraftOrderInput[]): Promise<TaskDraft[]>;
+  updateTaskDraft(input: UpdateTaskDraftInput): Promise<TaskDraft>;
+};
+
+export type UpdateTaskDraftInput = {
+  id: string;
+  title: string;
+  body: string;
+};
+
+export type TaskDraftOrderInput = {
+  id: string;
+  sortOrder: number;
+};
+
+export type Task = {
+  id: string;
+  requirementId: string;
+  title: string;
+  body: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskRepository = {
+  createTaskFromDraft(draft: TaskDraft): Promise<Task>;
+  listTasks(): Promise<Task[]>;
 };
 
 const projects = sqliteTable("projects", {
@@ -166,6 +198,18 @@ const taskDrafts = sqliteTable("task_drafts", {
 
 type TaskDraftRow = typeof taskDrafts.$inferSelect;
 
+const tasks = sqliteTable("tasks", {
+  id: text("id").primaryKey(),
+  requirementId: text("requirement_id").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+type TaskRow = typeof tasks.$inferSelect;
+
 export function createDatabaseStatus(): DatabaseStatus {
   return {
     configured: false,
@@ -187,6 +231,10 @@ export function createInMemoryRequirementRepository(): RequirementRepository {
 
 export function createInMemoryTaskDraftRepository(): TaskDraftRepository {
   return createTaskDraftRepository(new Database(":memory:"));
+}
+
+export function createInMemoryTaskRepository(): TaskRepository {
+  return createTaskRepository(new Database(":memory:"));
 }
 
 export function createSqliteProjectRepository(
@@ -215,6 +263,13 @@ export function createSqliteTaskDraftRepository(
 ): TaskDraftRepository {
   mkdirSync(dirname(filename), { recursive: true });
   return createTaskDraftRepository(new Database(filename));
+}
+
+export function createSqliteTaskRepository(
+  filename = ".forge/forge.sqlite"
+): TaskRepository {
+  mkdirSync(dirname(filename), { recursive: true });
+  return createTaskRepository(new Database(filename));
 }
 
 function createProjectRepository(sqlite: Database.Database): ProjectRepository {
@@ -285,6 +340,17 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY NOT NULL,
+      requirement_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
       status TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -430,6 +496,20 @@ function createTaskDraftRepository(
       return taskDraft;
     },
 
+    async deleteTaskDraft(id) {
+      await db.delete(taskDrafts).where(eq(taskDrafts.id, id)).run();
+    },
+
+    async getTaskDraft(id) {
+      const row = await db
+        .select()
+        .from(taskDrafts)
+        .where(eq(taskDrafts.id, id))
+        .get();
+
+      return row ? toTaskDraft(row) : null;
+    },
+
     async listTaskDrafts() {
       const rows = await db
         .select()
@@ -437,6 +517,87 @@ function createTaskDraftRepository(
         .orderBy(asc(taskDrafts.sortOrder), asc(taskDrafts.createdAt));
 
       return rows.map(toTaskDraft);
+    },
+
+    async reorderTaskDrafts(order) {
+      for (const item of order) {
+        await db
+          .update(taskDrafts)
+          .set({
+            sortOrder: item.sortOrder,
+            updatedAt: new Date().toISOString()
+          })
+          .where(eq(taskDrafts.id, item.id))
+          .run();
+      }
+
+      const rows = await db
+        .select()
+        .from(taskDrafts)
+        .orderBy(asc(taskDrafts.sortOrder), asc(taskDrafts.createdAt));
+
+      return rows.map(toTaskDraft);
+    },
+
+    async updateTaskDraft(input) {
+      const row = await db
+        .select()
+        .from(taskDrafts)
+        .where(eq(taskDrafts.id, input.id))
+        .get();
+
+      if (!row) {
+        throw new Error(`Task draft not found: ${input.id}`);
+      }
+
+      const updated = {
+        ...row,
+        title: input.title.trim(),
+        body: input.body.trim(),
+        updatedAt: nextTimestamp(row.updatedAt)
+      };
+
+      await db
+        .update(taskDrafts)
+        .set({
+          body: updated.body,
+          title: updated.title,
+          updatedAt: updated.updatedAt
+        })
+        .where(eq(taskDrafts.id, input.id))
+        .run();
+
+      return toTaskDraft(updated);
+    }
+  };
+}
+
+function createTaskRepository(sqlite: Database.Database): TaskRepository {
+  const db = drizzle(sqlite);
+  initializeSqliteSchema(db);
+
+  return {
+    async createTaskFromDraft(draft) {
+      const now = new Date().toISOString();
+      const task: Task = {
+        id: `tsk_${randomUUID()}`,
+        requirementId: draft.requirementId,
+        title: draft.title,
+        body: draft.body,
+        status: "todo",
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await db.insert(tasks).values(task).run();
+
+      return task;
+    },
+
+    async listTasks() {
+      const rows = await db.select().from(tasks).orderBy(asc(tasks.createdAt));
+
+      return rows.map(toTask);
     }
   };
 }
@@ -483,6 +644,18 @@ function toTaskDraft(row: TaskDraftRow): TaskDraft {
     body: row.body,
     sortOrder: row.sortOrder,
     status: row.status as TaskDraftStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toTask(row: TaskRow): Task {
+  return {
+    id: row.id,
+    requirementId: row.requirementId,
+    title: row.title,
+    body: row.body,
+    status: row.status as TaskStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };

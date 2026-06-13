@@ -49,6 +49,7 @@ export type WorkflowFileMetadata = {
 
 export type RequirementStatus = "running" | "completed" | "failed";
 export type TaskDraftStatus = "draft";
+export type TaskStatus = "todo" | "in_progress" | "done";
 
 export type Requirement = {
   id: string;
@@ -72,10 +73,30 @@ export type TaskDraft = {
   updatedAt: string;
 };
 
+export type Task = {
+  id: string;
+  requirementId: string;
+  title: string;
+  body: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CreateRequirementRequest = {
   title: string;
   body: string;
   workflowFileId: string;
+};
+
+export type UpdateTaskDraftRequest = {
+  title: string;
+  body: string;
+};
+
+export type TaskDraftOrderItem = {
+  id: string;
+  sortOrder: number;
 };
 
 export type CreateRequirementResponse = {
@@ -209,4 +230,93 @@ export async function listTaskDrafts(baseUrl = ""): Promise<TaskDraft[]> {
   const body = (await response.json()) as { taskDrafts: TaskDraft[] };
 
   return body.taskDrafts;
+}
+
+export async function updateTaskDraft(
+  id: string,
+  input: UpdateTaskDraftRequest,
+  baseUrl = ""
+): Promise<TaskDraft> {
+  const response = await fetch(`${baseUrl}/task-drafts/${id}`, {
+    body: JSON.stringify(input),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "PATCH"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Task draft update failed");
+  }
+
+  return response.json() as Promise<TaskDraft>;
+}
+
+export async function deleteTaskDraft(
+  id: string,
+  baseUrl = ""
+): Promise<void> {
+  const response = await fetch(`${baseUrl}/task-drafts/${id}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Task draft deletion failed with status ${response.status}`);
+  }
+}
+
+export async function reorderTaskDrafts(
+  order: TaskDraftOrderItem[],
+  baseUrl = ""
+): Promise<TaskDraft[]> {
+  const response = await fetch(`${baseUrl}/task-drafts/reorder`, {
+    body: JSON.stringify({ order }),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Task draft reorder failed");
+  }
+
+  const body = (await response.json()) as { taskDrafts: TaskDraft[] };
+
+  return body.taskDrafts;
+}
+
+export async function approveTaskDraft(
+  id: string,
+  baseUrl = ""
+): Promise<Task> {
+  const response = await fetch(`${baseUrl}/task-drafts/${id}/approve`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Task draft approval failed");
+  }
+
+  const body = (await response.json()) as { task: Task };
+
+  return body.task;
+}
+
+export async function listTasks(baseUrl = ""): Promise<Task[]> {
+  const response = await fetch(`${baseUrl}/tasks`);
+
+  if (!response.ok) {
+    throw new Error(`Task list failed with status ${response.status}`);
+  }
+
+  const body = (await response.json()) as { tasks: Task[] };
+
+  return body.tasks;
 }

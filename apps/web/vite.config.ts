@@ -10,6 +10,7 @@ export default defineConfig({
       "/projects": "http://localhost:3001",
       "/requirements": "http://localhost:3001",
       "/task-drafts": "http://localhost:3001",
+      "/tasks": "http://localhost:3001",
       "/workflow-files": "http://localhost:3001"
     }
   }
