@@ -44,6 +44,7 @@ export type WorkflowFileMetadata = {
   name: string;
   scope: WorkflowScope;
   nodeCount: number;
+  definition: string;
   createdAt: string;
 };
 
@@ -81,6 +82,44 @@ export type Task = {
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;
+};
+
+export type NodeStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "waiting"
+  | "blocked"
+  | "reviewing"
+  | "failed"
+  | "succeeded"
+  | "skipped";
+
+export type WorkflowRunStatus = "running" | "succeeded" | "failed";
+
+export type WorkflowRun = {
+  id: string;
+  taskId: string;
+  workflowFileId: string;
+  status: WorkflowRunStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NodeRun = {
+  id: string;
+  workflowRunId: string;
+  nodeId: string;
+  dependsOn: string[];
+  status: NodeStatus;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkflowRunWithNodes = {
+  workflowRun: WorkflowRun;
+  nodeRuns: NodeRun[];
 };
 
 export type CreateRequirementRequest = {
@@ -319,4 +358,43 @@ export async function listTasks(baseUrl = ""): Promise<Task[]> {
   const body = (await response.json()) as { tasks: Task[] };
 
   return body.tasks;
+}
+
+export async function startTaskWorkflowRun(
+  taskId: string,
+  workflowFileId: string,
+  baseUrl = ""
+): Promise<WorkflowRunWithNodes> {
+  const response = await fetch(`${baseUrl}/tasks/${taskId}/workflow-runs`, {
+    body: JSON.stringify({ workflowFileId }),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Workflow run start failed");
+  }
+
+  return response.json() as Promise<WorkflowRunWithNodes>;
+}
+
+export async function listTaskWorkflowRuns(
+  taskId: string,
+  baseUrl = ""
+): Promise<WorkflowRunWithNodes[]> {
+  const response = await fetch(`${baseUrl}/tasks/${taskId}/workflow-runs`);
+
+  if (!response.ok) {
+    throw new Error(`Workflow run list failed with status ${response.status}`);
+  }
+
+  const body = (await response.json()) as {
+    workflowRuns: WorkflowRunWithNodes[];
+  };
+
+  return body.workflowRuns;
 }

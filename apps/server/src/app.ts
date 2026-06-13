@@ -1,18 +1,27 @@
-import { createHealthPayload, parseWorkflowFile } from "@forge/core";
+import {
+  createHealthPayload,
+  getNextRunnableNode,
+  parseWorkflowFile,
+  planWorkflowDag,
+  workflowFileSchema
+} from "@forge/core";
 import {
   artifactStorageModes,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
   createInMemoryTaskDraftRepository,
+  createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
   dbStrategies,
+  type NodeRun,
   type ProjectRepository,
   type Requirement,
   type RequirementRepository,
   type TaskDraft,
   type TaskDraftRepository,
   type TaskRepository,
+  type WorkflowRunRepository,
   type WorkflowFileRepository
 } from "@forge/db";
 import { Hono } from "hono";
@@ -53,6 +62,7 @@ type AppDependencies = {
   requirementRepository?: RequirementRepository;
   taskDraftRepository?: TaskDraftRepository;
   taskRepository?: TaskRepository;
+  workflowRunRepository?: WorkflowRunRepository;
   workflowFileRepository?: WorkflowFileRepository;
 };
 
@@ -61,6 +71,7 @@ export function createApp({
   requirementRepository,
   taskDraftRepository,
   taskRepository,
+  workflowRunRepository,
   workflowFileRepository
 }: AppDependencies = {}) {
   const app = new Hono();
@@ -69,6 +80,8 @@ export function createApp({
     requirementRepository ?? createInMemoryRequirementRepository();
   const taskDrafts = taskDraftRepository ?? createInMemoryTaskDraftRepository();
   const tasks = taskRepository ?? createInMemoryTaskRepository();
+  const workflowRuns =
+    workflowRunRepository ?? createInMemoryWorkflowRunRepository();
   const workflowFiles =
     workflowFileRepository ?? createInMemoryWorkflowFileRepository();
 
@@ -106,6 +119,7 @@ export function createApp({
     try {
       const workflow = parseWorkflowFile(payload.data.source);
       const workflowFile = await workflowFiles.createWorkflowFileMetadata({
+        definition: JSON.stringify(workflow),
         name: workflow.name,
         nodeCount: workflow.nodes.length,
         scope: workflow.scope
@@ -242,6 +256,81 @@ export function createApp({
     return c.json({ tasks: await tasks.listTasks() });
   });
 
+  app.post("/tasks/:id/workflow-runs", async (c) => {
+    const payload = z
+      .object({
+        workflowFileId: z.string().trim().min(1)
+      })
+      .safeParse(await c.req.json().catch(() => null));
+
+    if (!payload.success) {
+      return c.json({ error: "Invalid workflow run payload" }, 400);
+    }
+
+    try {
+      const workflowFile = await workflowFiles.getWorkflowFileMetadata(
+        payload.data.workflowFileId
+      );
+
+      if (!workflowFile) {
+        throw new Error("Selected workflow file was not found");
+      }
+
+      if (workflowFile.scope !== "task") {
+        throw new Error("Selected workflow file must be task-scoped");
+      }
+
+      const workflow = workflowFileSchema.parse(JSON.parse(workflowFile.definition));
+      const workflowRun = await workflowRuns.createWorkflowRun({
+        taskId: c.req.param("id"),
+        workflowFileId: workflowFile.id
+      });
+      const plannedNodes = planWorkflowDag(workflow);
+
+      for (const [index, node] of plannedNodes.entries()) {
+        await workflowRuns.createNodeRun({
+          dependsOn: node.dependsOn,
+          nodeId: node.id,
+          sortOrder: index,
+          status: "queued",
+          workflowRunId: workflowRun.id
+        });
+      }
+
+      const completedNodeRuns = await runMockTaskWorkflow(
+        workflowRun.id,
+        async () => workflowRuns.listNodeRuns(workflowRun.id),
+        async (nodeRun) => workflowRuns.updateNodeRunStatus(nodeRun)
+      );
+      const completedWorkflowRun = await workflowRuns.updateWorkflowRunStatus({
+        id: workflowRun.id,
+        status: "succeeded"
+      });
+
+      return c.json(
+        {
+          nodeRuns: completedNodeRuns,
+          workflowRun: completedWorkflowRun
+        },
+        201
+      );
+    } catch (error) {
+      return c.json({ error: getErrorMessage(error) }, 400);
+    }
+  });
+
+  app.get("/tasks/:id/workflow-runs", async (c) => {
+    const runs = await workflowRuns.listWorkflowRuns(c.req.param("id"));
+    const workflowRunsWithNodes = await Promise.all(
+      runs.map(async (workflowRun) => ({
+        nodeRuns: await workflowRuns.listNodeRuns(workflowRun.id),
+        workflowRun
+      }))
+    );
+
+    return c.json({ workflowRuns: workflowRunsWithNodes });
+  });
+
   return app;
 }
 
@@ -263,4 +352,33 @@ async function runMockRequirementWorkflow(
       title: `Draft: ${requirement.title}`
     })
   ];
+}
+
+async function runMockTaskWorkflow(
+  workflowRunId: string,
+  listNodeRuns: () => Promise<NodeRun[]>,
+  updateNodeRunStatus: (input: {
+    id: string;
+    status: "running" | "succeeded";
+  }) => Promise<NodeRun>
+) {
+  let nodeRuns = await listNodeRuns();
+  let next = getNextRunnableNode(nodeRuns);
+
+  while (next) {
+    const nodeRun = nodeRuns.find(
+      (candidate) => candidate.nodeId === next?.nodeId
+    );
+
+    if (!nodeRun) {
+      throw new Error(`Node run not found in workflow run ${workflowRunId}`);
+    }
+
+    await updateNodeRunStatus({ id: nodeRun.id, status: "running" });
+    await updateNodeRunStatus({ id: nodeRun.id, status: "succeeded" });
+    nodeRuns = await listNodeRuns();
+    next = getNextRunnableNode(nodeRuns);
+  }
+
+  return nodeRuns;
 }

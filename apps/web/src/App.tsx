@@ -8,9 +8,11 @@ import {
   listRequirements,
   listProjects,
   listTaskDrafts,
+  listTaskWorkflowRuns,
   listTasks,
   listWorkflowFiles,
   reorderTaskDrafts,
+  startTaskWorkflowRun,
   type ArtifactStorageMode,
   type DbStrategy,
   type Project,
@@ -18,6 +20,7 @@ import {
   type ServerHealth,
   type Task,
   type TaskDraft,
+  type WorkflowRunWithNodes,
   type WorkflowFileMetadata,
   type WorkflowFile,
   updateTaskDraft
@@ -75,10 +78,14 @@ export function App() {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [taskDrafts, setTaskDrafts] = useState<TaskDraft[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [workflowRunsByTaskId, setWorkflowRunsByTaskId] = useState<
+    Record<string, WorkflowRunWithNodes[]>
+  >({});
   const [requirementTitle, setRequirementTitle] = useState("");
   const [requirementBody, setRequirementBody] = useState("");
   const [selectedRequirementWorkflowId, setSelectedRequirementWorkflowId] =
     useState("");
+  const [selectedTaskWorkflowId, setSelectedTaskWorkflowId] = useState("");
   const [requirementStatus, setRequirementStatus] = useState(
     "No requirement created yet"
   );
@@ -132,6 +139,22 @@ export function App() {
             nextWorkflowFiles.find((workflowFile) => workflowFile.scope === "requirement")
               ?.id ?? ""
           );
+          setSelectedTaskWorkflowId(
+            nextWorkflowFiles.find((workflowFile) => workflowFile.scope === "task")
+              ?.id ?? ""
+          );
+        }
+
+        return Promise.all(
+          nextTasks.map(async (task) => [
+            task.id,
+            await listTaskWorkflowRuns(task.id)
+          ] as const)
+        );
+      })
+      .then((workflowRunEntries) => {
+        if (!cancelled) {
+          setWorkflowRunsByTaskId(Object.fromEntries(workflowRunEntries));
         }
       })
       .catch(() => {
@@ -198,6 +221,9 @@ export function App() {
       ]);
       if (result.workflowFile.scope === "requirement") {
         setSelectedRequirementWorkflowId(result.workflowFile.id);
+      }
+      if (result.workflowFile.scope === "task") {
+        setSelectedTaskWorkflowId(result.workflowFile.id);
       }
       setWorkflowImportStatus(`Imported ${result.workflowFile.name}`);
     } catch (error) {
@@ -322,6 +348,10 @@ export function App() {
         currentTaskDrafts.filter((taskDraft) => taskDraft.id !== id)
       );
       setTasks((currentTasks) => [...currentTasks, task]);
+      setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
+        ...currentWorkflowRuns,
+        [task.id]: []
+      }));
       setTaskBoardStatus(`Approved ${task.title}`);
     } catch (error) {
       setTaskBoardStatus(
@@ -333,7 +363,36 @@ export function App() {
   const requirementWorkflowFiles = workflowFiles.filter(
     (workflowFile) => workflowFile.scope === "requirement"
   );
+  const taskWorkflowFiles = workflowFiles.filter(
+    (workflowFile) => workflowFile.scope === "task"
+  );
   const taskStatuses = ["todo", "in_progress", "done"] as const;
+
+  async function handleStartTaskWorkflowRun(taskId: string) {
+    if (!selectedTaskWorkflowId) {
+      setTaskBoardStatus("Import a task .wf first");
+      return;
+    }
+
+    setTaskBoardStatus("Starting Workflow Run");
+
+    try {
+      const workflowRun = await startTaskWorkflowRun(
+        taskId,
+        selectedTaskWorkflowId
+      );
+
+      setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
+        ...currentWorkflowRuns,
+        [taskId]: [...(currentWorkflowRuns[taskId] ?? []), workflowRun]
+      }));
+      setTaskBoardStatus(`Workflow Run ${workflowRun.workflowRun.status}`);
+    } catch (error) {
+      setTaskBoardStatus(
+        error instanceof Error ? error.message : "Workflow Run failed"
+      );
+    }
+  }
 
   return (
     <main className="shell">
@@ -653,6 +712,53 @@ export function App() {
                             Source:{" "}
                             {sourceRequirement?.title ?? task.requirementId}
                           </p>
+                          <div className="task-run-controls">
+                            <label>
+                              Task workflow
+                              <select
+                                disabled={taskWorkflowFiles.length === 0}
+                                onChange={(event) =>
+                                  setSelectedTaskWorkflowId(event.target.value)
+                                }
+                                value={selectedTaskWorkflowId}
+                              >
+                                {taskWorkflowFiles.length === 0 ? (
+                                  <option value="">Import a task .wf first</option>
+                                ) : null}
+                                {taskWorkflowFiles.map((workflowFile) => (
+                                  <option
+                                    key={workflowFile.id}
+                                    value={workflowFile.id}
+                                  >
+                                    {workflowFile.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <button
+                              disabled={taskWorkflowFiles.length === 0}
+                              onClick={() => handleStartTaskWorkflowRun(task.id)}
+                              type="button"
+                            >
+                              Start run
+                            </button>
+                          </div>
+                          <div className="node-run-list">
+                            {(workflowRunsByTaskId[task.id] ?? []).length === 0 ? (
+                              <p>No workflow runs</p>
+                            ) : (
+                              workflowRunsByTaskId[task.id]?.map((run) => (
+                                <div className="node-run-group" key={run.workflowRun.id}>
+                                  <p>Run: {run.workflowRun.status}</p>
+                                  {run.nodeRuns.map((nodeRun) => (
+                                    <p key={nodeRun.id}>
+                                      {nodeRun.nodeId}: {nodeRun.status}
+                                    </p>
+                                  ))}
+                                </div>
+                              ))
+                            )}
+                          </div>
                         </article>
                       );
                     })

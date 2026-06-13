@@ -12,6 +12,18 @@ export const workflowScopes = ["requirement", "task"] as const;
 export const requirementStatuses = ["running", "completed", "failed"] as const;
 export const taskDraftStatuses = ["draft"] as const;
 export const taskStatuses = ["todo", "in_progress", "done"] as const;
+export const workflowRunStatuses = ["running", "succeeded", "failed"] as const;
+export const nodeRunStatuses = [
+  "idle",
+  "queued",
+  "running",
+  "waiting",
+  "blocked",
+  "reviewing",
+  "failed",
+  "succeeded",
+  "skipped"
+] as const;
 
 export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
 export type DbStrategy = (typeof dbStrategies)[number];
@@ -19,6 +31,8 @@ export type WorkflowScope = (typeof workflowScopes)[number];
 export type RequirementStatus = (typeof requirementStatuses)[number];
 export type TaskDraftStatus = (typeof taskDraftStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
+export type WorkflowRunStatus = (typeof workflowRunStatuses)[number];
+export type NodeRunStatus = (typeof nodeRunStatuses)[number];
 
 export type DatabaseStatus = {
   configured: boolean;
@@ -50,6 +64,7 @@ export type WorkflowFileMetadata = {
   name: string;
   scope: WorkflowScope;
   nodeCount: number;
+  definition: string;
   createdAt: string;
 };
 
@@ -57,6 +72,7 @@ export type CreateWorkflowFileMetadataInput = {
   name: string;
   scope: WorkflowScope;
   nodeCount: number;
+  definition?: string;
 };
 
 export type WorkflowFileRepository = {
@@ -151,6 +167,60 @@ export type TaskRepository = {
   listTasks(): Promise<Task[]>;
 };
 
+export type WorkflowRun = {
+  id: string;
+  taskId: string;
+  workflowFileId: string;
+  status: WorkflowRunStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NodeRun = {
+  id: string;
+  workflowRunId: string;
+  nodeId: string;
+  dependsOn: string[];
+  status: NodeRunStatus;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateWorkflowRunInput = {
+  taskId: string;
+  workflowFileId: string;
+};
+
+export type CreateNodeRunInput = {
+  workflowRunId: string;
+  nodeId: string;
+  dependsOn: string[];
+  status: NodeRunStatus;
+  sortOrder: number;
+};
+
+export type UpdateWorkflowRunStatusInput = {
+  id: string;
+  status: WorkflowRunStatus;
+};
+
+export type UpdateNodeRunStatusInput = {
+  id: string;
+  status: NodeRunStatus;
+};
+
+export type WorkflowRunRepository = {
+  createWorkflowRun(input: CreateWorkflowRunInput): Promise<WorkflowRun>;
+  createNodeRun(input: CreateNodeRunInput): Promise<NodeRun>;
+  listWorkflowRuns(taskId?: string): Promise<WorkflowRun[]>;
+  listNodeRuns(workflowRunId: string): Promise<NodeRun[]>;
+  updateWorkflowRunStatus(
+    input: UpdateWorkflowRunStatusInput
+  ): Promise<WorkflowRun>;
+  updateNodeRunStatus(input: UpdateNodeRunStatusInput): Promise<NodeRun>;
+};
+
 const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -167,6 +237,7 @@ const workflowFiles = sqliteTable("workflow_files", {
   name: text("name").notNull(),
   scope: text("scope").notNull(),
   nodeCount: integer("node_count").notNull(),
+  definition: text("definition").notNull(),
   createdAt: text("created_at").notNull()
 });
 
@@ -210,6 +281,30 @@ const tasks = sqliteTable("tasks", {
 
 type TaskRow = typeof tasks.$inferSelect;
 
+const workflowRuns = sqliteTable("workflow_runs", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id").notNull(),
+  workflowFileId: text("workflow_file_id").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+type WorkflowRunRow = typeof workflowRuns.$inferSelect;
+
+const nodeRuns = sqliteTable("node_runs", {
+  id: text("id").primaryKey(),
+  workflowRunId: text("workflow_run_id").notNull(),
+  nodeId: text("node_id").notNull(),
+  dependsOn: text("depends_on").notNull(),
+  status: text("status").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+type NodeRunRow = typeof nodeRuns.$inferSelect;
+
 export function createDatabaseStatus(): DatabaseStatus {
   return {
     configured: false,
@@ -235,6 +330,10 @@ export function createInMemoryTaskDraftRepository(): TaskDraftRepository {
 
 export function createInMemoryTaskRepository(): TaskRepository {
   return createTaskRepository(new Database(":memory:"));
+}
+
+export function createInMemoryWorkflowRunRepository(): WorkflowRunRepository {
+  return createWorkflowRunRepository(new Database(":memory:"));
 }
 
 export function createSqliteProjectRepository(
@@ -270,6 +369,13 @@ export function createSqliteTaskRepository(
 ): TaskRepository {
   mkdirSync(dirname(filename), { recursive: true });
   return createTaskRepository(new Database(filename));
+}
+
+export function createSqliteWorkflowRunRepository(
+  filename = ".forge/forge.sqlite"
+): WorkflowRunRepository {
+  mkdirSync(dirname(filename), { recursive: true });
+  return createWorkflowRunRepository(new Database(filename));
 }
 
 function createProjectRepository(sqlite: Database.Database): ProjectRepository {
@@ -318,6 +424,7 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       name TEXT NOT NULL,
       scope TEXT NOT NULL,
       node_count INTEGER NOT NULL,
+      definition TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     )
   `);
@@ -356,6 +463,28 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       updated_at TEXT NOT NULL
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      task_id TEXT NOT NULL,
+      workflow_file_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS node_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      workflow_run_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      depends_on TEXT NOT NULL,
+      status TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
 }
 
 function createWorkflowFileRepository(
@@ -371,6 +500,7 @@ function createWorkflowFileRepository(
         name: input.name.trim(),
         scope: input.scope,
         nodeCount: input.nodeCount,
+        definition: input.definition ?? "{}",
         createdAt: new Date().toISOString()
       };
 
@@ -602,6 +732,132 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
   };
 }
 
+function createWorkflowRunRepository(
+  sqlite: Database.Database
+): WorkflowRunRepository {
+  const db = drizzle(sqlite);
+  initializeSqliteSchema(db);
+
+  return {
+    async createWorkflowRun(input) {
+      const now = new Date().toISOString();
+      const workflowRun: WorkflowRun = {
+        id: `wfr_${randomUUID()}`,
+        taskId: input.taskId,
+        workflowFileId: input.workflowFileId,
+        status: "running",
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await db.insert(workflowRuns).values(workflowRun).run();
+
+      return workflowRun;
+    },
+
+    async createNodeRun(input) {
+      const now = new Date().toISOString();
+      const nodeRun: NodeRun = {
+        id: `ndr_${randomUUID()}`,
+        workflowRunId: input.workflowRunId,
+        nodeId: input.nodeId,
+        dependsOn: input.dependsOn,
+        status: input.status,
+        sortOrder: input.sortOrder,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await db
+        .insert(nodeRuns)
+        .values({
+          ...nodeRun,
+          dependsOn: JSON.stringify(nodeRun.dependsOn)
+        })
+        .run();
+
+      return nodeRun;
+    },
+
+    async listWorkflowRuns(taskId) {
+      const query = db.select().from(workflowRuns);
+      const rows = taskId
+        ? await query.where(eq(workflowRuns.taskId, taskId)).orderBy(asc(workflowRuns.createdAt))
+        : await query.orderBy(asc(workflowRuns.createdAt));
+
+      return rows.map(toWorkflowRun);
+    },
+
+    async listNodeRuns(workflowRunId) {
+      const rows = await db
+        .select()
+        .from(nodeRuns)
+        .where(eq(nodeRuns.workflowRunId, workflowRunId))
+        .orderBy(asc(nodeRuns.sortOrder));
+
+      return rows.map(toNodeRun);
+    },
+
+    async updateWorkflowRunStatus(input) {
+      const row = await db
+        .select()
+        .from(workflowRuns)
+        .where(eq(workflowRuns.id, input.id))
+        .get();
+
+      if (!row) {
+        throw new Error(`Workflow run not found: ${input.id}`);
+      }
+
+      const updated = {
+        ...row,
+        status: input.status,
+        updatedAt: nextTimestamp(row.updatedAt)
+      };
+
+      await db
+        .update(workflowRuns)
+        .set({
+          status: updated.status,
+          updatedAt: updated.updatedAt
+        })
+        .where(eq(workflowRuns.id, input.id))
+        .run();
+
+      return toWorkflowRun(updated);
+    },
+
+    async updateNodeRunStatus(input) {
+      const row = await db
+        .select()
+        .from(nodeRuns)
+        .where(eq(nodeRuns.id, input.id))
+        .get();
+
+      if (!row) {
+        throw new Error(`Node run not found: ${input.id}`);
+      }
+
+      const updated = {
+        ...row,
+        status: input.status,
+        updatedAt: nextTimestamp(row.updatedAt)
+      };
+
+      await db
+        .update(nodeRuns)
+        .set({
+          status: updated.status,
+          updatedAt: updated.updatedAt
+        })
+        .where(eq(nodeRuns.id, input.id))
+        .run();
+
+      return toNodeRun(updated);
+    }
+  };
+}
+
 function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
@@ -619,6 +875,7 @@ function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
     name: row.name,
     scope: row.scope as WorkflowScope,
     nodeCount: row.nodeCount,
+    definition: row.definition,
     createdAt: row.createdAt
   };
 }
@@ -656,6 +913,30 @@ function toTask(row: TaskRow): Task {
     title: row.title,
     body: row.body,
     status: row.status as TaskStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toWorkflowRun(row: WorkflowRunRow): WorkflowRun {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    workflowFileId: row.workflowFileId,
+    status: row.status as WorkflowRunStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toNodeRun(row: NodeRunRow): NodeRun {
+  return {
+    id: row.id,
+    workflowRunId: row.workflowRunId,
+    nodeId: row.nodeId,
+    dependsOn: JSON.parse(row.dependsOn) as string[],
+    status: row.status as NodeRunStatus,
+    sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };

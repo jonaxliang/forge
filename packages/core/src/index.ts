@@ -15,3 +15,11 @@ export {
   type WorkflowNode,
   type WorkflowScope
 } from "./workflow-file";
+
+export {
+  getNextRunnableNode,
+  nodeStatuses,
+  planWorkflowDag,
+  type NodeStatus,
+  type RunnableNodeRun
+} from "./workflow-run";

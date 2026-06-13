@@ -3,6 +3,7 @@ import {
   createSqliteRequirementRepository,
   createSqliteTaskRepository,
   createSqliteTaskDraftRepository,
+  createSqliteWorkflowRunRepository,
   createSqliteWorkflowFileRepository
 } from "@forge/db";
 import { serve } from "@hono/node-server";
@@ -14,6 +15,7 @@ const app = createApp({
   requirementRepository: createSqliteRequirementRepository(),
   taskDraftRepository: createSqliteTaskDraftRepository(),
   taskRepository: createSqliteTaskRepository(),
+  workflowRunRepository: createSqliteWorkflowRunRepository(),
   workflowFileRepository: createSqliteWorkflowFileRepository()
 });
 
