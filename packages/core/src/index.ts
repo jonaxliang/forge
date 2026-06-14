@@ -14,7 +14,7 @@ export {
   type WorkflowFile,
   type WorkflowNode,
   type WorkflowScope
-} from "./workflow-file";
+} from "./workflow-file.js";
 
 export {
   getNextRunnableNode,
@@ -22,4 +22,4 @@ export {
   planWorkflowDag,
   type NodeStatus,
   type RunnableNodeRun
-} from "./workflow-run";
+} from "./workflow-run.js";

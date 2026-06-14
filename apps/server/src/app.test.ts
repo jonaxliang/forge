@@ -1,5 +1,35 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { force: true, recursive: true })
+    )
+  );
+});
+
+async function createWebAssetsRoot(files: Record<string, string>) {
+  const directory = await mkdtemp(join(tmpdir(), "forge-web-assets-"));
+  temporaryDirectories.push(directory);
+
+  await Promise.all(
+    Object.entries(files).map(async ([filePath, content]) => {
+      const absolutePath = join(directory, filePath);
+      const parentDirectory = dirname(absolutePath);
+
+      await mkdir(parentDirectory, { recursive: true });
+      await writeFile(absolutePath, content);
+    })
+  );
+
+  return directory;
+}
 
 describe("GET /health", () => {
   it("returns the Forge server health payload", async () => {
@@ -12,6 +42,49 @@ describe("GET /health", () => {
       service: "forge",
       status: "healthy"
     });
+  });
+});
+
+describe("Web console assets", () => {
+  it("serves the bundled Web console from the server root", async () => {
+    const webAssetsRoot = await createWebAssetsRoot({
+      "index.html": "<html><body><div id=\"root\">Forge Web</div></body></html>"
+    });
+    const app = createApp({ webAssetsRoot });
+
+    const response = await app.request("/");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    await expect(response.text()).resolves.toContain("Forge Web");
+  });
+
+  it("serves nested Web asset files without intercepting API routes", async () => {
+    const webAssetsRoot = await createWebAssetsRoot({
+      "assets/app.js": "console.log('forge web');",
+      "index.html": "<html><body>Forge Web</body></html>"
+    });
+    const app = createApp({ webAssetsRoot });
+
+    const assetResponse = await app.request("/assets/app.js");
+    const apiResponse = await app.request("/projects/missing");
+
+    expect(assetResponse.status).toBe(200);
+    expect(assetResponse.headers.get("content-type")).toContain("javascript");
+    await expect(assetResponse.text()).resolves.toContain("forge web");
+    expect(apiResponse.status).toBe(404);
+  });
+
+  it("falls back to index.html for Web console routes", async () => {
+    const webAssetsRoot = await createWebAssetsRoot({
+      "index.html": "<html><body>Forge Web</body></html>"
+    });
+    const app = createApp({ webAssetsRoot });
+
+    const response = await app.request("/control-room");
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toContain("Forge Web");
   });
 });
 

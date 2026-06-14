@@ -1,1 +1,1 @@
-export { StatusBadge } from "./status-badge";
+export { StatusBadge } from "./status-badge.js";
