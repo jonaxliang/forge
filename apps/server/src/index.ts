@@ -1,4 +1,5 @@
 import {
+  createSqliteExecutionSettingsRepository,
   createSqliteProjectRepository,
   createSqliteRequirementRepository,
   createSqliteTaskRepository,
@@ -15,6 +16,7 @@ import { createApp } from "./app.js";
 const port = Number(process.env.PORT ?? 3001);
 const webAssetsRoot = getWebAssetsRoot();
 const app = createApp({
+  executionSettingsRepository: createSqliteExecutionSettingsRepository(),
   projectRepository: createSqliteProjectRepository(),
   requirementRepository: createSqliteRequirementRepository(),
   taskDraftRepository: createSqliteTaskDraftRepository(),

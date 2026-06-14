@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createInMemoryExecutionSettingsRepository,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
@@ -64,6 +65,38 @@ describe("WorkflowFileRepository", () => {
     await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([
       workflowFile
     ]);
+  });
+});
+
+describe("ExecutionSettingsRepository", () => {
+  it("persists model and local Agent proxy settings", async () => {
+    const repository = createInMemoryExecutionSettingsRepository();
+
+    const defaults = await repository.getExecutionSettings();
+
+    expect(defaults).toMatchObject({
+      agentProxyUrl: "",
+      id: "default",
+      modelApiKey: "",
+      modelBaseUrl: "https://api.openai.com/v1",
+      modelName: "gpt-4.1-mini",
+      modelProvider: "openai-compatible"
+    });
+
+    const updated = await repository.updateExecutionSettings({
+      agentProxyUrl: "http://127.0.0.1:8787",
+      modelApiKey: "secret-key",
+      modelBaseUrl: "https://models.example/v1",
+      modelName: "planner-model"
+    });
+
+    expect(updated).toMatchObject({
+      agentProxyUrl: "http://127.0.0.1:8787",
+      modelApiKey: "secret-key",
+      modelBaseUrl: "https://models.example/v1",
+      modelName: "planner-model"
+    });
+    await expect(repository.getExecutionSettings()).resolves.toEqual(updated);
   });
 });
 
@@ -140,26 +173,39 @@ describe("RequirementRepository", () => {
     expect(requirement).toMatchObject({
       body: "Let users turn a requirement into draft tasks.",
       errorMessage: null,
-      status: "running",
+      status: "open",
       title: "Draft task generation",
       workflowFileId: "wff_requirement"
     });
     expect(requirement.id).toMatch(/^req_/);
 
     const failed = await repository.updateRequirementStatus({
-      errorMessage: "Mock executor failed",
+      errorMessage: "Planner failed",
       id: requirement.id,
       status: "failed"
     });
 
     expect(failed).toMatchObject({
-      errorMessage: "Mock executor failed",
+      errorMessage: "Planner failed",
       id: requirement.id,
       status: "failed"
     });
     expect(failed.updatedAt).not.toBe(requirement.updatedAt);
 
     await expect(repository.listRequirements()).resolves.toEqual([failed]);
+  });
+
+  it("soft deletes requirements from active lists", async () => {
+    const repository = createInMemoryRequirementRepository();
+    const requirement = await repository.createRequirement({
+      body: "Remove this requirement without losing audit history.",
+      title: "Soft delete requirement",
+      workflowFileId: "wff_requirement"
+    });
+
+    await repository.deleteRequirement(requirement.id);
+
+    await expect(repository.listRequirements()).resolves.toEqual([]);
   });
 });
 
@@ -239,5 +285,26 @@ describe("TaskDraftRepository", () => {
     await taskDrafts.deleteTaskDraft(second.id);
     await expect(taskDrafts.getTaskDraft(second.id)).resolves.toBeNull();
     await expect(tasks.listTasks()).resolves.toEqual([task]);
+  });
+});
+
+describe("TaskRepository", () => {
+  it("soft deletes tasks associated with a requirement", async () => {
+    const repository = createInMemoryTaskRepository();
+    const task = await repository.createTaskFromDraft({
+      body: "Generated task body",
+      createdAt: new Date().toISOString(),
+      id: "tdf_task",
+      requirementId: "req_requirement",
+      sortOrder: 0,
+      status: "draft",
+      title: "Generated task",
+      updatedAt: new Date().toISOString()
+    });
+
+    await repository.deleteTasksForRequirement("req_requirement");
+
+    await expect(repository.listTasks()).resolves.toEqual([]);
+    await expect(repository.getTask(task.id)).resolves.toBeNull();
   });
 });

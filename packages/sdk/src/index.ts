@@ -48,7 +48,7 @@ export type WorkflowFileMetadata = {
   createdAt: string;
 };
 
-export type RequirementStatus = "running" | "completed" | "failed";
+export type RequirementStatus = "open" | "running" | "completed" | "failed";
 export type TaskDraftStatus = "draft";
 export type TaskStatus = "todo" | "in_progress" | "done";
 
@@ -59,6 +59,7 @@ export type Requirement = {
   workflowFileId: string;
   status: RequirementStatus;
   errorMessage: string | null;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -80,6 +81,7 @@ export type Task = {
   title: string;
   body: string;
   status: TaskStatus;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -122,6 +124,24 @@ export type WorkflowRunWithNodes = {
   nodeRuns: NodeRun[];
 };
 
+export type ExecutionSettings = {
+  modelProvider: "openai-compatible";
+  modelBaseUrl: string;
+  modelName: string;
+  modelConfigured: boolean;
+  agentProxyUrl: string;
+  agentProxyConfigured: boolean;
+  updatedAt: string;
+};
+
+export type UpdateExecutionSettingsRequest = Partial<{
+  modelProvider: "openai-compatible";
+  modelBaseUrl: string;
+  modelName: string;
+  modelApiKey: string;
+  agentProxyUrl: string;
+}>;
+
 export type CreateRequirementRequest = {
   title: string;
   body: string;
@@ -139,6 +159,10 @@ export type TaskDraftOrderItem = {
 };
 
 export type CreateRequirementResponse = {
+  planning?: {
+    reason: "model_not_configured";
+    status: "blocked";
+  };
   requirement: Requirement;
   taskDrafts: TaskDraft[];
 };
@@ -187,6 +211,47 @@ export async function createProject(
   }
 
   return response.json() as Promise<Project>;
+}
+
+export async function getExecutionSettings(
+  baseUrl = ""
+): Promise<ExecutionSettings> {
+  const response = await fetch(`${baseUrl}/execution-settings`);
+
+  if (!response.ok) {
+    throw new Error(`Execution settings load failed with status ${response.status}`);
+  }
+
+  const body = (await response.json()) as {
+    executionSettings: ExecutionSettings;
+  };
+
+  return body.executionSettings;
+}
+
+export async function updateExecutionSettings(
+  input: UpdateExecutionSettingsRequest,
+  baseUrl = ""
+): Promise<ExecutionSettings> {
+  const response = await fetch(`${baseUrl}/execution-settings`, {
+    body: JSON.stringify(input),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "PATCH"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Execution settings update failed");
+  }
+
+  const body = (await response.json()) as {
+    executionSettings: ExecutionSettings;
+  };
+
+  return body.executionSettings;
 }
 
 export async function listWorkflowFiles(
@@ -257,6 +322,21 @@ export async function createRequirement(
   }
 
   return response.json() as Promise<CreateRequirementResponse>;
+}
+
+export async function deleteRequirement(
+  id: string,
+  baseUrl = ""
+): Promise<void> {
+  const response = await fetch(`${baseUrl}/requirements/${id}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Requirement deletion failed");
+  }
 }
 
 export async function listTaskDrafts(baseUrl = ""): Promise<TaskDraft[]> {

@@ -31,6 +31,31 @@ async function createWebAssetsRoot(files: Record<string, string>) {
   return directory;
 }
 
+async function configureModel(app: ReturnType<typeof createApp>) {
+  await app.request("/execution-settings", {
+    body: JSON.stringify({
+      modelApiKey: "test-key"
+    }),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "PATCH"
+  });
+}
+
+function createPlanningApp(options: Parameters<typeof createApp>[0] = {}) {
+  return createApp({
+    requirementPlanner: async ({ requirement }) => [
+      {
+        body: `Planned from requirement: ${requirement.body}`,
+        sortOrder: 0,
+        title: `Task: ${requirement.title}`
+      }
+    ],
+    ...options
+  });
+}
+
 describe("GET /health", () => {
   it("returns the Forge server health payload", async () => {
     const app = createApp();
@@ -143,6 +168,96 @@ describe("Project API", () => {
   });
 });
 
+describe("Execution settings API", () => {
+  it("updates model and local Agent proxy settings without returning the API key", async () => {
+    const app = createApp();
+
+    const updateResponse = await app.request("/execution-settings", {
+      body: JSON.stringify({
+        agentProxyUrl: "http://127.0.0.1:8787",
+        modelApiKey: "secret-key",
+        modelBaseUrl: "https://models.example/v1",
+        modelName: "planner-model"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      executionSettings: {
+        agentProxyConfigured: true,
+        agentProxyUrl: "http://127.0.0.1:8787",
+        modelBaseUrl: "https://models.example/v1",
+        modelConfigured: true,
+        modelName: "planner-model",
+        modelProvider: "openai-compatible"
+      }
+    });
+
+    const response = await app.request("/execution-settings");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(body)).not.toContain("secret-key");
+    expect(body).toMatchObject({
+      executionSettings: {
+        agentProxyConfigured: true,
+        modelConfigured: true
+      }
+    });
+  });
+
+  it("preserves the configured model API key when settings are saved with an empty key field", async () => {
+    const app = createApp();
+
+    await app.request("/execution-settings", {
+      body: JSON.stringify({
+        modelApiKey: "secret-key",
+        modelBaseUrl: "https://models.example/v1",
+        modelName: "planner-model"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    const updateResponse = await app.request("/execution-settings", {
+      body: JSON.stringify({
+        modelApiKey: "",
+        modelBaseUrl: "https://models.example/v2",
+        modelName: "planner-model-v2"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      executionSettings: {
+        modelBaseUrl: "https://models.example/v2",
+        modelConfigured: true,
+        modelName: "planner-model-v2"
+      }
+    });
+
+    const response = await app.request("/execution-settings");
+    const body = await response.json();
+
+    expect(JSON.stringify(body)).not.toContain("secret-key");
+    expect(body).toMatchObject({
+      executionSettings: {
+        modelConfigured: true
+      }
+    });
+  });
+});
+
 describe("Workflow file API", () => {
   it("imports a valid workflow file and stores metadata", async () => {
     const app = createApp();
@@ -243,7 +358,7 @@ nodes:
 });
 
 describe("Requirement API", () => {
-  it("creates a requirement with a requirement workflow and generates task drafts", async () => {
+  it("saves a requirement without generating tasks when the model is not configured", async () => {
     const app = createApp();
 
     const workflowResponse = await app.request("/workflow-files/import", {
@@ -282,34 +397,81 @@ nodes:
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({
+      planning: {
+        reason: "model_not_configured",
+        status: "blocked"
+      },
       requirement: {
         body: "Build the minimum Requirement to Task Draft flow.",
-        status: "completed",
+        status: "open",
         title: "Generate draft tasks",
         workflowFileId: workflowBody.workflowFile.id
       },
-      taskDrafts: [
-        {
-          sortOrder: 0,
-          title: "Draft: Generate draft tasks"
-        }
-      ]
+      taskDrafts: []
     });
 
     const taskDraftsResponse = await app.request("/task-drafts");
 
     expect(taskDraftsResponse.status).toBe(200);
-    await expect(taskDraftsResponse.json()).resolves.toMatchObject({
+    await expect(taskDraftsResponse.json()).resolves.toEqual({ taskDrafts: [] });
+  });
+
+  it("uses a configured planner to create task drafts from a requirement", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "Build the minimum Requirement to Task flow.",
+        title: "Generate tasks",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      requirement: {
+        status: "open",
+        title: "Generate tasks"
+      },
       taskDrafts: [
         {
-          title: "Draft: Generate draft tasks"
+          sortOrder: 0,
+          title: "Task: Generate tasks"
         }
       ]
     });
   });
 
   it("marks the requirement failed when the selected workflow is not requirement-scoped", async () => {
-    const app = createApp();
+    const app = createPlanningApp();
+    await configureModel(app);
 
     const workflowResponse = await app.request("/workflow-files/import", {
       body: JSON.stringify({
@@ -351,6 +513,67 @@ nodes:
         status: "failed"
       },
       error: expect.stringMatching(/requirement-scoped/i)
+    });
+  });
+
+  it("soft deletes a requirement and its generated tasks", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+
+    const workflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: requirement
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/requirements", {
+      body: JSON.stringify({
+        body: "Create work then remove it.",
+        title: "Disposable requirement",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+      taskDrafts: [{ id: string }];
+    };
+
+    await app.request(`/task-drafts/${requirementBody.taskDrafts[0].id}/approve`, {
+      method: "POST"
+    });
+
+    const deleteResponse = await app.request(
+      `/requirements/${requirementBody.requirement.id}`,
+      {
+        method: "DELETE"
+      }
+    );
+
+    expect(deleteResponse.status).toBe(204);
+    await expect((await app.request("/requirements")).json()).resolves.toEqual({
+      requirements: []
+    });
+    await expect((await app.request("/tasks")).json()).resolves.toEqual({
+      tasks: []
     });
   });
 });
@@ -396,7 +619,8 @@ nodes:
   }
 
   it("edits, reorders, deletes and approves task drafts into tasks", async () => {
-    const app = createApp();
+    const app = createPlanningApp();
+    await configureModel(app);
     const created = await createDraft(app);
     const draftId = created.taskDrafts[0].id;
 
@@ -524,9 +748,24 @@ nodes:
     };
   }
 
-  it("starts a task workflow run and advances node runs in DAG order", async () => {
-    const app = createApp();
+  it("starts a task workflow run by enqueueing nodes through the configured Agent proxy", async () => {
+    const agentProxyRequests: unknown[] = [];
+    const app = createPlanningApp({
+      agentProxyClient: async (input) => {
+        agentProxyRequests.push(input);
+      }
+    });
+    await configureModel(app);
     const createdTask = await createTask(app);
+    await app.request("/execution-settings", {
+      body: JSON.stringify({
+        agentProxyUrl: "http://127.0.0.1:8787"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
     const taskWorkflowResponse = await app.request("/workflow-files/import", {
       body: JSON.stringify({
         source: `
@@ -573,20 +812,21 @@ nodes:
       nodeRuns: [
         {
           nodeId: "plan",
-          status: "succeeded"
+          status: "queued"
         },
         {
           dependsOn: ["plan"],
           nodeId: "code",
-          status: "succeeded"
+          status: "queued"
         }
       ],
       workflowRun: {
-        status: "succeeded",
+        status: "running",
         taskId: createdTask.task.id,
         workflowFileId: taskWorkflowBody.workflowFile.id
       }
     });
+    expect(agentProxyRequests).toHaveLength(1);
 
     const runsResponse = await app.request(
       `/tasks/${createdTask.task.id}/workflow-runs`
@@ -597,16 +837,16 @@ nodes:
       workflowRuns: [
         {
           workflowRun: {
-            status: "succeeded"
+            status: "running"
           },
           nodeRuns: [
             {
               nodeId: "plan",
-              status: "succeeded"
+              status: "queued"
             },
             {
               nodeId: "code",
-              status: "succeeded"
+              status: "queued"
             }
           ]
         }
@@ -614,8 +854,54 @@ nodes:
     });
   });
 
+  it("rejects workflow run starts until a local Agent proxy is configured", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const taskWorkflowResponse = await app.request("/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+nodes:
+  - id: plan
+    type: planning
+    executor: skill:plan
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/Agent proxy/i)
+    });
+  });
+
   it("rejects non task-scoped workflow files", async () => {
-    const app = createApp();
+    const app = createPlanningApp();
+    await configureModel(app);
     const createdTask = await createTask(app);
     const requirementWorkflowResponse = await app.request("/workflow-files/import", {
       body: JSON.stringify({

@@ -2,17 +2,18 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const artifactStorageModes = ["local-only", "cloud"] as const;
 export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
 export const workflowScopes = ["requirement", "task"] as const;
-export const requirementStatuses = ["running", "completed", "failed"] as const;
+export const requirementStatuses = ["open", "running", "completed", "failed"] as const;
 export const taskDraftStatuses = ["draft"] as const;
 export const taskStatuses = ["todo", "in_progress", "done"] as const;
 export const workflowRunStatuses = ["running", "succeeded", "failed"] as const;
+export const modelProviderKinds = ["openai-compatible"] as const;
 export const nodeRunStatuses = [
   "idle",
   "queued",
@@ -33,6 +34,7 @@ export type TaskDraftStatus = (typeof taskDraftStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
 export type WorkflowRunStatus = (typeof workflowRunStatuses)[number];
 export type NodeRunStatus = (typeof nodeRunStatuses)[number];
+export type ModelProviderKind = (typeof modelProviderKinds)[number];
 
 export type DatabaseStatus = {
   configured: boolean;
@@ -83,6 +85,31 @@ export type WorkflowFileRepository = {
   listWorkflowFileMetadata(): Promise<WorkflowFileMetadata[]>;
 };
 
+export type ExecutionSettings = {
+  id: "default";
+  modelProvider: ModelProviderKind;
+  modelBaseUrl: string;
+  modelName: string;
+  modelApiKey: string;
+  agentProxyUrl: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpdateExecutionSettingsInput = Partial<
+  Pick<
+    ExecutionSettings,
+    "agentProxyUrl" | "modelApiKey" | "modelBaseUrl" | "modelName" | "modelProvider"
+  >
+>;
+
+export type ExecutionSettingsRepository = {
+  getExecutionSettings(): Promise<ExecutionSettings>;
+  updateExecutionSettings(
+    input: UpdateExecutionSettingsInput
+  ): Promise<ExecutionSettings>;
+};
+
 export type Requirement = {
   id: string;
   title: string;
@@ -90,6 +117,7 @@ export type Requirement = {
   workflowFileId: string;
   status: RequirementStatus;
   errorMessage: string | null;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -108,6 +136,7 @@ export type UpdateRequirementStatusInput = {
 
 export type RequirementRepository = {
   createRequirement(input: CreateRequirementInput): Promise<Requirement>;
+  deleteRequirement(id: string): Promise<void>;
   listRequirements(): Promise<Requirement[]>;
   updateRequirementStatus(
     input: UpdateRequirementStatusInput
@@ -158,12 +187,14 @@ export type Task = {
   title: string;
   body: string;
   status: TaskStatus;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type TaskRepository = {
   createTaskFromDraft(draft: TaskDraft): Promise<Task>;
+  deleteTasksForRequirement(requirementId: string): Promise<void>;
   getTask(id: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
 };
@@ -244,6 +275,19 @@ const workflowFiles = sqliteTable("workflow_files", {
 
 type WorkflowFileRow = typeof workflowFiles.$inferSelect;
 
+const executionSettings = sqliteTable("execution_settings", {
+  id: text("id").primaryKey(),
+  modelProvider: text("model_provider").notNull(),
+  modelBaseUrl: text("model_base_url").notNull(),
+  modelName: text("model_name").notNull(),
+  modelApiKey: text("model_api_key").notNull(),
+  agentProxyUrl: text("agent_proxy_url").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+type ExecutionSettingsRow = typeof executionSettings.$inferSelect;
+
 const requirements = sqliteTable("requirements", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -251,6 +295,7 @@ const requirements = sqliteTable("requirements", {
   workflowFileId: text("workflow_file_id").notNull(),
   status: text("status").notNull(),
   errorMessage: text("error_message"),
+  deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
 });
@@ -276,6 +321,7 @@ const tasks = sqliteTable("tasks", {
   title: text("title").notNull(),
   body: text("body").notNull(),
   status: text("status").notNull(),
+  deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
 });
@@ -321,6 +367,10 @@ export function createInMemoryWorkflowFileRepository(): WorkflowFileRepository {
   return createWorkflowFileRepository(new Database(":memory:"));
 }
 
+export function createInMemoryExecutionSettingsRepository(): ExecutionSettingsRepository {
+  return createExecutionSettingsRepository(new Database(":memory:"));
+}
+
 export function createInMemoryRequirementRepository(): RequirementRepository {
   return createRequirementRepository(new Database(":memory:"));
 }
@@ -349,6 +399,13 @@ export function createSqliteWorkflowFileRepository(
 ): WorkflowFileRepository {
   mkdirSync(dirname(filename), { recursive: true });
   return createWorkflowFileRepository(new Database(filename));
+}
+
+export function createSqliteExecutionSettingsRepository(
+  filename = ".forge/forge.sqlite"
+): ExecutionSettingsRepository {
+  mkdirSync(dirname(filename), { recursive: true });
+  return createExecutionSettingsRepository(new Database(filename));
 }
 
 export function createSqliteRequirementRepository(
@@ -430,6 +487,18 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
     )
   `);
   db.run(`
+    CREATE TABLE IF NOT EXISTS execution_settings (
+      id TEXT PRIMARY KEY NOT NULL,
+      model_provider TEXT NOT NULL,
+      model_base_url TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      model_api_key TEXT NOT NULL,
+      agent_proxy_url TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.run(`
     CREATE TABLE IF NOT EXISTS requirements (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
@@ -437,6 +506,7 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       workflow_file_id TEXT NOT NULL,
       status TEXT NOT NULL,
       error_message TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -460,6 +530,7 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       status TEXT NOT NULL,
+      deleted_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -486,6 +557,67 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(db, "requirements", "deleted_at", "TEXT");
+  ensureSqliteColumn(db, "tasks", "deleted_at", "TEXT");
+  db.run("UPDATE requirements SET status = 'open' WHERE status = 'completed'");
+}
+
+function ensureSqliteColumn(
+  db: BetterSQLite3Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+) {
+  try {
+    db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  } catch (error) {
+    if (!getSqliteErrorMessage(error).includes("duplicate column name")) {
+      throw error;
+    }
+  }
+}
+
+function getSqliteErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const causeMessage: string =
+      "cause" in error && error.cause
+        ? ` ${getSqliteErrorMessage(error.cause)}`
+        : "";
+
+    return `${error.message}${causeMessage}`;
+  }
+
+  return String(error);
+}
+
+async function ensureExecutionSettings(
+  db: BetterSQLite3Database
+): Promise<ExecutionSettings> {
+  const existing = await db
+    .select()
+    .from(executionSettings)
+    .where(eq(executionSettings.id, "default"))
+    .get();
+
+  if (existing) {
+    return toExecutionSettings(existing);
+  }
+
+  const now = new Date().toISOString();
+  const settings: ExecutionSettings = {
+    agentProxyUrl: "",
+    createdAt: now,
+    id: "default",
+    modelApiKey: "",
+    modelBaseUrl: "https://api.openai.com/v1",
+    modelName: "gpt-4.1-mini",
+    modelProvider: "openai-compatible",
+    updatedAt: now
+  };
+
+  await db.insert(executionSettings).values(settings).run();
+
+  return settings;
 }
 
 function createWorkflowFileRepository(
@@ -534,6 +666,49 @@ function createWorkflowFileRepository(
   };
 }
 
+function createExecutionSettingsRepository(
+  sqlite: Database.Database
+): ExecutionSettingsRepository {
+  const db = drizzle(sqlite);
+  initializeSqliteSchema(db);
+
+  return {
+    async getExecutionSettings() {
+      return ensureExecutionSettings(db);
+    },
+
+    async updateExecutionSettings(input) {
+      const current = await ensureExecutionSettings(db);
+      const updatedAt = nextTimestamp(current.updatedAt);
+      const nextModelApiKey = input.modelApiKey?.trim();
+      const updated: ExecutionSettings = {
+        ...current,
+        agentProxyUrl: input.agentProxyUrl?.trim() ?? current.agentProxyUrl,
+        modelApiKey: nextModelApiKey ? nextModelApiKey : current.modelApiKey,
+        modelBaseUrl: input.modelBaseUrl?.trim() ?? current.modelBaseUrl,
+        modelName: input.modelName?.trim() ?? current.modelName,
+        modelProvider: input.modelProvider ?? current.modelProvider,
+        updatedAt
+      };
+
+      await db
+        .update(executionSettings)
+        .set({
+          agentProxyUrl: updated.agentProxyUrl,
+          modelApiKey: updated.modelApiKey,
+          modelBaseUrl: updated.modelBaseUrl,
+          modelName: updated.modelName,
+          modelProvider: updated.modelProvider,
+          updatedAt
+        })
+        .where(eq(executionSettings.id, updated.id))
+        .run();
+
+      return updated;
+    }
+  };
+}
+
 function createRequirementRepository(
   sqlite: Database.Database
 ): RequirementRepository {
@@ -548,8 +723,9 @@ function createRequirementRepository(
         title: input.title.trim(),
         body: input.body.trim(),
         workflowFileId: input.workflowFileId,
-        status: "running",
+        status: "open",
         errorMessage: null,
+        deletedAt: null,
         createdAt: now,
         updatedAt: now
       };
@@ -559,10 +735,34 @@ function createRequirementRepository(
       return requirement;
     },
 
+    async deleteRequirement(id) {
+      const row = await db
+        .select()
+        .from(requirements)
+        .where(and(eq(requirements.id, id), isNull(requirements.deletedAt)))
+        .get();
+
+      if (!row) {
+        throw new Error(`Requirement not found: ${id}`);
+      }
+
+      const deletedAt = nextTimestamp(row.updatedAt);
+
+      await db
+        .update(requirements)
+        .set({
+          deletedAt,
+          updatedAt: deletedAt
+        })
+        .where(eq(requirements.id, id))
+        .run();
+    },
+
     async listRequirements() {
       const rows = await db
         .select()
         .from(requirements)
+        .where(isNull(requirements.deletedAt))
         .orderBy(asc(requirements.createdAt));
 
       return rows.map(toRequirement);
@@ -572,7 +772,7 @@ function createRequirementRepository(
       const row = await db
         .select()
         .from(requirements)
-        .where(eq(requirements.id, input.id))
+        .where(and(eq(requirements.id, input.id), isNull(requirements.deletedAt)))
         .get();
 
       if (!row) {
@@ -716,6 +916,7 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
         title: draft.title,
         body: draft.body,
         status: "todo",
+        deletedAt: null,
         createdAt: now,
         updatedAt: now
       };
@@ -725,18 +926,35 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
       return task;
     },
 
+    async deleteTasksForRequirement(requirementId) {
+      const deletedAt = new Date().toISOString();
+
+      await db
+        .update(tasks)
+        .set({
+          deletedAt,
+          updatedAt: deletedAt
+        })
+        .where(and(eq(tasks.requirementId, requirementId), isNull(tasks.deletedAt)))
+        .run();
+    },
+
     async getTask(id) {
       const row = await db
         .select()
         .from(tasks)
-        .where(eq(tasks.id, id))
+        .where(and(eq(tasks.id, id), isNull(tasks.deletedAt)))
         .get();
 
       return row ? toTask(row) : null;
     },
 
     async listTasks() {
-      const rows = await db.select().from(tasks).orderBy(asc(tasks.createdAt));
+      const rows = await db
+        .select()
+        .from(tasks)
+        .where(isNull(tasks.deletedAt))
+        .orderBy(asc(tasks.createdAt));
 
       return rows.map(toTask);
     }
@@ -891,6 +1109,19 @@ function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
   };
 }
 
+function toExecutionSettings(row: ExecutionSettingsRow): ExecutionSettings {
+  return {
+    agentProxyUrl: row.agentProxyUrl,
+    createdAt: row.createdAt,
+    id: "default",
+    modelApiKey: row.modelApiKey,
+    modelBaseUrl: row.modelBaseUrl,
+    modelName: row.modelName,
+    modelProvider: row.modelProvider as ModelProviderKind,
+    updatedAt: row.updatedAt
+  };
+}
+
 function toRequirement(row: RequirementRow): Requirement {
   return {
     id: row.id,
@@ -899,6 +1130,7 @@ function toRequirement(row: RequirementRow): Requirement {
     workflowFileId: row.workflowFileId,
     status: row.status as RequirementStatus,
     errorMessage: row.errorMessage,
+    deletedAt: row.deletedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -924,6 +1156,7 @@ function toTask(row: TaskRow): Task {
     title: row.title,
     body: row.body,
     status: row.status as TaskStatus,
+    deletedAt: row.deletedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };

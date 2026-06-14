@@ -1,12 +1,12 @@
 import {
   createHealthPayload,
-  getNextRunnableNode,
   parseWorkflowFile,
   planWorkflowDag,
   workflowFileSchema
 } from "@forge/core";
 import {
   artifactStorageModes,
+  createInMemoryExecutionSettingsRepository,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
@@ -14,13 +14,17 @@ import {
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
   dbStrategies,
-  type NodeRun,
+  modelProviderKinds,
+  type ExecutionSettings,
+  type ExecutionSettingsRepository,
   type ProjectRepository,
-  type Requirement,
   type RequirementRepository,
+  type Task,
   type TaskDraft,
   type TaskDraftRepository,
   type TaskRepository,
+  type WorkflowFileMetadata,
+  type WorkflowRun,
   type WorkflowRunRepository,
   type WorkflowFileRepository
 } from "@forge/db";
@@ -44,6 +48,14 @@ const createRequirementSchema = z.object({
   workflowFileId: z.string().trim().min(1)
 });
 
+const updateExecutionSettingsSchema = z.object({
+  agentProxyUrl: z.string().trim().optional(),
+  modelApiKey: z.string().trim().optional(),
+  modelBaseUrl: z.string().trim().min(1).optional(),
+  modelName: z.string().trim().min(1).optional(),
+  modelProvider: z.enum(modelProviderKinds).optional()
+});
+
 const updateTaskDraftSchema = z.object({
   title: z.string().trim().min(1),
   body: z.string().trim().min(1)
@@ -59,7 +71,10 @@ const reorderTaskDraftsSchema = z.object({
 });
 
 type AppDependencies = {
+  agentProxyClient?: AgentProxyClient;
+  executionSettingsRepository?: ExecutionSettingsRepository;
   projectRepository?: ProjectRepository;
+  requirementPlanner?: RequirementPlanner;
   requirementRepository?: RequirementRepository;
   taskDraftRepository?: TaskDraftRepository;
   taskRepository?: TaskRepository;
@@ -68,8 +83,35 @@ type AppDependencies = {
   webAssetsRoot?: string;
 };
 
+type RequirementPlanner = (input: {
+  requirement: {
+    id: string;
+    title: string;
+    body: string;
+  };
+  settings: ExecutionSettings;
+  workflowFile: WorkflowFileMetadata;
+}) => Promise<Array<Pick<TaskDraft, "body" | "sortOrder" | "title">>>;
+
+type AgentProxyClient = (input: {
+  agentProxyUrl: string;
+  nodeRuns: Array<{
+    dependsOn: string[];
+    id: string;
+    nodeId: string;
+    sortOrder: number;
+    status: string;
+  }>;
+  task: Task;
+  workflowFile: WorkflowFileMetadata;
+  workflowRun: WorkflowRun;
+}) => Promise<void>;
+
 export function createApp({
+  agentProxyClient,
+  executionSettingsRepository,
   projectRepository,
+  requirementPlanner,
   requirementRepository,
   taskDraftRepository,
   taskRepository,
@@ -78,6 +120,8 @@ export function createApp({
   webAssetsRoot
 }: AppDependencies = {}) {
   const app = new Hono();
+  const executionSettings =
+    executionSettingsRepository ?? createInMemoryExecutionSettingsRepository();
   const projects = projectRepository ?? createInMemoryProjectRepository();
   const requirements =
     requirementRepository ?? createInMemoryRequirementRepository();
@@ -87,8 +131,34 @@ export function createApp({
     workflowRunRepository ?? createInMemoryWorkflowRunRepository();
   const workflowFiles =
     workflowFileRepository ?? createInMemoryWorkflowFileRepository();
+  const planner = requirementPlanner ?? planRequirementWithModel;
+  const proxyClient = agentProxyClient ?? startWorkflowRunViaAgentProxy;
 
   app.get("/health", (c) => c.json(createHealthPayload()));
+
+  app.get("/execution-settings", async (c) => {
+    return c.json({
+      executionSettings: serializeExecutionSettings(
+        await executionSettings.getExecutionSettings()
+      )
+    });
+  });
+
+  app.patch("/execution-settings", async (c) => {
+    const payload = updateExecutionSettingsSchema.safeParse(
+      await c.req.json().catch(() => null)
+    );
+
+    if (!payload.success) {
+      return c.json({ error: "Invalid execution settings payload" }, 400);
+    }
+
+    return c.json({
+      executionSettings: serializeExecutionSettings(
+        await executionSettings.updateExecutionSettings(payload.data)
+      )
+    });
+  });
 
   app.get("/projects", async (c) => {
     return c.json({ projects: await projects.listProjects() });
@@ -162,18 +232,43 @@ export function createApp({
         throw new Error("Selected workflow file must be requirement-scoped");
       }
 
-      const generatedTaskDrafts = await runMockRequirementWorkflow(
+      const settings = await executionSettings.getExecutionSettings();
+
+      if (!settings.modelApiKey) {
+        return c.json(
+          {
+            planning: {
+              reason: "model_not_configured",
+              status: "blocked"
+            },
+            requirement,
+            taskDrafts: []
+          },
+          201
+        );
+      }
+
+      const plannedTaskDrafts = await planner({
         requirement,
-        async (taskDraft) => taskDrafts.createTaskDraft(taskDraft)
-      );
-      const completedRequirement = await requirements.updateRequirementStatus({
-        id: requirement.id,
-        status: "completed"
+        settings,
+        workflowFile
       });
+      const generatedTaskDrafts = [];
+
+      for (const [index, taskDraft] of plannedTaskDrafts.entries()) {
+        generatedTaskDrafts.push(
+          await taskDrafts.createTaskDraft({
+            body: taskDraft.body,
+            requirementId: requirement.id,
+            sortOrder: taskDraft.sortOrder ?? index,
+            title: taskDraft.title
+          })
+        );
+      }
 
       return c.json(
         {
-          requirement: completedRequirement,
+          requirement,
           taskDrafts: generatedTaskDrafts
         },
         201
@@ -194,6 +289,19 @@ export function createApp({
         },
         400
       );
+    }
+  });
+
+  app.delete("/requirements/:id", async (c) => {
+    const requirementId = c.req.param("id");
+
+    try {
+      await requirements.deleteRequirement(requirementId);
+      await tasks.deleteTasksForRequirement(requirementId);
+
+      return c.body(null, 204);
+    } catch (error) {
+      return c.json({ error: getErrorMessage(error) }, 404);
     }
   });
 
@@ -289,37 +397,50 @@ export function createApp({
         throw new Error("Selected workflow file must be task-scoped");
       }
 
+      const settings = await executionSettings.getExecutionSettings();
+
+      if (!settings.agentProxyUrl) {
+        return c.json(
+          {
+            error:
+              "Configure local Agent proxy before starting Workflow Runs"
+          },
+          409
+        );
+      }
+
       const workflow = workflowFileSchema.parse(JSON.parse(workflowFile.definition));
       const workflowRun = await workflowRuns.createWorkflowRun({
         taskId: c.req.param("id"),
         workflowFileId: workflowFile.id
       });
       const plannedNodes = planWorkflowDag(workflow);
+      const nodeRuns = [];
 
       for (const [index, node] of plannedNodes.entries()) {
-        await workflowRuns.createNodeRun({
-          dependsOn: node.dependsOn,
-          nodeId: node.id,
-          sortOrder: index,
-          status: "queued",
-          workflowRunId: workflowRun.id
-        });
+        nodeRuns.push(
+          await workflowRuns.createNodeRun({
+            dependsOn: node.dependsOn,
+            nodeId: node.id,
+            sortOrder: index,
+            status: "queued",
+            workflowRunId: workflowRun.id
+          })
+        );
       }
 
-      const completedNodeRuns = await runMockTaskWorkflow(
-        workflowRun.id,
-        async () => workflowRuns.listNodeRuns(workflowRun.id),
-        async (nodeRun) => workflowRuns.updateNodeRunStatus(nodeRun)
-      );
-      const completedWorkflowRun = await workflowRuns.updateWorkflowRunStatus({
-        id: workflowRun.id,
-        status: "succeeded"
+      await proxyClient({
+        agentProxyUrl: settings.agentProxyUrl,
+        nodeRuns,
+        task,
+        workflowFile,
+        workflowRun
       });
 
       return c.json(
         {
-          nodeRuns: completedNodeRuns,
-          workflowRun: completedWorkflowRun
+          nodeRuns,
+          workflowRun
         },
         201
       );
@@ -367,6 +488,7 @@ export function createApp({
 }
 
 const apiPathPrefixes = [
+  "/execution-settings",
   "/health",
   "/projects",
   "/requirements",
@@ -385,47 +507,118 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function runMockRequirementWorkflow(
-  requirement: Requirement,
-  createTaskDraft: (
-    input: Pick<TaskDraft, "body" | "requirementId" | "sortOrder" | "title">
-  ) => Promise<TaskDraft>
-) {
-  return [
-    await createTaskDraft({
-      body: `Generated from requirement: ${requirement.body}`,
-      requirementId: requirement.id,
-      sortOrder: 0,
-      title: `Draft: ${requirement.title}`
-    })
-  ];
+function serializeExecutionSettings(settings: ExecutionSettings) {
+  return {
+    agentProxyConfigured: settings.agentProxyUrl.length > 0,
+    agentProxyUrl: settings.agentProxyUrl,
+    modelBaseUrl: settings.modelBaseUrl,
+    modelConfigured: settings.modelApiKey.length > 0,
+    modelName: settings.modelName,
+    modelProvider: settings.modelProvider,
+    updatedAt: settings.updatedAt
+  };
 }
 
-async function runMockTaskWorkflow(
-  workflowRunId: string,
-  listNodeRuns: () => Promise<NodeRun[]>,
-  updateNodeRunStatus: (input: {
-    id: string;
-    status: "running" | "succeeded";
-  }) => Promise<NodeRun>
-) {
-  let nodeRuns = await listNodeRuns();
-  let next = getNextRunnableNode(nodeRuns);
-
-  while (next) {
-    const nodeRun = nodeRuns.find(
-      (candidate) => candidate.nodeId === next?.nodeId
-    );
-
-    if (!nodeRun) {
-      throw new Error(`Node run not found in workflow run ${workflowRunId}`);
+async function planRequirementWithModel({
+  requirement,
+  settings,
+  workflowFile
+}: Parameters<RequirementPlanner>[0]) {
+  const response = await fetch(
+    `${settings.modelBaseUrl.replace(/\/$/, "")}/chat/completions`,
+    {
+      body: JSON.stringify({
+        messages: [
+          {
+            content:
+              "You split Forge Requirements into executable Tasks. Return strict JSON only: {\"tasks\":[{\"title\":\"...\",\"body\":\"...\"}]}",
+            role: "system"
+          },
+          {
+            content: JSON.stringify({
+              requirement: {
+                body: requirement.body,
+                title: requirement.title
+              },
+              workflowFile: {
+                name: workflowFile.name,
+                scope: workflowFile.scope
+              }
+            }),
+            role: "user"
+          }
+        ],
+        model: settings.modelName,
+        response_format: { type: "json_object" },
+        temperature: 0.2
+      }),
+      headers: {
+        authorization: `Bearer ${settings.modelApiKey}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
     }
+  );
 
-    await updateNodeRunStatus({ id: nodeRun.id, status: "running" });
-    await updateNodeRunStatus({ id: nodeRun.id, status: "succeeded" });
-    nodeRuns = await listNodeRuns();
-    next = getNextRunnableNode(nodeRuns);
+  if (!response.ok) {
+    throw new Error(`Model planner failed with status ${response.status}`);
   }
 
-  return nodeRuns;
+  const body = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = body.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error("Model planner returned an empty response");
+  }
+
+  const parsed = JSON.parse(content) as {
+    tasks?: Array<{ body?: string; title?: string }>;
+  };
+  const tasks = parsed.tasks ?? [];
+
+  if (tasks.length === 0) {
+    throw new Error("Model planner returned no Tasks");
+  }
+
+  return tasks.map((task, index) => {
+    if (!task.title?.trim() || !task.body?.trim()) {
+      throw new Error("Model planner returned an invalid Task");
+    }
+
+    return {
+      body: task.body.trim(),
+      sortOrder: index,
+      title: task.title.trim()
+    };
+  });
+}
+
+async function startWorkflowRunViaAgentProxy({
+  agentProxyUrl,
+  nodeRuns,
+  task,
+  workflowFile,
+  workflowRun
+}: Parameters<AgentProxyClient>[0]) {
+  const response = await fetch(
+    `${agentProxyUrl.replace(/\/$/, "")}/workflow-runs`,
+    {
+      body: JSON.stringify({
+        nodeRuns,
+        task,
+        workflowFile,
+        workflowRun
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Agent proxy rejected Workflow Run with status ${response.status}`);
+  }
 }
