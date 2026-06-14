@@ -428,6 +428,7 @@ export function App() {
           <label>
             Project name
             <input
+              data-testid="project-name-input"
               minLength={1}
               onChange={(event) => setProjectName(event.target.value)}
               placeholder="Forge workspace"
@@ -438,6 +439,7 @@ export function App() {
           <label>
             Artifact storage
             <select
+              data-testid="artifact-storage-select"
               onChange={(event) =>
                 setArtifactStorageMode(event.target.value as ArtifactStorageMode)
               }
@@ -450,6 +452,7 @@ export function App() {
           <label>
             Database strategy
             <select
+              data-testid="db-strategy-select"
               onChange={(event) => setDbStrategy(event.target.value as DbStrategy)}
               value={dbStrategy}
             >
@@ -492,6 +495,7 @@ export function App() {
           <label>
             .wf source
             <textarea
+              data-testid="workflow-source-textarea"
               onChange={(event) => setWorkflowSource(event.target.value)}
               spellCheck={false}
               value={workflowSource}
@@ -544,6 +548,7 @@ export function App() {
           <label>
             Requirement title
             <input
+              data-testid="requirement-title-input"
               minLength={1}
               onChange={(event) => setRequirementTitle(event.target.value)}
               placeholder="Plan Forge dogfooding"
@@ -554,6 +559,7 @@ export function App() {
           <label>
             Requirement body
             <textarea
+              data-testid="requirement-body-textarea"
               onChange={(event) => setRequirementBody(event.target.value)}
               placeholder="Describe the desired outcome"
               required
@@ -563,6 +569,7 @@ export function App() {
           <label>
             Requirement workflow
             <select
+              data-testid="requirement-workflow-select"
               disabled={requirementWorkflowFiles.length === 0}
               onChange={(event) =>
                 setSelectedRequirementWorkflowId(event.target.value)
@@ -631,6 +638,7 @@ export function App() {
                       Draft title
                       <input
                         defaultValue={taskDraft.title}
+                        data-testid="draft-title-input"
                         name="title"
                         required
                       />
@@ -639,6 +647,7 @@ export function App() {
                       Draft body
                       <textarea
                         defaultValue={taskDraft.body}
+                        data-testid="draft-body-textarea"
                         name="body"
                         required
                       />
@@ -716,6 +725,7 @@ export function App() {
                             <label>
                               Task workflow
                               <select
+                                data-testid="task-workflow-select"
                                 disabled={taskWorkflowFiles.length === 0}
                                 onChange={(event) =>
                                   setSelectedTaskWorkflowId(event.target.value)
