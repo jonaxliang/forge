@@ -2,6 +2,8 @@
 
 Forge 是一个 AI work workflow 控制平面，用来把 Requirement、Task、`.wf` 工作流、Workflow Run、Node Run、Artifact 和本地/远端 agent 执行连接成可追踪的工作流。
 
+Forge 默认是一个开箱即用的一体化 Web control plane：Server 内置 Web 控制台；官方部署和私有部署使用同一套运行模型；CLI/Bridge 是增强本地 agent 接入的可选能力。
+
 当前仓库是 TypeScript monorepo，包含 Web 控制台、Hono API Server、`forgecli` CLI、核心领域逻辑、数据库层、SDK 和共享 UI。
 
 ## 环境要求
@@ -15,9 +17,37 @@ Forge 是一个 AI work workflow 控制平面，用来把 Requirement、Task、`
 pnpm install
 ```
 
-## 本地启动
+## 一体化启动
 
-Forge 本地开发需要同时启动 Server 和 Web。
+默认启动形态是一个 Forge Server 同时提供逻辑后端和内置 Web 控制台：
+
+```bash
+pnpm start
+```
+
+默认访问：
+
+```text
+http://localhost:3001
+```
+
+默认端口是 `3001`。如果需要临时改端口，可以设置 `PORT`：
+
+```bash
+PORT=3999 pnpm start
+```
+
+`pnpm start` 会先构建 Web 控制台，再构建并启动 Server。生产态 Server 会从 `apps/web/dist` 托管 Web 静态资源，并在同一个端口提供后端 API。
+
+如果私有部署时 Web 静态资源放在其他目录，可以通过环境变量指定：
+
+```bash
+FORGE_WEB_ASSETS_ROOT=/path/to/web/dist pnpm --filter @forge/server start
+```
+
+## 开发启动
+
+开发期仍然可以分别启动 Server 和 Web，以获得 Vite 热更新。
 
 启动 API Server：
 

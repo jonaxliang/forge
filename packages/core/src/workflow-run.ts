@@ -1,4 +1,4 @@
-import type { WorkflowFile, WorkflowNode } from "./workflow-file";
+import type { WorkflowFile, WorkflowNode } from "./workflow-file.js";
 
 export const nodeStatuses = [
   "idle",

@@ -4,6 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@9.15.4",
   "scripts": {
+    "start": "pnpm --filter @forge/web build && pnpm --filter @forge/server... build && pnpm --filter @forge/server start",
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",

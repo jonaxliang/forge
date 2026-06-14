@@ -24,6 +24,7 @@ import {
   type WorkflowRunRepository,
   type WorkflowFileRepository
 } from "@forge/db";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -64,6 +65,7 @@ type AppDependencies = {
   taskRepository?: TaskRepository;
   workflowRunRepository?: WorkflowRunRepository;
   workflowFileRepository?: WorkflowFileRepository;
+  webAssetsRoot?: string;
 };
 
 export function createApp({
@@ -72,7 +74,8 @@ export function createApp({
   taskDraftRepository,
   taskRepository,
   workflowRunRepository,
-  workflowFileRepository
+  workflowFileRepository,
+  webAssetsRoot
 }: AppDependencies = {}) {
   const app = new Hono();
   const projects = projectRepository ?? createInMemoryProjectRepository();
@@ -343,7 +346,39 @@ export function createApp({
     return c.json({ workflowRuns: workflowRunsWithNodes });
   });
 
+  if (webAssetsRoot) {
+    app.use(
+      "*",
+      serveStatic({
+        root: webAssetsRoot,
+        rewriteRequestPath: (path) => (path === "/" ? "/index.html" : path)
+      })
+    );
+    app.get("*", async (c, next) => {
+      if (isApiPath(c.req.path)) {
+        return next();
+      }
+
+      return serveStatic({ path: "index.html", root: webAssetsRoot })(c, next);
+    });
+  }
+
   return app;
+}
+
+const apiPathPrefixes = [
+  "/health",
+  "/projects",
+  "/requirements",
+  "/task-drafts",
+  "/tasks",
+  "/workflow-files"
+];
+
+function isApiPath(path: string) {
+  return apiPathPrefixes.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  );
 }
 
 function getErrorMessage(error: unknown) {
