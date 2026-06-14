@@ -28,6 +28,12 @@
 15. [0015 内置三类 `.wf` 工作流文件](./0015-builtin-workflows.md)
 16. [0016 Forge 自举 dogfood 准入](./0016-self-hosting-readiness.md)
 17. [0017 禁止孤儿 Task Workflow Run](./0017-prevent-orphan-workflow-runs.md)
+18. [0018 Agent Binding 注册与管理最小链路](./0018-agent-binding-registration.md)
+19. [0019 Workflow Node 分配 Agent Binding](./0019-workflow-node-agent-binding-assignment.md)
+20. [0020 Agent Connector metadata 与 capability registry](./0020-agent-connector-metadata-capability-registry.md)
+21. [0021 Bridge 注册 Agent Binding 与心跳状态同步](./0021-bridge-agent-binding-heartbeat.md)
+22. [0022 CLI Connector 通过 Agent Binding 执行 Node Run](./0022-cli-connector-agent-binding-node-run.md)
+23. [0023 MCP Connector 通过 Agent Binding 接入 Codex 风格 agent](./0023-mcp-connector-codex-agent-binding.md)
 
 ## 建议执行顺序
 
@@ -47,6 +53,12 @@
     -> 0012
       -> 0013
       -> 0014
+  -> 0018
+    -> 0019
+    -> 0020
+      -> 0022
+      -> 0023
+    -> 0021
   -> 0015
     -> 0016
 ```

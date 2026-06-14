@@ -7,7 +7,7 @@
     "forgecli": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
     "dev": "tsx src/index.ts",
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",

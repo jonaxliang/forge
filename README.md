@@ -109,6 +109,18 @@ pnpm typecheck
 pnpm build
 ```
 
+只编译 `forgecli`：
+
+```bash
+pnpm build:forgecli
+```
+
+`forgecli` 的编译产物输出到：
+
+```text
+apps/cli/dist/index.js
+```
+
 运行 lint：
 
 ```bash

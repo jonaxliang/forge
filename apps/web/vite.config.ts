@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/health": "http://localhost:3001",
+      "/execution-settings": "http://localhost:3001",
       "/projects": "http://localhost:3001",
       "/requirements": "http://localhost:3001",
       "/task-drafts": "http://localhost:3001",

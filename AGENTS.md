@@ -101,6 +101,24 @@ Use the vocabulary in `CONTEXT.md` and do not replace it with near-synonyms.
 - Keep Cat Factory View expressive but still operational: status, logs, artifacts, approvals, retries, and blocked reasons must remain clear.
 - Use stable dimensions for boards, toolbars, controls, and repeated items so UI state changes do not shift layout.
 
+## Web Design Standards
+
+Forge Web should read as product software rather than a promotional AI website: calm, precise, spacious enough to scan, and visually restrained.
+
+- Use a neutral light workspace by default: off-white page background, white or near-white panels, charcoal text, cool gray borders, and one teal Forge accent. Avoid purple/blue AI gradients, neon glow, decorative blobs, and theme switching between sections.
+- Treat color semantically. Teal is for primary actions, focus, selected states, and active status. Success, warning, and danger colors are reserved for real state, not decoration.
+- Prefer an 8px control radius, 10px record/card radius, 14px panel radius, and 18px shell/modal radius. Do not mix unrelated radius systems in the same screen.
+- Keep page composition operational. The first viewport should expose the active Project, next action, current status, and the path to generated work. Do not hide workflow controls behind marketing hero copy.
+- Use quiet hierarchy: compact headings, medium-weight labels, tabular or mono styling only for IDs/counts/log-like values, and no oversized hero typography inside app surfaces.
+- Prefer hairline borders, subtle inset surfaces, and low-opacity shadows. Cards should group repeated records or modal content; avoid cards inside cards when a divider or grid gap is enough.
+- Use labels above inputs, visible helper text when needed, and no placeholder-as-label patterns. Focus rings must be obvious and meet contrast expectations.
+- Buttons must have one-line labels, clear contrast, stable dimensions, hover and active feedback, and disabled states. Use icon buttons only when a recognizable icon exists and the action has an accessible label.
+- Boards, ribbons, task columns, toolbars, and repeated rows must use stable grid tracks and min heights so loading, empty, hover, and status changes do not shift layout.
+- Empty states should be concise and actionable. Avoid cute filler copy, fake precision, decorative status dots, and generic "AI magic" language.
+- Motion should be minimal and purposeful: hover/press transitions and small state changes only unless a workflow transition needs more. Respect `prefers-reduced-motion`.
+- Mobile layouts must collapse explicitly to one column, preserve action order, and keep forms and task controls usable at 320px width.
+- Before finishing frontend work, inspect the page in a browser and check for clipped text, overlapping controls, low-contrast labels, unstable layout, and broken empty states.
+
 ## Coding Workflow
 
 - Use `rg` or `rg --files` for searching whenever possible.
