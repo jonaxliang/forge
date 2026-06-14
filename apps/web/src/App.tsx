@@ -439,449 +439,299 @@ export function App() {
       workflowImportStatus,
       projectStatus
     ].find((message) => !message.startsWith("No ")) ?? "Ready";
-  const summaryMetrics = [
-    ["Projects", projects.length],
-    ["Workflow Files", workflowFiles.length],
-    ["Requirements", requirements.length],
-    ["Task Drafts", taskDrafts.length],
+  const progressSteps = [
+    ["Recipes", workflowFiles.length],
+    ["Ideas", requirements.length],
+    ["Drafts", taskDrafts.length],
     ["Tasks", tasks.length],
-    ["Workflow Runs", workflowRunCount]
+    ["Runs", workflowRunCount]
   ] as const;
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-lockup">
-          <img
-            alt="Forge forging cat brand mark"
-            className="brand-logo"
-            height="64"
-            src="/brand/forge-cat-logo-256.png"
-            width="64"
-          />
-          <div>
-            <p className="eyebrow">Forge local development</p>
-            <h1>Forge Control Room</h1>
-            <p className="topbar-copy">
-              AI work orchestration control plane for Requirements, Workflow
-              Files, Tasks and Workflow Runs.
-            </p>
+    <main className="studio-shell">
+      <header className="studio-hero">
+        <nav className="studio-nav" aria-label="Forge status">
+          <div className="brand-lockup">
+            <img
+              alt="Forge brand mark"
+              className="brand-logo"
+              height="56"
+              src="/brand/forge-cat-logo-256.png"
+              width="56"
+            />
+            <div>
+              <p className="studio-label">Forge Studio</p>
+              <h1>Turn an idea into shipped AI work.</h1>
+            </div>
           </div>
-        </div>
-        <div className="topbar-status" aria-live="polite">
-          <StatusBadge
-            tone={connection.status === "connected" ? "success" : "neutral"}
-          >
-            {connection.message}
-          </StatusBadge>
-          {connection.status === "connected" ? (
-            <span className="health-detail">
-              {connection.health.service} is {connection.health.status}
-            </span>
-          ) : null}
-          <span className="action-status">{latestStatusMessage}</span>
-        </div>
-      </header>
-
-      <section className="metric-strip" aria-label="Control Room summary">
-        {summaryMetrics.map(([label, value]) => (
-          <div className="metric-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
+          <div className="connection-strip" aria-live="polite">
+            <StatusBadge
+              tone={connection.status === "connected" ? "success" : "neutral"}
+            >
+              {connection.message}
+            </StatusBadge>
+            {connection.status === "connected" ? (
+              <span>{connection.health.service} is {connection.health.status}</span>
+            ) : null}
           </div>
-        ))}
-      </section>
+        </nav>
 
-      <div className="workspace-grid">
-        <aside className="setup-rail" aria-label="Project and workflow setup">
-          <section className="rail-card" aria-labelledby="project-heading">
-            <div className="section-kicker">01</div>
-            <div className="rail-card-header">
-              <p className="eyebrow">Project setup</p>
-              <h2 id="project-heading">Create a Project</h2>
-              <p className="panel-copy">
-                Choose the Artifact Storage Mode and database strategy for this
-                Forge Project.
-              </p>
-            </div>
-            <form className="stack-form" onSubmit={handleCreateProject}>
+        <div className="hero-grid">
+          <section className="prompt-panel" aria-labelledby="requirement-heading">
+            <p className="studio-label">Start with the outcome</p>
+            <h2 id="requirement-heading">
+              Describe the document, code change, research note, or creative
+              work you want finished.
+            </h2>
+            <form className="composer-form" onSubmit={handleCreateRequirement}>
               <label>
-                Project name
-                <input
-                  data-testid="project-name-input"
-                  minLength={1}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  placeholder="Forge workspace"
-                  required
-                  value={projectName}
-                />
-              </label>
-              <label>
-                Artifact storage
-                <select
-                  data-testid="artifact-storage-select"
-                  onChange={(event) =>
-                    setArtifactStorageMode(
-                      event.target.value as ArtifactStorageMode
-                    )
-                  }
-                  value={artifactStorageMode}
-                >
-                  <option value="local-only">Local-only</option>
-                  <option value="cloud">Cloud</option>
-                </select>
-              </label>
-              <label>
-                Database strategy
-                <select
-                  data-testid="db-strategy-select"
-                  onChange={(event) =>
-                    setDbStrategy(event.target.value as DbStrategy)
-                  }
-                  value={dbStrategy}
-                >
-                  <option value="sqlite">SQLite</option>
-                  <option value="postgres">Postgres</option>
-                  <option value="mysql">MySQL</option>
-                </select>
-              </label>
-              <button type="submit">Create Project</button>
-            </form>
-            <p className="project-status" aria-live="polite">
-              {projectStatus}
-            </p>
-            <div className="compact-list" aria-label="Projects">
-              {projects.length === 0 ? (
-                <p className="empty-state">
-                  Projects will appear here after creation.
-                </p>
-              ) : (
-                projects.map((project) => (
-                  <article className="compact-record" key={project.id}>
-                    <h3>{project.name}</h3>
-                    <p>
-                      {project.artifactStorageMode} / {project.dbStrategy}
-                    </p>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
-
-          <section className="rail-card" aria-labelledby="workflow-heading">
-            <div className="section-kicker">02</div>
-            <div className="rail-card-header">
-              <p className="eyebrow">Workflow File</p>
-              <h2 id="workflow-heading">Import .wf</h2>
-              <p className="panel-copy">
-                Validate DAG dependencies, Workflow Node exits and retry limits
-                before creating runnable templates.
-              </p>
-            </div>
-            <form className="stack-form" onSubmit={handleImportWorkflow}>
-              <label>
-                .wf source
-                <textarea
-                  className="code-editor"
-                  data-testid="workflow-source-textarea"
-                  onChange={(event) => setWorkflowSource(event.target.value)}
-                  spellCheck={false}
-                  value={workflowSource}
-                />
-              </label>
-              <button type="submit">Import Workflow File</button>
-            </form>
-            <p className="project-status" aria-live="polite">
-              {workflowImportStatus}
-            </p>
-          </section>
-
-          <section className="rail-card" aria-labelledby="requirement-heading">
-            <div className="section-kicker">03</div>
-            <div className="rail-card-header">
-              <p className="eyebrow">Requirement intake</p>
-              <h2 id="requirement-heading">Generate Task Drafts</h2>
-              <p className="panel-copy">
-                Run a Requirement Workflow Template and review the generated
-                Task Drafts before board approval.
-              </p>
-            </div>
-            <form className="stack-form" onSubmit={handleCreateRequirement}>
-              <label>
-                Requirement title
+                Name this work
                 <input
                   data-testid="requirement-title-input"
                   minLength={1}
                   onChange={(event) => setRequirementTitle(event.target.value)}
-                  placeholder="Plan Forge dogfooding"
+                  placeholder="Draft an onboarding guide"
                   required
                   value={requirementTitle}
                 />
               </label>
               <label>
-                Requirement body
+                What should Forge help with?
                 <textarea
-                  className="large-input"
+                  className="composer-textarea"
                   data-testid="requirement-body-textarea"
                   onChange={(event) => setRequirementBody(event.target.value)}
-                  placeholder="Describe the desired outcome"
+                  placeholder="Explain the goal, audience, constraints, files, tone, or acceptance criteria."
                   required
                   value={requirementBody}
                 />
               </label>
-              <label>
-                Requirement workflow
-                <select
-                  data-testid="requirement-workflow-select"
+              <div className="composer-actions">
+                <label>
+                  Recipe
+                  <select
+                    data-testid="requirement-workflow-select"
+                    disabled={requirementWorkflowFiles.length === 0}
+                    onChange={(event) =>
+                      setSelectedRequirementWorkflowId(event.target.value)
+                    }
+                    required
+                    value={selectedRequirementWorkflowId}
+                  >
+                    {requirementWorkflowFiles.length === 0 ? (
+                      <option value="">Import a recipe first</option>
+                    ) : null}
+                    {requirementWorkflowFiles.map((workflowFile) => (
+                      <option key={workflowFile.id} value={workflowFile.id}>
+                        {workflowFile.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
                   disabled={requirementWorkflowFiles.length === 0}
-                  onChange={(event) =>
-                    setSelectedRequirementWorkflowId(event.target.value)
-                  }
-                  required
-                  value={selectedRequirementWorkflowId}
+                  type="submit"
                 >
-                  {requirementWorkflowFiles.length === 0 ? (
-                    <option value="">Import a requirement .wf first</option>
-                  ) : null}
-                  {requirementWorkflowFiles.map((workflowFile) => (
-                    <option key={workflowFile.id} value={workflowFile.id}>
-                      {workflowFile.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                disabled={requirementWorkflowFiles.length === 0}
-                type="submit"
-              >
-                Run Requirement Workflow
-              </button>
+                  Generate Task Drafts
+                </button>
+              </div>
             </form>
-            <p className="project-status" aria-live="polite">
+            <p className="live-note" aria-live="polite">
               {requirementStatus}
             </p>
           </section>
-        </aside>
 
-        <section className="control-room" aria-labelledby="control-room-heading">
-          <div className="control-room-header">
-            <div>
-              <p className="eyebrow">Control Room</p>
-              <h2 id="control-room-heading">Workflow execution surface</h2>
-            </div>
-            <StatusBadge tone={workflowRunCount > 0 ? "info" : "neutral"}>
-              {workflowRunCount > 0
-                ? `${workflowRunCount} Workflow Run`
-                : "No Workflow Runs"}
-            </StatusBadge>
-          </div>
-
-          <section className="panel" aria-label="Workflow File preview">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Workflow File preview</p>
-                <h2>Template structure</h2>
+          <aside className="studio-side" aria-label="Studio setup">
+            <section className="setup-panel" aria-labelledby="workflow-heading">
+              <div className="section-heading">
+                <p className="studio-label">Recipe</p>
+                <h2 id="workflow-heading">Teach Forge the workflow</h2>
               </div>
-              {workflowPreview ? (
-                <StatusBadge tone="info">
-                  {workflowPreview.nodes.length} Workflow Nodes
-                </StatusBadge>
-              ) : (
-                <StatusBadge>Awaiting import</StatusBadge>
-              )}
+              <form className="stack-form" onSubmit={handleImportWorkflow}>
+                <label>
+                  Workflow File source
+                  <textarea
+                    className="recipe-editor"
+                    data-testid="workflow-source-textarea"
+                    onChange={(event) => setWorkflowSource(event.target.value)}
+                    spellCheck={false}
+                    value={workflowSource}
+                  />
+                </label>
+                <button className="button-secondary" type="submit">
+                  Import Recipe
+                </button>
+              </form>
+              <p className="live-note" aria-live="polite">
+                {workflowImportStatus}
+              </p>
+            </section>
+
+            <section className="setup-panel" aria-labelledby="project-heading">
+              <div className="section-heading">
+                <p className="studio-label">Workspace</p>
+                <h2 id="project-heading">Save outputs where you want them</h2>
+              </div>
+              <form className="stack-form" onSubmit={handleCreateProject}>
+                <label>
+                  Project name
+                  <input
+                    data-testid="project-name-input"
+                    minLength={1}
+                    onChange={(event) => setProjectName(event.target.value)}
+                    placeholder="Writing and code desk"
+                    required
+                    value={projectName}
+                  />
+                </label>
+                <div className="two-field-grid">
+                  <label>
+                    Artifacts
+                    <select
+                      data-testid="artifact-storage-select"
+                      onChange={(event) =>
+                        setArtifactStorageMode(
+                          event.target.value as ArtifactStorageMode
+                        )
+                      }
+                      value={artifactStorageMode}
+                    >
+                      <option value="local-only">Local-only</option>
+                      <option value="cloud">Cloud</option>
+                    </select>
+                  </label>
+                  <label>
+                    Database
+                    <select
+                      data-testid="db-strategy-select"
+                      onChange={(event) =>
+                        setDbStrategy(event.target.value as DbStrategy)
+                      }
+                      value={dbStrategy}
+                    >
+                      <option value="sqlite">SQLite</option>
+                      <option value="postgres">Postgres</option>
+                      <option value="mysql">MySQL</option>
+                    </select>
+                  </label>
+                </div>
+                <button className="button-secondary" type="submit">
+                  Create Project
+                </button>
+              </form>
+              <p className="live-note" aria-live="polite">
+                {projectStatus}
+              </p>
+            </section>
+          </aside>
+        </div>
+      </header>
+
+      <section className="progress-ribbon" aria-label="Forge progress">
+        {progressSteps.map(([label, value]) => (
+          <div className="progress-item" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+        <p aria-live="polite">{latestStatusMessage}</p>
+      </section>
+
+      <div className="studio-workspace">
+        <section className="workspace-main" aria-label="Generated work">
+          <section className="work-section" aria-label="Task Draft review queue">
+            <div className="section-heading">
+              <p className="studio-label">Review queue</p>
+              <h2>Shape the generated Task Drafts before they become work.</h2>
             </div>
-            <div className="panel-body">
-              {workflowPreview ? (
-                <div className="workflow-preview">
-                  <div className="workflow-summary">
-                    <div>
-                      <h3>{workflowPreview.name}</h3>
-                      <p>
-                        Scope {workflowPreview.scope} / Nodes{" "}
-                        {workflowPreview.nodes.length}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="workflow-node-list">
-                    {workflowPreview.nodes.map((node, index) => (
-                      <article className="workflow-node" key={node.id}>
-                        <div className="node-index">{index + 1}</div>
-                        <div className="node-main">
-                          <h3>{node.id}</h3>
-                          <p>{node.type}</p>
-                        </div>
-                        <div className="node-meta">
-                          <span>{node.executor}</span>
-                          <span>Retries {node.exit.maxRetries}</span>
-                          <span>
-                            Depends{" "}
-                            {node.dependsOn.length > 0
-                              ? node.dependsOn.join(", ")
-                              : "none"}
-                          </span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
+            <div className="draft-list">
+              {taskDrafts.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No Task Drafts yet</h3>
+                  <p>
+                    Import a recipe, describe an outcome, then Forge will draft
+                    the work plan here.
+                  </p>
                 </div>
               ) : (
-                <p className="empty-state">
-                  Import a Workflow File from the left rail to inspect nodes,
-                  executors, dependencies and Exit Criteria.
-                </p>
+                taskDrafts
+                  .slice()
+                  .sort((left, right) => left.sortOrder - right.sortOrder)
+                  .map((taskDraft) => (
+                    <article className="draft-card" key={taskDraft.id}>
+                      <form
+                        className="draft-form"
+                        onSubmit={handleUpdateTaskDraft}
+                      >
+                        <input name="id" type="hidden" value={taskDraft.id} />
+                        <label>
+                          Draft title
+                          <input
+                            defaultValue={taskDraft.title}
+                            data-testid="draft-title-input"
+                            name="title"
+                            required
+                          />
+                        </label>
+                        <label>
+                          Draft body
+                          <textarea
+                            className="large-input"
+                            defaultValue={taskDraft.body}
+                            data-testid="draft-body-textarea"
+                            name="body"
+                            required
+                          />
+                        </label>
+                        <div className="draft-actions">
+                          <button className="button-secondary" type="submit">
+                            Save
+                          </button>
+                          <button
+                            className="button-secondary"
+                            onClick={() => handleMoveTaskDraft(taskDraft.id, -1)}
+                            type="button"
+                          >
+                            Move up
+                          </button>
+                          <button
+                            className="button-secondary"
+                            onClick={() => handleMoveTaskDraft(taskDraft.id, 1)}
+                            type="button"
+                          >
+                            Move down
+                          </button>
+                          <button
+                            className="button-danger"
+                            onClick={() => handleDeleteTaskDraft(taskDraft.id)}
+                            type="button"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={() => handleApproveTaskDraft(taskDraft.id)}
+                            type="button"
+                          >
+                            Approve
+                          </button>
+                        </div>
+                      </form>
+                    </article>
+                  ))
               )}
             </div>
           </section>
 
-          <section className="panel" aria-label="Requirement records">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Requirements</p>
-                <h2>Accepted intake</h2>
-              </div>
-              <StatusBadge tone={requirements.length > 0 ? "info" : "neutral"}>
-                {requirements.length} total
-              </StatusBadge>
+          <section className="work-section" aria-labelledby="task-board-heading">
+            <div className="section-heading">
+              <p className="studio-label">Task Board</p>
+              <h2 id="task-board-heading">Run the approved work.</h2>
+              <p>
+                Tasks can represent a doc draft, code change, research packet,
+                or any Artifact-producing AI work.
+              </p>
             </div>
-            <div className="panel-body">
-              <div className="record-grid">
-                {requirements.length === 0 ? (
-                  <p className="empty-state">
-                    Requirements will appear after a Requirement Workflow
-                    generates Task Drafts.
-                  </p>
-                ) : (
-                  requirements.map((requirement) => (
-                    <article className="record-card" key={requirement.id}>
-                      <div>
-                        <h3>{requirement.title}</h3>
-                        <p>
-                          {requirement.errorMessage
-                            ? requirement.errorMessage
-                            : "No error reported"}
-                        </p>
-                      </div>
-                      <StatusBadge tone={getNodeRunTone(requirement.status)}>
-                        {requirement.status}
-                      </StatusBadge>
-                    </article>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel" aria-label="Task Draft review queue">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Task Draft Review Queue</p>
-                <h2>Approve executable work</h2>
-              </div>
-              <StatusBadge tone={taskDrafts.length > 0 ? "warning" : "neutral"}>
-                {taskDrafts.length} waiting
-              </StatusBadge>
-            </div>
-            <div className="panel-body">
-              <div className="draft-list">
-                {taskDrafts.length === 0 ? (
-                  <p className="empty-state">
-                    Run a Requirement Workflow to generate editable Task Drafts
-                    for review.
-                  </p>
-                ) : (
-                  taskDrafts
-                    .slice()
-                    .sort((left, right) => left.sortOrder - right.sortOrder)
-                    .map((taskDraft) => (
-                      <article className="draft-card" key={taskDraft.id}>
-                        <form
-                          className="draft-form"
-                          onSubmit={handleUpdateTaskDraft}
-                        >
-                          <input name="id" type="hidden" value={taskDraft.id} />
-                          <label>
-                            Draft title
-                            <input
-                              defaultValue={taskDraft.title}
-                              data-testid="draft-title-input"
-                              name="title"
-                              required
-                            />
-                          </label>
-                          <label>
-                            Draft body
-                            <textarea
-                              className="large-input"
-                              defaultValue={taskDraft.body}
-                              data-testid="draft-body-textarea"
-                              name="body"
-                              required
-                            />
-                          </label>
-                          <div className="draft-actions">
-                            <button className="button-secondary" type="submit">
-                              Save
-                            </button>
-                            <button
-                              className="button-secondary"
-                              onClick={() =>
-                                handleMoveTaskDraft(taskDraft.id, -1)
-                              }
-                              type="button"
-                            >
-                              Up
-                            </button>
-                            <button
-                              className="button-secondary"
-                              onClick={() =>
-                                handleMoveTaskDraft(taskDraft.id, 1)
-                              }
-                              type="button"
-                            >
-                              Down
-                            </button>
-                            <button
-                              className="button-danger"
-                              onClick={() =>
-                                handleDeleteTaskDraft(taskDraft.id)
-                              }
-                              type="button"
-                            >
-                              Delete
-                            </button>
-                            <button
-                              className="button-primary"
-                              onClick={() =>
-                                handleApproveTaskDraft(taskDraft.id)
-                              }
-                              type="button"
-                            >
-                              Approve
-                            </button>
-                          </div>
-                        </form>
-                      </article>
-                    ))
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel" aria-labelledby="task-board-heading">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Task Board</p>
-                <h2 id="task-board-heading">Approved Tasks</h2>
-                <p className="panel-copy">
-                  Approved Task Drafts become executable Tasks while preserving
-                  their source Requirement.
-                </p>
-              </div>
-              <StatusBadge tone={tasks.length > 0 ? "info" : "neutral"}>
-                {tasks.length} Tasks
-              </StatusBadge>
-            </div>
-            <p className="project-status" aria-live="polite">
+            <p className="live-note" aria-live="polite">
               {taskBoardStatus}
             </p>
             <div className="task-board" aria-label="Task Board">
@@ -898,7 +748,7 @@ export function App() {
                     </div>
                     <div className="task-list">
                       {columnTasks.length === 0 ? (
-                        <p className="empty-state">No Tasks in this lane.</p>
+                        <p className="lane-empty">No Tasks</p>
                       ) : (
                         columnTasks.map((task) => {
                           const sourceRequirement = requirements.find(
@@ -923,7 +773,7 @@ export function App() {
                               </div>
                               <div className="task-run-controls">
                                 <label>
-                                  Task Workflow
+                                  Run recipe
                                   <select
                                     data-testid="task-workflow-select"
                                     disabled={taskWorkflowFiles.length === 0}
@@ -936,7 +786,7 @@ export function App() {
                                   >
                                     {taskWorkflowFiles.length === 0 ? (
                                       <option value="">
-                                        Import a task .wf first
+                                        Import a task recipe first
                                       </option>
                                     ) : null}
                                     {taskWorkflowFiles.map((workflowFile) => (
@@ -956,13 +806,13 @@ export function App() {
                                   }
                                   type="button"
                                 >
-                                  Start Workflow Run
+                                  Start Run
                                 </button>
                               </div>
                               <div className="run-history">
                                 {runs.length === 0 ? (
-                                  <p className="empty-state">
-                                    No Workflow Runs started for this Task.
+                                  <p className="lane-empty">
+                                    No runs started for this Task.
                                   </p>
                                 ) : (
                                   runs.map((run) => (
@@ -1015,6 +865,88 @@ export function App() {
             </div>
           </section>
         </section>
+
+        <aside className="workspace-aside" aria-label="Recipe and history">
+          <section className="work-section">
+            <div className="section-heading">
+              <p className="studio-label">Recipe map</p>
+              <h2>What Forge will ask agents to do.</h2>
+            </div>
+            {workflowPreview ? (
+              <div className="recipe-map">
+                <div className="recipe-summary">
+                  <h3>{workflowPreview.name}</h3>
+                  <p>
+                    {workflowPreview.scope} recipe with{" "}
+                    {workflowPreview.nodes.length} Workflow Nodes
+                  </p>
+                </div>
+                <div className="workflow-node-list">
+                  {workflowPreview.nodes.map((node) => (
+                    <article className="workflow-node" key={node.id}>
+                      <div className="node-main">
+                        <h3>{node.id}</h3>
+                        <p>{node.type}</p>
+                      </div>
+                      <div className="node-meta">
+                        <span>{node.executor}</span>
+                        <span>{node.exit.maxRetries} retries</span>
+                        <span>
+                          {node.dependsOn.length > 0
+                            ? node.dependsOn.join(", ")
+                            : "No dependency"}
+                        </span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="empty-state">
+                <h3>No recipe preview</h3>
+                <p>Import a Workflow File to show its nodes here.</p>
+              </div>
+            )}
+          </section>
+
+          <section className="work-section">
+            <div className="section-heading">
+              <p className="studio-label">Project memory</p>
+              <h2>Saved Projects and ideas.</h2>
+            </div>
+            <div className="compact-list" aria-label="Projects">
+              {projects.length === 0 ? (
+                <p className="lane-empty">No Projects created yet.</p>
+              ) : (
+                projects.map((project) => (
+                  <article className="compact-record" key={project.id}>
+                    <h3>{project.name}</h3>
+                    <p>
+                      {project.artifactStorageMode} / {project.dbStrategy}
+                    </p>
+                  </article>
+                ))
+              )}
+            </div>
+            <div className="compact-list" aria-label="Requirements">
+              {requirements.length === 0 ? (
+                <p className="lane-empty">No ideas submitted yet.</p>
+              ) : (
+                requirements.map((requirement) => (
+                  <article className="compact-record" key={requirement.id}>
+                    <h3>{requirement.title}</h3>
+                    <p>
+                      {requirement.status}
+                      {requirement.errorMessage
+                        ? ` / ${requirement.errorMessage}`
+                        : ""}
+                    </p>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </aside>
       </div>
     </main>
   );

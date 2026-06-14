@@ -17,9 +17,9 @@ const toneStyles: Record<
     color: "#991b1b"
   },
   info: {
-    backgroundColor: "#dbeafe",
-    borderColor: "#bfdbfe",
-    color: "#1d4ed8"
+    backgroundColor: "#dff7f4",
+    borderColor: "#b8ebe5",
+    color: "#006d6d"
   },
   neutral: {
     backgroundColor: "#eef2f7",
