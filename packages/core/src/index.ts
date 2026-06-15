@@ -8,12 +8,29 @@ export function createHealthPayload() {
 
 export {
   parseWorkflowFile,
+  workflowArtifactTypes,
   workflowFileSchema,
   workflowNodeSchema,
+  workflowNodeOutputSchema,
+  workflowReviewModes,
   workflowScopes,
-  type WorkflowFile,
-  type WorkflowNode,
-  type WorkflowScope
+  workflowVersions
+} from "./workflow-file.js";
+
+export type {
+  WorkflowAgent,
+  WorkflowArtifact,
+  WorkflowArtifactType,
+  WorkflowFile,
+  WorkflowHumanReview,
+  WorkflowInput,
+  WorkflowInstruction,
+  WorkflowNode,
+  WorkflowNodeOutput,
+  WorkflowReviewMode,
+  WorkflowScope,
+  WorkflowSkill,
+  WorkflowVersion
 } from "./workflow-file.js";
 
 export {
