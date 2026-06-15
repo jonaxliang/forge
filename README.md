@@ -1,169 +1,241 @@
 # Forge
 
-Forge 是一个 AI work workflow 控制平面，用来把 Requirement、Task、`.wf` 工作流、Workflow Run、Node Run、Artifact 和本地/远端 agent 执行连接成可追踪的工作流。
+Forge is an AI work orchestration control plane. It connects Requirements,
+Task Drafts, Tasks, `.wf` Workflow Files, Workflow Runs, Node Runs, Artifacts,
+and local or remote agent execution into a traceable workflow system.
 
-Forge 默认是一个开箱即用的一体化 Web control plane：Server 内置 Web 控制台；官方部署和私有部署使用同一套运行模型；CLI/Bridge 是增强本地 agent 接入的可选能力。
+The repository is a TypeScript monorepo for running Forge as a local-first
+control plane. The current app package combines the web console and API server,
+while `forgecli` provides optional local command-line integration.
 
-当前仓库是 TypeScript monorepo，包含 Web 控制台、Hono API Server、`forgecli` CLI、核心领域逻辑、数据库层、SDK 和共享 UI。
+## Project Status
 
-## 环境要求
+Forge is early-stage software. The current implementation focuses on the core
+workflow path:
+
+1. Create a Project.
+2. Import a requirement-scope `.wf` Workflow File.
+3. Create a Requirement and generate Task Drafts with a mock executor or a
+   configured OpenAI-compatible model endpoint.
+4. Edit and approve Task Drafts into Tasks.
+5. Import a task-scope `.wf` Workflow File.
+6. Start a Task Workflow Run from the Task Board.
+7. Inspect Workflow Run and Node Run status in the Control Room.
+
+APIs, storage shape, and UI details can still change.
+
+## Repository Layout
+
+- `apps/forge`: Forge web console and API server.
+- `apps/forgecli`: `forgecli` command-line entry point.
+- `packages/core`: `.wf` parsing, DAG planning, and workflow run domain logic.
+- `packages/db`: SQLite and Drizzle data access layer.
+- `packages/sdk`: TypeScript client SDK.
+- `packages/ui`: shared React UI components.
+- `docs/adr`: architecture decision records.
+- `docs/issues`: local markdown issues used for staged planning.
+
+## Requirements
 
 - Node.js 22+
 - pnpm 9+
 
-安装依赖：
+Install dependencies:
 
 ```bash
 pnpm install
 ```
 
-## 一体化启动
+## Run Forge
 
-默认启动形态是一个 Forge Server 同时提供逻辑后端和内置 Web 控制台：
+Build the app, bundle the web assets, and start Forge:
 
 ```bash
 pnpm start
 ```
 
-默认访问：
+The default production-style local URL is:
 
 ```text
 http://localhost:3001
 ```
 
-默认端口是 `3001`。如果需要临时改端口，可以设置 `PORT`：
+The API is served under `/api/*`, for example:
+
+```text
+http://localhost:3001/api/health
+```
+
+To use a different port:
 
 ```bash
 PORT=3999 pnpm start
 ```
 
-`pnpm start` 会先构建 Web 控制台，再构建并启动 Server。生产态 Server 会从 `apps/web/dist` 托管 Web 静态资源，并在同一个端口提供后端 API。
-
-如果私有部署时 Web 静态资源放在其他目录，可以通过环境变量指定：
-
-```bash
-FORGE_WEB_ASSETS_ROOT=/path/to/web/dist pnpm --filter @forge/server start
-```
-
-## 开发启动
-
-开发期仍然可以分别启动 Server 和 Web，以获得 Vite 热更新。
-
-启动 API Server：
+If you host or build the web assets separately, point the server at that
+directory:
 
 ```bash
-pnpm --filter @forge/server dev
+FORGE_WEB_ASSETS_ROOT=/path/to/web/dist pnpm --filter @forge/forge start
 ```
 
-默认监听：
+## Development
 
-```text
-http://localhost:3001
-```
-
-启动 Web 控制台：
+Start the Forge development server:
 
 ```bash
-pnpm --filter @forge/web dev
+pnpm --filter @forge/forge dev
 ```
 
-默认访问：
+The Vite development URL is:
 
 ```text
 http://localhost:5173
 ```
 
-Web 会通过 Vite proxy 调用 Server，例如 `/health` 会代理到 `http://localhost:3001/health`。
-
-## 本地数据
-
-Server 默认使用 SQLite，本地数据库文件位于：
+During development, `/api/*` requests are proxied to the local Forge API server:
 
 ```text
-.forge/forge.sqlite
+http://localhost:5173/api/health -> http://localhost:3001/api/health
 ```
 
-如果需要重置本地开发数据：
+## Local Data
+
+Forge uses SQLite by default. Local development data is stored under:
+
+```text
+apps/forge/.forge/forge.sqlite
+```
+
+Set `FORGE_SQLITE_PATH=/absolute/path/to/forge.sqlite` when you need to point
+Forge at a different local database file.
+
+To reset local development data:
 
 ```bash
-rm -rf .forge apps/server/.forge
+rm -rf apps/forge/.forge
 ```
 
-## 常用测试与检查
+Do not commit local database files, model API keys, bridge tokens, or generated
+artifacts. The repository ignores `.forge`, `.env*`, SQLite database files, and
+common private-key formats.
 
-运行全部测试：
+## Configuration
+
+Forge can call mainstream model providers through the Vercel AI SDK, including
+OpenAI, Anthropic, Google Gemini, Mistral, Groq, DeepSeek, OpenRouter, Ollama,
+LM Studio, and generic OpenAI-compatible endpoints when execution settings are
+configured in the web UI. By default, no model API key is stored in source code.
+
+Common runtime settings:
+
+| Setting | Description | Default |
+| --- | --- | --- |
+| `PORT` | API and bundled web server port | `3001` |
+| `FORGE_WEB_ASSETS_ROOT` | Directory containing built web assets | bundled app assets |
+
+The web UI stores execution settings in the local SQLite database. Keep that
+database local unless you have reviewed its contents.
+
+## Scripts
+
+Run all tests:
 
 ```bash
 pnpm test
 ```
 
-运行类型检查：
+Run type checks:
 
 ```bash
 pnpm typecheck
 ```
 
-运行构建：
+Build all packages:
 
 ```bash
 pnpm build
 ```
 
-只编译 `forgecli`：
+Build only `forgecli`:
 
 ```bash
 pnpm build:forgecli
 ```
 
-`forgecli` 的编译产物输出到：
+Bind local agents through the Bridge:
 
-```text
-apps/cli/dist/index.js
+```bash
+pnpm build:forgecli
+apps/forgecli/dist/index.js bridge bind --server http://localhost:3001
+apps/forgecli/dist/index.js agent add codex --connector mcp --command "codex mcp-server" --tool codex
+apps/forgecli/dist/index.js agent add coco --connector cli --command "coco run"
+apps/forgecli/dist/index.js bridge start
+apps/forgecli/dist/index.js bridge status
 ```
 
-运行 lint：
+CLI Connector agents receive the Bridge job payload as JSON on stdin and report
+success or failure through their process exit code. MCP Connector agents are
+started over stdio and invoked through `tools/call`.
+
+Run lint:
 
 ```bash
 pnpm lint
 ```
 
-提交前建议跑完整门禁：
+Suggested pre-publish verification:
 
 ```bash
-rm -rf .forge apps/server/.forge
+rm -rf apps/forge/.forge
 pnpm exec turbo test --force
 pnpm exec turbo typecheck --force
 pnpm exec turbo build --force
 pnpm exec turbo lint --force
 ```
 
-也可以按 package 聚焦验证：
+Focused checks:
 
 ```bash
-pnpm --filter @forge/server test -- src/app.test.ts
+pnpm --filter @forge/forge test -- src/app.test.ts
 pnpm --filter @forge/db test -- src/project-repository.test.ts
-pnpm --filter @forge/web typecheck
-pnpm --filter @forge/web build
+pnpm --filter @forge/forge typecheck
+pnpm --filter @forge/forge build
 ```
 
-## 当前可跑通的主流程
+Build platform release executables:
 
-1. 在 Web 创建 Project。
-2. 导入 requirement-scope `.wf`。
-3. 创建 Requirement，并由 mock executor 生成 Task Draft。
-4. 编辑、保存、批准 Task Draft。
-5. 导入 task-scope `.wf`。
-6. 在 Task Board 启动 Task Workflow Run。
-7. 查看 Workflow Run 和 Node Run 状态。
+```bash
+pnpm release
+```
 
-## 包结构
+The release command creates ignored platform directories such as:
 
-- `apps/web`：React + Vite Web 控制台。
-- `apps/server`：Hono API Server。
-- `apps/cli`：`forgecli` CLI 入口。
-- `packages/core`：`.wf` 解析、DAG planning、workflow run 纯逻辑。
-- `packages/db`：SQLite/Drizzle 数据访问层。
-- `packages/sdk`：Web/客户端 SDK。
-- `packages/ui`：共享 React UI 组件。
-- `docs/issues`：阶段一使用的本地 markdown issue。
-- `docs/adr`：关键技术决策记录。
+```text
+release/forge-macos-arm64/forge
+release/forgecli-macos-arm64/forgecli
+```
+
+Run the same command on Linux to produce Linux-native directories. Forge uses a
+native SQLite addon, so Linux release packages must be built on a Linux runner
+instead of being cross-built from macOS.
+
+## Security Notes
+
+- Forge Server does not need to reverse-connect into a user's machine. Local or
+  remote Harness integrations should connect outbound to Forge.
+- Realtime updates are SSE-first, while user actions should go through HTTP
+  APIs.
+- Do not publish `.forge` databases, `.env*` files, private keys, certificates,
+  bridge tokens, model API keys, or local agent credentials.
+- Test fixtures may use placeholder strings such as `secret-key`; these are not
+  real credentials.
+
+If you believe you found a security issue, please do not open a public issue
+with exploit details. Contact the maintainers through the project's preferred
+private reporting channel once one is published.
+
+## License
+
+No license file is included yet. Add a `LICENSE` file before publishing this
+repository as open source.

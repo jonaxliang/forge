@@ -4,11 +4,12 @@
   "type": "module",
   "packageManager": "pnpm@9.15.4",
   "scripts": {
-    "start": "pnpm --filter @forge/web build && pnpm --filter @forge/server... build && pnpm --filter @forge/server start",
+    "start": "pnpm --filter @forge/forge... build && pnpm --filter @forge/forge bundle-web && pnpm --filter @forge/forge start",
     "dev": "turbo dev",
     "build": "turbo build",
-    "build:forgecli": "pnpm --filter @forge/cli build",
+    "build:forgecli": "pnpm --filter @forge/forgecli build",
     "lint": "turbo lint",
+    "release": "node scripts/release-packages.mjs",
     "test": "turbo test",
     "typecheck": "turbo typecheck"
   },
