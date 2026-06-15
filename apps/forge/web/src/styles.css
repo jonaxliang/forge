@@ -1016,7 +1016,7 @@ h3 {
 
 .template-overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
   gap: 12px;
   min-width: 0;
 }
@@ -1167,6 +1167,10 @@ h3 {
   width: min(920px, 100%);
 }
 
+.workflow-preview-modal {
+  width: min(1040px, 100%);
+}
+
 .template-card-list {
   display: grid;
   gap: 10px;
@@ -1181,6 +1185,94 @@ h3 {
   border-radius: var(--radius-card);
   background: #ffffff;
   padding: 14px;
+}
+
+.template-library-panel-thin {
+  padding: 12px;
+}
+
+.template-library-panel-thin > .section-heading {
+  padding: 2px 2px 4px;
+}
+
+.template-thin-list {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: #ffffff;
+}
+
+.template-thin-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid #e6ecf3;
+  padding: 10px 12px;
+}
+
+.template-thin-row:last-child {
+  border-bottom: 0;
+}
+
+.template-row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.template-row-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.template-row-title h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.template-node-count {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #425064;
+  font-size: 12px;
+  font-weight: 750;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.template-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.workflow-rename-form-inline {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  margin: 0;
+  padding-top: 10px;
+}
+
+.workflow-rename-form-inline .form-helper {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .template-card-button {
@@ -2153,6 +2245,25 @@ h3 {
   .workflow-contract-grid,
   .workflow-preview-summary {
     grid-template-columns: 1fr;
+  }
+
+  .template-thin-row,
+  .template-row-main,
+  .workflow-rename-form-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .template-node-count {
+    justify-self: start;
+  }
+
+  .template-row-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .template-row-actions button {
+    flex: 1 1 120px;
   }
 
   .workflow-graph-lane {

@@ -661,9 +661,9 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain("New Workflow");
     expect(markup).toContain("Import Workflow");
-    expect(markup).toContain("Software Change Requirement");
-    expect(markup).toContain("workflow-preview-graph");
-    expect(markup).toContain("intake");
+    expect(markup).toContain("No Workflow templates yet");
+    expect(markup).not.toContain("workflow-preview-graph");
+    expect(markup).not.toContain("intake");
   });
 
   it("describes template library entries by business function", () => {
@@ -841,7 +841,7 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("<h3>Human Approval</h3>");
   });
 
-  it("shows rename controls for workflow templates", () => {
+  it("keeps workflow template rows compact until editing or previewing", () => {
     const markup = renderToStaticMarkup(
       <App
         initialPage="workflow-templates"
@@ -871,9 +871,51 @@ describe("App workbench layout", () => {
       />
     );
 
+    expect(markup).toContain("Research analysis template");
+    expect(markup).toContain("Business function: Research analysis");
+    expect(markup).toContain("1 nodes");
+    expect(markup).toContain('aria-label="Edit Workflow Research Analysis"');
+    expect(markup).toContain('aria-label="Preview Workflow Research Analysis"');
+    expect(markup).not.toContain("Workflow name");
+    expect(markup).not.toContain("workflow-preview-graph");
+    expect(markup).not.toContain('role="dialog"');
+  });
+
+  it("shows rename controls for workflow templates only while editing", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialEditingWorkflowId="wf_research"
+        initialWorkflowFiles={[
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "Research Analysis",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "skill:research",
+                  exit: { maxRetries: 1 },
+                  id: "analyze",
+                  outputs: ["analysis.md"],
+                  type: "research-analysis"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_research",
+            name: "Research Analysis",
+            nodeCount: 1,
+            scope: "task"
+          }
+        ]}
+      />
+    );
+
     expect(markup).toContain("Workflow name");
     expect(markup).toContain('aria-label="Rename Workflow Research Analysis"');
     expect(markup).toContain("Save Workflow name");
+    expect(markup).toContain("Cancel");
   });
 
   it("maps Workflow template management to its own route path", () => {
@@ -1003,6 +1045,7 @@ describe("App workbench layout", () => {
     const markup = renderToStaticMarkup(
       <App
         initialPage="workflow-templates"
+        initialPreviewWorkflowId="wf_code"
         initialWorkflowFiles={[
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -1016,6 +1059,8 @@ describe("App workbench layout", () => {
       />
     );
 
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain('id="workflow-preview-modal-heading"');
     expect(markup).toContain("workflow-preview-graph");
     expect(markup).toContain("Code Implementation");
     expect(markup).toContain("plan");
@@ -1043,6 +1088,7 @@ describe("App workbench layout", () => {
     const markup = renderToStaticMarkup(
       <App
         initialPage="workflow-templates"
+        initialPreviewWorkflowId="wf_requirement"
         initialWorkflowFiles={[
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -1056,6 +1102,8 @@ describe("App workbench layout", () => {
       />
     );
 
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain('id="workflow-preview-modal-heading"');
     expect(markup).toContain("workflow-preview-graph");
     expect(markup).toContain("Requirement Planning");
     expect(markup).toContain("split");
