@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   createInMemoryExecutionSettingsRepository,
   createInMemoryBridgeRepository,
+  createInMemoryDecompositionResultRepository,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
-  createInMemoryTaskDraftRepository,
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
   createSqliteWorkflowFileRepository,
@@ -60,7 +60,7 @@ describe("ProjectRepository", () => {
     const repository = createInMemoryProjectRepository();
 
     const project = await repository.createProject({ name: "Forge" });
-    await repository.createProject({ name: "Control Room" });
+    await repository.createProject({ name: "Forge Board" });
 
     const updated = await repository.updateProject({
       id: project.id,
@@ -78,11 +78,11 @@ describe("ProjectRepository", () => {
         name: "Forge Ops"
       },
       {
-        name: "Control Room"
+        name: "Forge Board"
       }
     ]);
     await expect(
-      repository.updateProject({ id: project.id, name: "Control Room" })
+      repository.updateProject({ id: project.id, name: "Forge Board" })
     ).rejects.toThrow(/already exists/i);
   });
 });
@@ -136,13 +136,15 @@ describe("WorkflowFileRepository", () => {
       }),
       name: "Coding workflow",
       nodeCount: 2,
-      scope: "task"
+      scope: "task",
+      templateType: "builtin"
     });
 
     expect(workflowFile).toMatchObject({
       name: "Coding workflow",
       nodeCount: 2,
-      scope: "task"
+      scope: "task",
+      templateType: "builtin"
     });
     expect(workflowFile.id).toMatch(/^wff_/);
 
@@ -181,6 +183,25 @@ describe("WorkflowFileRepository", () => {
     });
   });
 
+  it("deletes workflow file metadata", async () => {
+    const repository = createInMemoryWorkflowFileRepository();
+    const workflowFile = await repository.createWorkflowFileMetadata({
+      definition: JSON.stringify({
+        name: "Coding workflow",
+        nodes: [],
+        scope: "task"
+      }),
+      name: "Coding workflow",
+      nodeCount: 2,
+      scope: "task"
+    });
+
+    await repository.deleteWorkflowFileMetadata(workflowFile.id);
+
+    await expect(repository.getWorkflowFileMetadata(workflowFile.id)).resolves.toBeNull();
+    await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([]);
+  });
+
   it("persists requirement-scoped workflow file metadata in memory", async () => {
     await expectRequirementWorkflowScopePersists(createInMemoryWorkflowFileRepository);
   });
@@ -211,7 +232,7 @@ describe("WorkflowFileRepository", () => {
 });
 
 describe("ExecutionSettingsRepository", () => {
-  it("persists model and local Agent proxy settings", async () => {
+  it("persists model and local execution settings", async () => {
     const repository = createInMemoryExecutionSettingsRepository();
 
     const defaults = await repository.getExecutionSettings();
@@ -369,9 +390,9 @@ describe("WorkflowRunRepository", () => {
 });
 
 describe("RequirementRepository", () => {
-  it("persists project ownership for requirements, task drafts, and tasks", async () => {
+  it("persists project ownership for requirements, decomposition results, and tasks", async () => {
     const requirements = createInMemoryRequirementRepository();
-    const taskDrafts = createInMemoryTaskDraftRepository();
+    const decompositionResults = createInMemoryDecompositionResultRepository();
     const tasks = createInMemoryTaskRepository();
 
     const requirement = await requirements.createRequirement({
@@ -380,34 +401,43 @@ describe("RequirementRepository", () => {
       title: "Ningbo guide",
       workflowFileId: "wff_requirement"
     });
-    const taskDraft = await taskDrafts.createTaskDraft({
-      body: "Write the guide.",
+    const decompositionResult = await decompositionResults.saveDecompositionResult({
+      items: [
+        {
+          body: "Write the guide.",
+          sortOrder: 0,
+          title: "Write Ningbo guide"
+        }
+      ],
       projectId: requirement.projectId,
       requirementId: requirement.id,
-      sortOrder: 0,
-      title: "Write Ningbo guide"
+      summary: "One guide writing task."
     });
-    const task = await tasks.createTaskFromDraft(taskDraft);
+    const [task] = await tasks.createTasksFromDecompositionResult({
+      items: decompositionResult.items,
+      projectId: decompositionResult.projectId,
+      requirementId: decompositionResult.requirementId
+    });
 
     expect(requirement.projectId).toBe("proj_autonomous");
-    expect(taskDraft.projectId).toBe("proj_autonomous");
+    expect(decompositionResult.projectId).toBe("proj_autonomous");
     expect(task.projectId).toBe("proj_autonomous");
   });
 
-  it("persists requirements and updates workflow execution status", async () => {
+  it("persists requirements and updates decomposition status", async () => {
     const repository = createInMemoryRequirementRepository();
 
     const requirement = await repository.createRequirement({
-      body: "Let users turn a requirement into draft tasks.",
-      title: "Draft task generation",
+      body: "Let users turn a requirement into decomposition results.",
+      title: "Decomposition result generation",
       workflowFileId: "wff_requirement"
     });
 
     expect(requirement).toMatchObject({
-      body: "Let users turn a requirement into draft tasks.",
+      body: "Let users turn a requirement into decomposition results.",
       errorMessage: null,
-      status: "open",
-      title: "Draft task generation",
+      status: "init",
+      title: "Decomposition result generation",
       workflowFileId: "wff_requirement"
     });
     expect(requirement.id).toMatch(/^req_/);
@@ -415,13 +445,13 @@ describe("RequirementRepository", () => {
     const failed = await repository.updateRequirementStatus({
       errorMessage: "Planner failed",
       id: requirement.id,
-      status: "failed"
+      status: "decomposition_failed"
     });
 
     expect(failed).toMatchObject({
       errorMessage: "Planner failed",
       id: requirement.id,
-      status: "failed"
+      status: "decomposition_failed"
     });
     expect(failed.updatedAt).not.toBe(requirement.updatedAt);
 
@@ -514,98 +544,119 @@ describe("RequirementRepository", () => {
   });
 });
 
-describe("TaskDraftRepository", () => {
-  it("persists task drafts for a requirement", async () => {
-    const repository = createInMemoryTaskDraftRepository();
+describe("DecompositionResultRepository", () => {
+  it("persists editable decomposition results for a requirement", async () => {
+    const repository = createInMemoryDecompositionResultRepository();
 
-    const taskDraft = await repository.createTaskDraft({
-      body: "Implement the minimum requirement workflow run.",
+    const result = await repository.saveDecompositionResult({
+      items: [
+        {
+          body: "Implement the minimum requirement workflow.",
+          sortOrder: 0,
+          title: "Implement workflow"
+        }
+      ],
+      projectId: "proj_forge",
       requirementId: "req_requirement",
-      sortOrder: 0,
-      title: "Implement requirement workflow"
+      summary: "Split this requirement into one implementation task."
     });
 
-    expect(taskDraft).toMatchObject({
-      body: "Implement the minimum requirement workflow run.",
+    expect(result).toMatchObject({
+      items: [
+        {
+          body: "Implement the minimum requirement workflow.",
+          sortOrder: 0,
+          title: "Implement workflow"
+        }
+      ],
+      projectId: "proj_forge",
       requirementId: "req_requirement",
-      sortOrder: 0,
-      title: "Implement requirement workflow"
+      summary: "Split this requirement into one implementation task."
     });
-    expect(taskDraft.id).toMatch(/^tdf_/);
+    expect(result.id).toMatch(/^dcr_/);
 
-    await expect(repository.listTaskDrafts()).resolves.toEqual([taskDraft]);
+    await expect(
+      repository.getDecompositionResultForRequirement("req_requirement")
+    ).resolves.toEqual(result);
   });
 
-  it("updates, reorders, deletes and approves task drafts", async () => {
-    const taskDrafts = createInMemoryTaskDraftRepository();
-    const tasks = createInMemoryTaskRepository();
-    const first = await taskDrafts.createTaskDraft({
-      body: "First draft body",
+  it("updates decomposition result structure without creating tasks", async () => {
+    const repository = createInMemoryDecompositionResultRepository();
+    const result = await repository.saveDecompositionResult({
+      items: [
+        {
+          body: "First body",
+          sortOrder: 0,
+          title: "First"
+        }
+      ],
       requirementId: "req_requirement",
-      sortOrder: 0,
-      title: "First draft"
-    });
-    const second = await taskDrafts.createTaskDraft({
-      body: "Second draft body",
-      requirementId: "req_requirement",
-      sortOrder: 1,
-      title: "Second draft"
+      summary: "Initial split"
     });
 
     await expect(
-      taskDrafts.updateTaskDraft({
-        body: "Updated draft body",
-        id: first.id,
-        title: "Updated draft"
+      repository.updateDecompositionResult({
+        id: result.id,
+        items: [
+          {
+            body: "Second body",
+            sortOrder: 0,
+            title: "Second"
+          }
+        ],
+        summary: "Edited split"
       })
     ).resolves.toMatchObject({
-      body: "Updated draft body",
-      title: "Updated draft"
+      items: [
+        {
+          body: "Second body",
+          sortOrder: 0,
+          title: "Second"
+        }
+      ],
+      summary: "Edited split"
     });
-
-    await taskDrafts.reorderTaskDrafts([
-      { id: second.id, sortOrder: 0 },
-      { id: first.id, sortOrder: 1 }
-    ]);
-    await expect(taskDrafts.listTaskDrafts()).resolves.toMatchObject([
-      { id: second.id, sortOrder: 0 },
-      { id: first.id, sortOrder: 1 }
-    ]);
-
-    const approvedDraft = await taskDrafts.getTaskDraft(second.id);
-
-    expect(approvedDraft).not.toBeNull();
-
-    const task = await tasks.createTaskFromDraft(approvedDraft!);
-
-    expect(task).toMatchObject({
-      requirementId: "req_requirement",
-      status: "todo",
-      title: "Second draft"
-    });
-    expect(task.id).toMatch(/^tsk_/);
-    await expect(tasks.getTask(task.id)).resolves.toEqual(task);
-    await expect(tasks.getTask("tsk_missing")).resolves.toBeNull();
-
-    await taskDrafts.deleteTaskDraft(second.id);
-    await expect(taskDrafts.getTaskDraft(second.id)).resolves.toBeNull();
-    await expect(tasks.listTasks()).resolves.toEqual([task]);
   });
 });
 
 describe("TaskRepository", () => {
+  it("creates initialized tasks from decomposition result items", async () => {
+    const repository = createInMemoryTaskRepository();
+    const tasks = await repository.createTasksFromDecompositionResult({
+      items: [
+        {
+          body: "Generated task body",
+          sortOrder: 0,
+          title: "Generated task"
+        }
+      ],
+      projectId: null,
+      requirementId: "req_requirement"
+    });
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      requirementId: "req_requirement",
+      status: "init",
+      title: "Generated task"
+    });
+    expect(tasks[0]?.id).toMatch(/^tsk_/);
+    await expect(repository.getTask(tasks[0]!.id)).resolves.toEqual(tasks[0]);
+    await expect(repository.getTask("tsk_missing")).resolves.toBeNull();
+  });
+
   it("soft deletes tasks associated with a requirement", async () => {
     const repository = createInMemoryTaskRepository();
-    const task = await repository.createTaskFromDraft({
-      body: "Generated task body",
-      createdAt: new Date().toISOString(),
-      id: "tdf_task",
+    const [task] = await repository.createTasksFromDecompositionResult({
+      items: [
+        {
+          body: "Generated task body",
+          sortOrder: 0,
+          title: "Generated task"
+        }
+      ],
       projectId: null,
       requirementId: "req_requirement",
-      sortOrder: 0,
-      status: "draft",
-      title: "Generated task",
-      updatedAt: new Date().toISOString()
     });
 
     await repository.deleteTasksForRequirement("req_requirement");

@@ -30,7 +30,7 @@ describe("i18n configuration", () => {
       expect(messages.settings.languageLabel).toBeTruthy();
       expect(messages.progress.recipes).toBeTruthy();
       expect(messages.workspace.taskBoardHeading).toBeTruthy();
-      expect(messages.taskStatus.todo).toBeTruthy();
+      expect(messages.taskStatus.init).toBeTruthy();
     }
   });
 
@@ -39,14 +39,14 @@ describe("i18n configuration", () => {
 
     expect(messages.nav.controlRoom).toBe("首页");
     expect(messages.hero.title).toBe("把想法编排成可交付的 AI 工作。");
-    expect(messages.hero.generateTaskDrafts).toBe("提出你的需求");
+    expect(messages.hero.createRequirement).toBe("创建需求");
     expect(messages.status.ready).toBe("就绪");
   });
 
-  it("keeps Task Draft out of visible product copy", () => {
+  it("keeps the legacy draft term out of visible product copy", () => {
     const allCopy = JSON.stringify(getMessages("en")) + JSON.stringify(getMessages("zh"));
 
-    expect(allCopy).not.toContain("Task Draft");
+    expect(allCopy).not.toMatch(/Task\s+Draft/);
     expect(allCopy).not.toContain("评审队列");
   });
 

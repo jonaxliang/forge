@@ -2,17 +2,18 @@ import {
   createHealthPayload,
   parseWorkflowFile,
   planWorkflowDag,
-  workflowFileSchema
+  workflowFileSchema,
+  type WorkflowFile
 } from "@forge/core";
 import {
   artifactStorageModes,
   agentConnectorTypes,
+  createInMemoryDecompositionResultRepository,
   createInMemoryBridgeRepository,
   createInMemoryExecutionSettingsRepository,
   createInMemoryProjectRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
-  createInMemoryTaskDraftRepository,
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
   dbStrategies,
@@ -23,12 +24,13 @@ import {
   type AgentBinding,
   type BridgeJob,
   type BridgeRepository,
+  type DecompositionResult,
+  type DecompositionResultItem,
+  type DecompositionResultRepository,
   type ModelProviderKind,
   type ProjectRepository,
   type RequirementRepository,
   type Task,
-  type TaskDraft,
-  type TaskDraftRepository,
   type TaskRepository,
   type WorkflowFileMetadata,
   type WorkflowRun,
@@ -58,7 +60,8 @@ const updateProjectSchema = z.object({
 });
 
 const importWorkflowFileSchema = z.object({
-  source: z.string().trim().min(1)
+  source: z.string().trim().min(1),
+  templateType: z.enum(["builtin", "custom"]).optional()
 });
 
 const updateWorkflowFileSchema = z.object({
@@ -103,19 +106,164 @@ function deduplicateWorkflowName(baseName: string, existingNames: string[]) {
   return candidateName;
 }
 
-const updateTaskDraftSchema = z.object({
-  title: z.string().trim().min(1),
-  body: z.string().trim().min(1)
-});
+const baseWorkflowTemplateSemanticKeyByName: Record<string, string> = {
+  "autonomous research plan": "research-analysis",
+  "code implementation": "software-task",
+  "creative writing requirement": "creative-writing-task",
+  "creative writing task": "creative-writing-task",
+  "human approval": "review-approval",
+  "requirement split": "requirement-planning",
+  "research & writing requirement": "research-writing-task",
+  "research & writing task": "research-writing-task",
+  "research analysis": "research-analysis",
+  "software change requirement": "requirement-planning",
+  "software change task": "software-task",
+  "travel guide coding test": "travel-guide-coding-test",
+  "writing review": "writing-editing",
+  "代码编写模板": "software-task",
+  "创意写作拆解模板": "creative-writing-task",
+  "创意写作模板": "creative-writing-task",
+  "调研分析模板": "research-analysis",
+  "调研写作拆解模板": "research-writing-task",
+  "调研写作模板": "research-writing-task",
+  "评审审批模板": "review-approval",
+  "写作编辑模板": "writing-editing",
+  "旅行指南编写测试模板": "travel-guide-coding-test",
+  "自主测试任务完成": "travel-guide-coding-test",
+  "需求拆解模板": "requirement-planning"
+};
+const baseWorkflowTemplateDisplayNameBySemanticKey: Record<string, string> = {
+  "creative-writing-task": "创意写作模板",
+  "requirement-planning": "需求拆解模板",
+  "research-analysis": "调研分析模板",
+  "research-writing-task": "调研写作模板",
+  "review-approval": "评审审批模板",
+  "software-task": "代码编写模板",
+  "travel-guide-coding-test": "旅行指南编写测试模板",
+  "writing-editing": "写作编辑模板"
+};
 
-const reorderTaskDraftsSchema = z.object({
-  order: z.array(
-    z.object({
-      id: z.string().trim().min(1),
-      sortOrder: z.number().int().min(0)
-    })
-  )
-});
+function normalizeBaseWorkflowTemplateName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+\d+$/, "");
+}
+
+function parseStoredWorkflowDefinition(definition: string): WorkflowFile | null {
+  try {
+    const parsed = JSON.parse(definition) as WorkflowFile;
+
+    if (
+      typeof parsed.name !== "string" ||
+      !["requirement", "task"].includes(parsed.scope) ||
+      !Array.isArray(parsed.nodes)
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function getBaseWorkflowTemplateSemanticKey(workflowFile: WorkflowFileMetadata) {
+  const parsedWorkflow = parseStoredWorkflowDefinition(workflowFile.definition);
+  const names = [workflowFile.name, parsedWorkflow?.name ?? ""];
+
+  for (const name of names) {
+    const key =
+      baseWorkflowTemplateSemanticKeyByName[
+        normalizeBaseWorkflowTemplateName(name)
+      ];
+
+    if (key) {
+      return key;
+    }
+  }
+
+  return "";
+}
+
+function selectWorkflowFileToKeep(
+  currentWorkflowFile: WorkflowFileMetadata,
+  candidateWorkflowFile: WorkflowFileMetadata
+) {
+  if (candidateWorkflowFile.nodeCount !== currentWorkflowFile.nodeCount) {
+    return candidateWorkflowFile.nodeCount > currentWorkflowFile.nodeCount
+      ? candidateWorkflowFile
+      : currentWorkflowFile;
+  }
+
+  return candidateWorkflowFile.createdAt < currentWorkflowFile.createdAt
+    ? candidateWorkflowFile
+    : currentWorkflowFile;
+}
+
+async function deleteDuplicateBaseWorkflowTemplates(
+  workflowFiles: WorkflowFileRepository
+) {
+  const existingWorkflowFiles = await workflowFiles.listWorkflowFileMetadata();
+  const keptWorkflowFileBySemanticKey = new Map<string, WorkflowFileMetadata>();
+  const duplicateWorkflowFileIds = new Set<string>();
+
+  for (const workflowFile of existingWorkflowFiles) {
+    const semanticKey = getBaseWorkflowTemplateSemanticKey(workflowFile);
+
+    if (!semanticKey) {
+      continue;
+    }
+
+    const currentWorkflowFile = keptWorkflowFileBySemanticKey.get(semanticKey);
+
+    if (!currentWorkflowFile) {
+      keptWorkflowFileBySemanticKey.set(semanticKey, workflowFile);
+      continue;
+    }
+
+    const workflowFileToKeep = selectWorkflowFileToKeep(
+      currentWorkflowFile,
+      workflowFile
+    );
+    const workflowFileToDelete =
+      workflowFileToKeep.id === currentWorkflowFile.id
+        ? workflowFile
+        : currentWorkflowFile;
+
+    keptWorkflowFileBySemanticKey.set(semanticKey, workflowFileToKeep);
+    duplicateWorkflowFileIds.add(workflowFileToDelete.id);
+  }
+
+  await Promise.all(
+    [...duplicateWorkflowFileIds].map((workflowFileId) =>
+      workflowFiles.deleteWorkflowFileMetadata(workflowFileId)
+    )
+  );
+
+  await Promise.all(
+    [...keptWorkflowFileBySemanticKey.entries()].map(
+      ([semanticKey, workflowFile]) => {
+        const displayName = baseWorkflowTemplateDisplayNameBySemanticKey[semanticKey];
+
+        if (!displayName || workflowFile.name === displayName) {
+          return Promise.resolve();
+        }
+
+        return workflowFiles.updateWorkflowFileMetadata({
+          id: workflowFile.id,
+          name: displayName
+        });
+      }
+    )
+  );
+
+  return (await workflowFiles.listWorkflowFileMetadata()).map((workflowFile) =>
+    getBaseWorkflowTemplateSemanticKey(workflowFile)
+      ? { ...workflowFile, templateType: "builtin" as const }
+      : workflowFile
+  );
+}
 
 const bridgeAgentSchema = z.object({
   capabilities: z.array(z.string().trim().min(1)).optional(),
@@ -136,6 +284,7 @@ const bridgeJobCompletionSchema = z.object({
 });
 
 const plannedTasksSchema = z.object({
+  summary: z.string().trim().optional(),
   tasks: z
     .array(
       z.object({
@@ -149,12 +298,12 @@ const plannedTasksSchema = z.object({
 type AppDependencies = {
   agentProxyClient?: AgentProxyClient;
   bridgeRepository?: BridgeRepository;
+  decompositionResultRepository?: DecompositionResultRepository;
   executionSettingsRepository?: ExecutionSettingsRepository;
   modelApiTester?: ModelApiTester;
   projectRepository?: ProjectRepository;
   requirementPlanner?: RequirementPlanner;
   requirementRepository?: RequirementRepository;
-  taskDraftRepository?: TaskDraftRepository;
   taskRepository?: TaskRepository;
   workflowRunRepository?: WorkflowRunRepository;
   workflowFileRepository?: WorkflowFileRepository;
@@ -169,7 +318,10 @@ type RequirementPlanner = (input: {
   };
   settings: ExecutionSettings;
   workflowFile: WorkflowFileMetadata;
-}) => Promise<Array<Pick<TaskDraft, "body" | "sortOrder" | "title">>>;
+}) => Promise<{
+  items: DecompositionResultItem[];
+  summary: string;
+}>;
 
 type AgentProxyClient = (input: {
   agentProxyUrl: string;
@@ -190,12 +342,12 @@ type ModelApiTester = (settings: ExecutionSettings) => Promise<void>;
 export function createApp({
   agentProxyClient,
   bridgeRepository,
+  decompositionResultRepository,
   executionSettingsRepository,
   modelApiTester,
   projectRepository,
   requirementPlanner,
   requirementRepository,
-  taskDraftRepository,
   taskRepository,
   workflowRunRepository,
   workflowFileRepository,
@@ -206,10 +358,11 @@ export function createApp({
   const executionSettings =
     executionSettingsRepository ?? createInMemoryExecutionSettingsRepository();
   const bridges = bridgeRepository ?? createInMemoryBridgeRepository();
+  const decompositionResults =
+    decompositionResultRepository ?? createInMemoryDecompositionResultRepository();
   const projects = projectRepository ?? createInMemoryProjectRepository();
   const requirements =
     requirementRepository ?? createInMemoryRequirementRepository();
-  const taskDrafts = taskDraftRepository ?? createInMemoryTaskDraftRepository();
   const tasks = taskRepository ?? createInMemoryTaskRepository();
   const workflowRuns =
     workflowRunRepository ?? createInMemoryWorkflowRunRepository();
@@ -219,7 +372,7 @@ export function createApp({
   const proxyClient = agentProxyClient ?? startWorkflowRunViaAgentProxy;
   const testModelApi = modelApiTester ?? testModelApiWithProvider;
 
-  async function planTaskDraftsForRequirement(requirement: {
+  async function createDecompositionResultForRequirement(requirement: {
     id: string;
     projectId: string | null;
     workflowFileId: string;
@@ -237,35 +390,28 @@ export function createApp({
     const settings = await executionSettings.getExecutionSettings();
 
     if (!isModelConfigured(settings)) {
-      return {
-        planning: {
-          reason: "model_not_configured" as const,
-          status: "blocked" as const
-        },
-        taskDrafts: []
-      };
+      throw new Error("Model configuration is required before decomposing requirements");
     }
 
-    const plannedTaskDrafts = await planner({
+    const plannedDecomposition = await planner({
       requirement,
       settings,
       workflowFile
     });
-    const generatedTaskDrafts = [];
+    const decompositionResult =
+      await decompositionResults.saveDecompositionResult({
+        items: plannedDecomposition.items,
+        projectId: requirement.projectId,
+        requirementId: requirement.id,
+        summary: plannedDecomposition.summary
+      });
 
-    for (const [index, taskDraft] of plannedTaskDrafts.entries()) {
-      generatedTaskDrafts.push(
-        await taskDrafts.createTaskDraft({
-          body: taskDraft.body,
-          projectId: requirement.projectId,
-          requirementId: requirement.id,
-          sortOrder: taskDraft.sortOrder ?? index,
-          title: taskDraft.title
-        })
-      );
-    }
+    const updatedRequirement = await requirements.updateRequirementStatus({
+      id: requirement.id,
+      status: "ready_to_generate_tasks"
+    });
 
-    return { taskDrafts: generatedTaskDrafts };
+    return { decompositionResult, requirement: updatedRequirement };
   }
 
   api.get("/health", (c) => c.json(createHealthPayload()));
@@ -384,7 +530,7 @@ export function createApp({
     );
 
     if (!payload.success) {
-      return c.json({ error: "Invalid Bridge registration payload" }, 400);
+      return c.json({ error: "Invalid local bridge registration payload" }, 400);
     }
 
     const agents = [];
@@ -413,7 +559,7 @@ export function createApp({
       .safeParse(await c.req.json().catch(() => null));
 
     if (!payload.success) {
-      return c.json({ error: "Invalid Bridge heartbeat payload" }, 400);
+      return c.json({ error: "Invalid local bridge heartbeat payload" }, 400);
     }
 
     const agents = [];
@@ -452,7 +598,7 @@ export function createApp({
     );
 
     if (!payload.success) {
-      return c.json({ error: "Invalid Bridge job completion payload" }, 400);
+      return c.json({ error: "Invalid local bridge job completion payload" }, 400);
     }
 
     try {
@@ -482,7 +628,9 @@ export function createApp({
   });
 
   api.get("/workflow-files", async (c) => {
-    return c.json({ workflowFiles: await workflowFiles.listWorkflowFileMetadata() });
+    return c.json({
+      workflowFiles: await deleteDuplicateBaseWorkflowTemplates(workflowFiles)
+    });
   });
 
   api.post("/workflow-files/import", async (c) => {
@@ -506,7 +654,8 @@ export function createApp({
         definition: JSON.stringify(storedWorkflow),
         name: storedWorkflow.name,
         nodeCount: storedWorkflow.nodes.length,
-        scope: storedWorkflow.scope
+        scope: storedWorkflow.scope,
+        templateType: payload.data.templateType
       });
 
       return c.json({ workflow: storedWorkflow, workflowFile }, 201);
@@ -577,85 +726,13 @@ export function createApp({
       );
     }
 
-    try {
-      const planningResult = await planTaskDraftsForRequirement(requirement);
-
-      return c.json(
-        {
-          ...planningResult,
-          requirement,
-        },
-        201
-      );
-    } catch (error) {
-      const message = getErrorMessage(error);
-      const failedRequirement = await requirements.updateRequirementStatus({
-        errorMessage: message,
-        id: requirement.id,
-        status: "failed"
-      });
-
-      return c.json(
-        {
-          error: message,
-          requirement: failedRequirement,
-          taskDrafts: []
-        },
-        400
-      );
-    }
-  });
-
-  api.post("/requirements/:id/task-drafts", async (c) => {
-    const requirement = (await requirements.listRequirements()).find(
-      (currentRequirement) => currentRequirement.id === c.req.param("id")
+    return c.json(
+      {
+        decompositionResult: null,
+        requirement
+      },
+      201
     );
-
-    if (!requirement) {
-      return c.json({ error: "Requirement not found" }, 404);
-    }
-
-    const existingTaskDrafts = (await taskDrafts.listTaskDrafts()).filter(
-      (taskDraft) => taskDraft.requirementId === requirement.id
-    );
-    const existingTasks = (await tasks.listTasks()).filter(
-      (task) => task.requirementId === requirement.id
-    );
-
-    if (existingTaskDrafts.length > 0 || existingTasks.length > 0) {
-      return c.json(
-        { error: "Requirement already has generated work" },
-        409
-      );
-    }
-
-    try {
-      const planningResult = await planTaskDraftsForRequirement(requirement);
-
-      return c.json(
-        {
-          ...planningResult,
-          requirement
-        },
-        201
-      );
-    } catch (error) {
-      const message = getErrorMessage(error);
-      const failedRequirement = await requirements.updateRequirementStatus({
-        errorMessage: message,
-        id: requirement.id,
-        status: "failed"
-      });
-
-      return c.json(
-        {
-          error: message,
-          requirement: failedRequirement,
-          taskDrafts: []
-        },
-        400
-      );
-    }
   });
 
   api.patch("/requirements/:id", async (c) => {
@@ -699,62 +776,118 @@ export function createApp({
     }
   });
 
-  api.get("/task-drafts", async (c) => {
-    return c.json({ taskDrafts: await taskDrafts.listTaskDrafts() });
+  api.post("/requirements/:id/decomposition-result", async (c) => {
+    const requirement = (await requirements.listRequirements()).find(
+      (currentRequirement) => currentRequirement.id === c.req.param("id")
+    );
+
+    if (!requirement) {
+      return c.json({ error: "Requirement not found" }, 404);
+    }
+
+    const existingTasks = (await tasks.listTasks()).filter(
+      (task) => task.requirementId === requirement.id
+    );
+
+    if (existingTasks.length > 0) {
+      return c.json({ error: "Requirement already has generated tasks" }, 409);
+    }
+
+    await requirements.updateRequirementStatus({
+      id: requirement.id,
+      status: "decomposing"
+    });
+
+    try {
+      return c.json(await createDecompositionResultForRequirement(requirement), 201);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const failedRequirement = await requirements.updateRequirementStatus({
+        errorMessage: message,
+        id: requirement.id,
+        status: "decomposition_failed"
+      });
+
+      return c.json(
+        {
+          decompositionResult: null,
+          error: message,
+          requirement: failedRequirement
+        },
+        400
+      );
+    }
   });
 
-  api.patch("/task-drafts/:id", async (c) => {
-    const payload = updateTaskDraftSchema.safeParse(
+  api.get("/decomposition-results", async (c) => {
+    const results = await Promise.all(
+      (await requirements.listRequirements()).map((requirement) =>
+        decompositionResults.getDecompositionResultForRequirement(requirement.id)
+      )
+    );
+
+    return c.json({
+      decompositionResults: results.filter(
+        (result): result is DecompositionResult => result !== null
+      )
+    });
+  });
+
+  api.patch("/decomposition-results/:id", async (c) => {
+    const payload = plannedTasksSchema.safeParse(
       await c.req.json().catch(() => null)
     );
 
     if (!payload.success) {
-      return c.json({ error: "Invalid task draft payload" }, 400);
+      return c.json({ error: "Invalid decomposition result payload" }, 400);
     }
 
     try {
-      return c.json(
-        await taskDrafts.updateTaskDraft({
-          id: c.req.param("id"),
-          ...payload.data
-        })
-      );
+      return c.json({
+        decompositionResult:
+          await decompositionResults.updateDecompositionResult({
+            id: c.req.param("id"),
+            items: payload.data.tasks.map((task, index) => ({
+              body: task.body,
+              sortOrder: index,
+              title: task.title
+            })),
+            summary: payload.data.summary ?? ""
+          })
+      });
     } catch (error) {
       return c.json({ error: getErrorMessage(error) }, 404);
     }
   });
 
-  api.delete("/task-drafts/:id", async (c) => {
-    await taskDrafts.deleteTaskDraft(c.req.param("id"));
-
-    return c.body(null, 204);
-  });
-
-  api.post("/task-drafts/reorder", async (c) => {
-    const payload = reorderTaskDraftsSchema.safeParse(
-      await c.req.json().catch(() => null)
+  api.post("/decomposition-results/:id/generate-tasks", async (c) => {
+    const decompositionResult = await decompositionResults.getDecompositionResult(
+      c.req.param("id")
     );
 
-    if (!payload.success) {
-      return c.json({ error: "Invalid task draft order payload" }, 400);
+    if (!decompositionResult) {
+      return c.json({ error: "Decomposition result not found" }, 404);
     }
 
-    return c.json({
-      taskDrafts: await taskDrafts.reorderTaskDrafts(payload.data.order)
+    const existingTasks = (await tasks.listTasks()).filter(
+      (task) => task.requirementId === decompositionResult.requirementId
+    );
+
+    if (existingTasks.length > 0) {
+      return c.json({ error: "Requirement already has generated tasks" }, 409);
+    }
+
+    const generatedTasks = await tasks.createTasksFromDecompositionResult({
+      items: decompositionResult.items,
+      projectId: decompositionResult.projectId,
+      requirementId: decompositionResult.requirementId
     });
-  });
+    const requirement = await requirements.updateRequirementStatus({
+      id: decompositionResult.requirementId,
+      status: "tasks_generated"
+    });
 
-  api.post("/task-drafts/:id/approve", async (c) => {
-    const taskDraft = await taskDrafts.getTaskDraft(c.req.param("id"));
-
-    if (!taskDraft) {
-      return c.json({ error: "Task draft not found" }, 404);
-    }
-
-    const task = await tasks.createTaskFromDraft(taskDraft);
-    await taskDrafts.deleteTaskDraft(taskDraft.id);
-
-    return c.json({ task }, 201);
+    return c.json({ requirement, tasks: generatedTasks }, 201);
   });
 
   api.get("/tasks", async (c) => {
@@ -798,7 +931,7 @@ export function createApp({
         return c.json(
           {
             error:
-              "Configure local Bridge or Agent proxy before starting Workflow Runs"
+              "Configure local bridge before starting Task Workflows"
           },
           409
         );
@@ -1003,7 +1136,8 @@ async function planRequirementWithModel({
   const { output } = await generateText({
     model: createPlanningLanguageModel(settings),
     output: Output.object({
-      description: "A list of executable Forge Tasks planned from a Requirement.",
+      description:
+        "An editable decomposition result with executable Forge Tasks planned from a Requirement.",
       name: "forgeRequirementPlan",
       schema: plannedTasksSchema
     }),
@@ -1025,20 +1159,25 @@ async function planRequirementWithModel({
   const tasks = output.tasks;
 
   if (tasks.length === 0) {
-    throw new Error("Model planner returned no Tasks");
+    throw new Error("Model returned no decomposition result items");
   }
 
-  return tasks.map((task, index) => {
-    if (!task.title?.trim() || !task.body?.trim()) {
-      throw new Error("Model planner returned an invalid Task");
-    }
+  return {
+    items: tasks.map((task, index) => {
+      if (!task.title?.trim() || !task.body?.trim()) {
+        throw new Error("Model returned an invalid decomposition result item");
+      }
 
-    return {
-      body: task.body.trim(),
-      sortOrder: index,
-      title: task.title.trim()
-    };
-  });
+      return {
+        body: task.body.trim(),
+        sortOrder: index,
+        title: task.title.trim()
+      };
+    }),
+    summary:
+      output.summary?.trim() ||
+      `拆解出 ${tasks.length} 个任务，确认后可生成任务。`
+  };
 }
 
 type ProviderOptions = {
@@ -1117,6 +1256,6 @@ async function startWorkflowRunViaAgentProxy({
   );
 
   if (!response.ok) {
-    throw new Error(`Agent proxy rejected Workflow Run with status ${response.status}`);
+    throw new Error(`Local executor rejected Task Workflow with status ${response.status}`);
   }
 }

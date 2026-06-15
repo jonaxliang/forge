@@ -15,7 +15,7 @@ describe("App workbench layout", () => {
     expect(markup).toContain("Create your first Project");
     expect(markup).toContain("Project name");
     expect(markup).not.toContain("What should Forge help with?");
-    expect(markup).not.toContain("Workflow File source");
+    expect(markup).not.toContain("Workflow template source");
     expect(markup).not.toContain("Import a Workflow File");
   });
 
@@ -76,7 +76,7 @@ describe("App workbench layout", () => {
     const settingsMarkup = renderToStaticMarkup(<App initialPage="settings" />);
 
     expect(workflowTemplatesMarkup).toContain("Home");
-    expect(workflowTemplatesMarkup).not.toContain(">Control Room</button>");
+    expect(workflowTemplatesMarkup).not.toContain(">Run console</button>");
     expect(workflowTemplatesMarkup).toContain("Requirements");
     expect(workflowTemplatesMarkup).toContain(
       'aria-current="page" class="button-secondary nav-button" type="button">Workflow templates'
@@ -113,6 +113,14 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("<h1>Turn an idea into shipped AI work.</h1>");
   });
 
+  it("links the top-left brand lockup to the home page", () => {
+    const markup = renderToStaticMarkup(<App initialPage="settings" />);
+
+    expect(markup).toContain(
+      '<a class="brand-lockup" aria-label="Home" href="/">'
+    );
+  });
+
   it("opens New Project in a modal instead of an inline drawer", () => {
     const markup = renderToStaticMarkup(
       <App initialWorkbenchAction="project" />
@@ -134,7 +142,7 @@ describe("App workbench layout", () => {
             createdAt: "2026-06-14T00:00:00.000Z",
             dbStrategy: "sqlite",
             id: "proj_test",
-            name: "Forge Control Room",
+            name: "Forge Ops",
             updatedAt: "2026-06-14T00:00:00.000Z"
           }
         ]}
@@ -142,11 +150,17 @@ describe("App workbench layout", () => {
     );
 
     expect(markup).toContain("Project name");
-    expect(markup).toContain('value="Forge Control Room"');
+    expect(markup).toContain('value="Forge Ops"');
     expect(markup).toContain("Save Project name");
   });
 
-  it("shows a workflow template list summary with top three templates", () => {
+  it("does not repeat the settings page eyebrow inside the active settings panel", () => {
+    const markup = renderToStaticMarkup(<App initialPage="settings" />);
+
+    expect(markup.match(/Workspace preferences/g) ?? []).toHaveLength(1);
+  });
+
+  it("shows a workflow template list summary with top three user templates", () => {
     const markup = renderToStaticMarkup(
       <App
         initialProjects={[
@@ -167,7 +181,7 @@ describe("App workbench layout", () => {
             errorMessage: null,
             id: "req_test",
             projectId: "proj_test",
-            status: "open",
+            status: "init",
             title: "Requirement",
             updatedAt: "2026-06-14T00:00:00.000Z",
             workflowFileId: "wf_1"
@@ -240,6 +254,27 @@ describe("App workbench layout", () => {
           {
             createdAt: "2026-06-14T00:00:00.000Z",
             definition: JSON.stringify({
+              name: "Deploy",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:deployer",
+                  exit: { maxRetries: 1 },
+                  id: "deploy",
+                  outputs: ["release.md"],
+                  type: "deployment"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_4",
+            name: "Deploy",
+            nodeCount: 4,
+            scope: "task"
+          },
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
               name: "Hidden fourth",
               nodes: [
                 {
@@ -253,9 +288,9 @@ describe("App workbench layout", () => {
               ],
               scope: "task"
             }),
-            id: "wf_4",
+            id: "wf_5",
             name: "Hidden fourth",
-            nodeCount: 4,
+            nodeCount: 5,
             scope: "task"
           }
         ]}
@@ -264,14 +299,119 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain("Template list");
     expect(markup).toContain("4 templates");
-    expect(markup).toContain("Requirement planning template");
-    expect(markup).toContain("Code implementation template");
-    expect(markup).toContain("Review and approval template");
-    expect(markup).toContain("2 Workflow Nodes");
-    expect(markup).not.toContain("Writing and editing template");
+    expect(markup).not.toContain("需求拆解模板");
+    expect(markup).toContain("Task run");
+    expect(markup).toContain("Review");
+    expect(markup).toContain("Deploy");
+    expect(markup).toContain("3 Nodes");
+    expect(markup).not.toContain("Hidden fourth");
     expect(markup).toContain("More templates");
     expect(markup).not.toContain("Recipe map");
     expect(markup).not.toContain(">requirement<");
+  });
+
+  it("collapses the workspace template list when only built-in examples exist", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: "2026-06-14T00:00:00.000Z"
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_test",
+            projectId: "proj_test",
+            status: "init",
+            title: "Requirement",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+            workflowFileId: "wf_requirement"
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "Requirement split",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "skill:requirements",
+                  exit: { maxRetries: 1 },
+                  id: "split",
+                  outputs: ["tasks.md"],
+                  type: "task-drafting"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_requirement",
+            name: "Requirement split",
+            nodeCount: 2,
+            scope: "task"
+          },
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "Research Analysis",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "skill:research",
+                  exit: { maxRetries: 1 },
+                  id: "analyze",
+                  outputs: ["analysis.md"],
+                  type: "research-analysis"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_research",
+            name: "Research Analysis",
+            nodeCount: 3,
+            scope: "task"
+          },
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "自主测试任务完成",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:autonomous-test-agent",
+                  exit: { maxRetries: 1 },
+                  id: "write_travel_guide",
+                  outputs: ["travel-guide.md"],
+                  type: "coding"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_travel",
+            name: "自主测试任务完成",
+            nodeCount: 1,
+            scope: "task"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Template list");
+    expect(markup).toContain("0 templates");
+    expect(markup).toContain("More templates");
+    expect(markup).not.toContain("需求拆解模板");
+    expect(markup).not.toContain("调研分析模板");
+    expect(markup).not.toContain("旅行指南编写测试模板");
+    expect(markup).not.toContain("No recipe preview");
   });
 
   it("places Workflow templates below the Task Board instead of in a side rail", () => {
@@ -295,7 +435,7 @@ describe("App workbench layout", () => {
             errorMessage: null,
             id: "req_test",
             projectId: "proj_test",
-            status: "open",
+            status: "init",
             title: "Requirement",
             updatedAt: "2026-06-14T00:00:00.000Z",
             workflowFileId: "wf_1"
@@ -321,6 +461,40 @@ describe("App workbench layout", () => {
     );
   });
 
+  it("keeps empty task board lanes quiet without repeating mascot artwork", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: "2026-06-14T00:00:00.000Z"
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_test",
+            projectId: "proj_test",
+            status: "init",
+            title: "Requirement",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+            workflowFileId: "wf_1"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("lane-empty-quiet");
+    expect(markup).not.toContain("mascot-cue-lane");
+  });
+
   it("shows Requirements as read-only records until editing starts", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const projects = [
@@ -341,7 +515,7 @@ describe("App workbench layout", () => {
         errorMessage: null,
         id: "req_test",
         projectId: "proj_test",
-        status: "open" as const,
+        status: "init" as const,
         title: "Requirements page",
         updatedAt: timestamp,
         workflowFileId: "wf_1"
@@ -389,7 +563,7 @@ describe("App workbench layout", () => {
         errorMessage: null,
         id: "req_test",
         projectId: "proj_test",
-        status: "open" as const,
+        status: "init" as const,
         title: "LLM Wiki research report",
         updatedAt: timestamp,
         workflowFileId: "wf_1"
@@ -413,7 +587,7 @@ describe("App workbench layout", () => {
       />
     );
 
-    expect(markup).toContain("Generate Tasks");
+    expect(markup).toContain("Decompose Requirement");
     expect(markup).toContain("LLM Wiki research report");
   });
 
@@ -452,7 +626,7 @@ describe("App workbench layout", () => {
             errorMessage: null,
             id: "req_a",
             projectId: "proj_a",
-            status: "open",
+            status: "init",
             title: "Project A requirement",
             updatedAt: timestamp,
             workflowFileId: "wf_1"
@@ -464,7 +638,7 @@ describe("App workbench layout", () => {
             errorMessage: null,
             id: "req_b",
             projectId: "proj_b",
-            status: "open",
+            status: "init",
             title: "Project B requirement",
             updatedAt: timestamp,
             workflowFileId: "wf_1"
@@ -478,7 +652,7 @@ describe("App workbench layout", () => {
             id: "tsk_a",
             projectId: "proj_a",
             requirementId: "req_a",
-            status: "todo",
+            status: "init",
             title: "Project A task",
             updatedAt: timestamp
           },
@@ -489,7 +663,7 @@ describe("App workbench layout", () => {
             id: "tsk_b",
             projectId: "proj_b",
             requirementId: "req_b",
-            status: "todo",
+            status: "init",
             title: "Project B task",
             updatedAt: timestamp
           }
@@ -525,7 +699,7 @@ describe("App workbench layout", () => {
             errorMessage: null,
             id: "req_a",
             projectId: "proj_a",
-            status: "open",
+            status: "init",
             title: "Requirement",
             updatedAt: timestamp,
             workflowFileId: "wf_1"
@@ -539,7 +713,7 @@ describe("App workbench layout", () => {
             id: "tsk_a",
             projectId: "proj_a",
             requirementId: "req_a",
-            status: "todo",
+            status: "init",
             title: "Task",
             updatedAt: timestamp
           }
@@ -623,7 +797,7 @@ describe("App workbench layout", () => {
               errorMessage: null,
               id: "req_a",
               projectId: "proj_a",
-              status: "open",
+              status: "init",
               title: "Project A requirement",
               updatedAt: timestamp,
               workflowFileId: "wf_1"
@@ -635,7 +809,7 @@ describe("App workbench layout", () => {
               errorMessage: null,
               id: "req_b",
               projectId: "proj_b",
-              status: "open",
+              status: "init",
               title: "Project B requirement",
               updatedAt: timestamp,
               workflowFileId: "wf_1"
@@ -659,15 +833,35 @@ describe("App workbench layout", () => {
       <App initialPage="workflow-templates" />
     );
 
-    expect(markup).toContain("New Workflow");
-    expect(markup).toContain("Import Workflow");
-    expect(markup).toContain("Software Change Requirement");
+    expect(markup).toContain("Use built-in template");
+    expect(markup).toContain("Import custom template");
+    expect(markup).toContain("Available templates");
+    expect(markup).toContain("Built-in template");
+    expect(markup).toContain("代码编写模板");
+    expect(markup).toContain("调研写作模板");
+    expect(markup).toContain("创意写作模板");
     expect(markup).toContain("Preview");
     expect(markup).not.toContain("workflow-preview-graph");
     expect(markup).not.toContain("intake");
   });
 
-  it("describes template library entries by business function", () => {
+  it("does not expose default Requirement decomposition templates as selectable Workflow templates", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowTemplateDialog="new"
+      />
+    );
+
+    expect(markup).not.toContain("需求拆解模板");
+    expect(markup).not.toContain("调研写作拆解模板");
+    expect(markup).not.toContain("创意写作拆解模板");
+    expect(markup).toContain("代码编写模板");
+    expect(markup).toContain("调研写作模板");
+    expect(markup).toContain("创意写作模板");
+  });
+
+  it("shows distinct workflow names without exposing inferred categories", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const workflowFiles = [
       {
@@ -825,21 +1019,184 @@ describe("App workbench layout", () => {
     );
 
     expect(markup).toContain("5");
-    expect(markup).toContain("Business function: Requirement planning");
-    expect(markup).toContain("Business function: Research analysis");
-    expect(markup).toContain("Business function: Code implementation");
-    expect(markup).toContain("Business function: Writing and editing");
-    expect(markup).toContain("Business function: Review and approval");
-    expect(markup).toContain("<h3>Requirement planning template</h3>");
-    expect(markup).toContain("<h3>Research analysis template</h3>");
-    expect(markup).toContain("<h3>Code implementation template</h3>");
-    expect(markup).toContain("<h3>Writing and editing template</h3>");
-    expect(markup).toContain("<h3>Review and approval template</h3>");
+    expect(markup).not.toContain("Scope:");
+    expect(markup).not.toContain("作用域");
+    expect(markup).not.toContain("Business function:");
+    expect(markup).toContain("<h3>需求拆解模板</h3>");
+    expect(markup).toContain("<h3>调研分析模板</h3>");
+    expect(markup).toContain("<h3>代码编写模板</h3>");
+    expect(markup).toContain("<h3>写作编辑模板</h3>");
+    expect(markup).toContain("<h3>评审审批模板</h3>");
+    expect(markup).not.toContain("<h3>Requirement planning template</h3>");
+    expect(markup).not.toContain("<h3>Research analysis template</h3>");
+    expect(markup).not.toContain("<h3>Code implementation template</h3>");
+    expect(markup).not.toContain("<h3>Writing and editing template</h3>");
+    expect(markup).not.toContain("<h3>Review and approval template</h3>");
+  });
+
+  it("filters requirement-scoped workflow files out of template management", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Requirement split",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "skill:requirements",
+                  exit: { maxRetries: 1 },
+                  id: "split",
+                  outputs: ["tasks.md"],
+                  type: "task-drafting"
+                }
+              ],
+              scope: "requirement"
+            }),
+            id: "wf_requirement_split",
+            name: "Requirement split",
+            nodeCount: 2,
+            scope: "requirement" as const
+          },
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Software Change Requirement",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:analyst",
+                  exit: { maxRetries: 1 },
+                  id: "intake",
+                  outputs: ["requirement-brief.md"],
+                  type: "requirement-intake"
+                },
+                {
+                  dependsOn: ["intake"],
+                  executor: "agent:planner",
+                  exit: { maxRetries: 1 },
+                  id: "decompose",
+                  outputs: ["decomposition-result.json"],
+                  type: "requirement-decomposition"
+                },
+                {
+                  dependsOn: ["decompose"],
+                  executor: "agent:reviewer",
+                  exit: { maxRetries: 1 },
+                  id: "risk-review",
+                  outputs: ["risk-check.md"],
+                  type: "risk-review"
+                },
+                {
+                  dependsOn: ["risk-review"],
+                  executor: "agent:planner",
+                  exit: { maxRetries: 1 },
+                  id: "package",
+                  outputs: ["approval-notes.md"],
+                  type: "requirement-package"
+                }
+              ],
+              scope: "requirement"
+            }),
+            id: "wf_software_requirement",
+            name: "Software Change Requirement",
+            nodeCount: 4,
+            scope: "requirement" as const
+          },
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Software Change Requirement 2",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:planner",
+                  exit: { maxRetries: 1 },
+                  id: "split",
+                  outputs: ["tasks.md"],
+                  type: "task-drafting"
+                }
+              ],
+              scope: "requirement"
+            }),
+            id: "wf_software_requirement_2",
+            name: "Software Change Requirement 2",
+            nodeCount: 1,
+            scope: "requirement" as const
+          },
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Research Analysis",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "skill:research",
+                  exit: { maxRetries: 1 },
+                  id: "analyze",
+                  outputs: ["analysis.md"],
+                  type: "research-analysis"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_research",
+            name: "Research Analysis",
+            nodeCount: 1,
+            scope: "task" as const
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("<h3>调研分析模板</h3>");
+    expect(markup).toContain("1 nodes");
+    expect(markup).not.toContain("Scope:");
+    expect(markup).not.toContain("Scope: requirement");
+    expect(markup).not.toContain("<h3>需求拆解模板</h3>");
     expect(markup).not.toContain("<h3>Requirement split</h3>");
-    expect(markup).not.toContain("<h3>Autonomous research plan</h3>");
-    expect(markup).not.toContain("<h3>Code Implementation</h3>");
-    expect(markup).not.toContain("<h3>Writing Review</h3>");
-    expect(markup).not.toContain("<h3>Human Approval</h3>");
+    expect(markup).not.toContain("<h3>Software Change Requirement</h3>");
+    expect(markup).not.toContain("<h3>Software Change Requirement 2</h3>");
+    expect(markup).not.toContain("<h3>Research Analysis</h3>");
+  });
+
+  it("shows the autonomous test Workflow template by its concrete purpose", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowFiles={[
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "自主测试任务完成",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:autonomous-test-agent",
+                  exit: { maxRetries: 1 },
+                  id: "write_travel_guide",
+                  outputs: ["travel-guide.md"],
+                  type: "coding"
+                }
+              ],
+              scope: "task"
+            }),
+            id: "wf_autonomous_test",
+            name: "自主测试任务完成",
+            nodeCount: 1,
+            scope: "task"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("<h3>旅行指南编写测试模板</h3>");
+    expect(markup).not.toContain("Scope:");
+    expect(markup).not.toContain("Business function:");
+    expect(markup).not.toContain("<h3>自主测试任务完成</h3>");
   });
 
   it("keeps workflow template rows compact until editing or previewing", () => {
@@ -872,8 +1229,9 @@ describe("App workbench layout", () => {
       />
     );
 
-    expect(markup).toContain("Research analysis template");
-    expect(markup).toContain("Business function: Research analysis");
+    expect(markup).toContain("Research Analysis");
+    expect(markup).not.toContain("Scope:");
+    expect(markup).not.toContain("Business function:");
     expect(markup).toContain("1 nodes");
     expect(markup).toContain('aria-label="Edit Workflow Research Analysis"');
     expect(markup).toContain('aria-label="Preview Workflow Research Analysis"');
@@ -931,9 +1289,9 @@ describe("App workbench layout", () => {
       <App initialPage="workflow-templates" />
     );
 
-    expect(markup).toContain("New Workflow");
-    expect(markup).toContain("Import Workflow");
-    expect(markup).not.toContain("Workflow File source");
+    expect(markup).toContain("Use built-in template");
+    expect(markup).toContain("Import custom template");
+    expect(markup).not.toContain("Workflow template source");
     expect(markup).not.toContain("Import Recipe");
   });
 
@@ -947,14 +1305,14 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('id="workflow-template-modal-heading"');
-    expect(markup).toContain("New Workflow");
-    expect(markup).toContain("Default templates");
-    expect(markup).toContain("Software Change Requirement");
-    expect(markup).toContain("Software Change Task");
-    expect(markup).toContain("Research &amp; Writing Requirement");
-    expect(markup).toContain("Research &amp; Writing Task");
-    expect(markup).toContain("Creative Writing Requirement");
-    expect(markup).toContain("Creative Writing Task");
+    expect(markup).toContain("Use built-in template");
+    expect(markup).toContain("Built-in templates");
+    expect(markup).not.toContain("需求拆解模板");
+    expect(markup).toContain("代码编写模板");
+    expect(markup).not.toContain("调研写作拆解模板");
+    expect(markup).toContain("调研写作模板");
+    expect(markup).not.toContain("创意写作拆解模板");
+    expect(markup).toContain("创意写作模板");
     expect(markup).toContain("task template with 5 nodes");
     expect(markup).toContain("Import Recipe");
   });
@@ -1014,10 +1372,10 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('id="workflow-template-modal-heading"');
-    expect(markup).toContain("Import Workflow");
-    expect(markup).toContain("Workflow File source");
+    expect(markup).toContain("Import custom template");
+    expect(markup).toContain("Workflow template source");
     expect(markup).toContain("Upload .wf");
-    expect(markup).not.toContain("Default templates");
+    expect(markup).not.toContain("Built-in templates");
   });
 
   it("previews the selected workflow template as a node graph", () => {
@@ -1040,6 +1398,22 @@ describe("App workbench layout", () => {
           id: "code",
           outputs: ["diff.patch"],
           type: "code-change"
+        },
+        {
+          dependsOn: ["plan"],
+          executor: "agent:qa",
+          exit: { maxRetries: 1 },
+          id: "verify",
+          outputs: ["verification.md"],
+          type: "verification"
+        },
+        {
+          dependsOn: ["code", "verify"],
+          executor: "agent:reviewer",
+          exit: { maxRetries: 1 },
+          id: "handoff",
+          outputs: ["summary.md"],
+          type: "handoff"
         }
       ]
     };
@@ -1053,7 +1427,7 @@ describe("App workbench layout", () => {
             definition: JSON.stringify(taskWorkflow),
             id: "wf_code",
             name: "Code Implementation",
-            nodeCount: 2,
+            nodeCount: 4,
             scope: "task"
           }
         ]}
@@ -1063,15 +1437,27 @@ describe("App workbench layout", () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('id="workflow-preview-modal-heading"');
     expect(markup).toContain("workflow-preview-graph");
+    expect(markup).toContain("workflow-dag-map");
     expect(markup).toContain("Code Implementation");
+    expect(markup).toContain("Start");
+    expect(markup).toContain("End");
+    expect(markup).toContain("Start node");
+    expect(markup).toContain("End node");
     expect(markup).toContain("plan");
     expect(markup).toContain("code");
+    expect(markup).toContain("verify");
+    expect(markup).toContain("handoff");
     expect(markup).toContain("plan.md");
+    expect(markup).toContain("verification.md");
     expect(markup).toContain("Depends on plan");
+    expect(markup).toContain("Depends on code, verify");
+    expect(markup).toContain('aria-label="Start to plan"');
+    expect(markup).toContain('aria-label="code to handoff"');
+    expect(markup).toContain('aria-label="verify to handoff"');
     expect(markup).toContain("agent:coder");
   });
 
-  it("previews requirement-scoped workflow file definitions", () => {
+  it("does not preview requirement-scoped workflow file definitions", () => {
     const requirementWorkflow = {
       name: "Requirement Planning",
       scope: "requirement",
@@ -1103,12 +1489,11 @@ describe("App workbench layout", () => {
       />
     );
 
-    expect(markup).toContain('role="dialog"');
-    expect(markup).toContain('id="workflow-preview-modal-heading"');
-    expect(markup).toContain("workflow-preview-graph");
-    expect(markup).toContain("Requirement Planning");
-    expect(markup).toContain("split");
-    expect(markup).toContain("tasks.md");
+    expect(markup).not.toContain('id="workflow-preview-modal-heading"');
+    expect(markup).not.toContain("workflow-preview-graph");
+    expect(markup).not.toContain("Requirement Planning");
+    expect(markup).not.toContain("split");
+    expect(markup).not.toContain("tasks.md");
     expect(markup).not.toContain("intake");
   });
 
@@ -1140,38 +1525,70 @@ describe("App workbench layout", () => {
     expect(markup).toContain("Model settings");
     expect(markup).toContain("Language");
     expect(markup).not.toContain("Model base URL");
-    expect(markup).not.toContain("Local Agent proxy URL");
+    expect(markup).not.toContain("Local bridge URL");
   });
 
-  it("renders model API and local Agent proxy setup as two blocks in model settings", () => {
+  it("renders model settings behind a secondary navigation in model settings", () => {
     const markup = renderToStaticMarkup(
       <App initialPage="settings" initialSettingsSection="model" />
     );
 
+    expect(markup).toContain('aria-label="Model settings sections"');
+    expect(markup).toContain("Local bridge");
     expect(markup).toContain("Model API");
     expect(markup).toContain("Planning plane");
     expect(markup).toContain("Requirement to Task planning");
     expect(markup).toContain("settings-model-api-panel");
     expect(markup).toContain("Model base URL");
     expect(markup).toContain("API key");
-    expect(markup).toContain("Local Agent proxy");
-    expect(markup).toContain("Execution bridge");
-    expect(markup).toContain("Task Workflow Run dispatch");
-    expect(markup).toContain("settings-agent-proxy-panel");
-    expect(markup).toContain("forgecli bridge bind --server");
-    expect(markup).toContain("CLI setup is not available in this build");
+    expect(markup).not.toContain("settings-agent-proxy-panel");
+    expect(markup).not.toContain("forgecli bridge bind --server");
+    expect(markup).not.toContain("CLI setup is not available in this build");
     expect(markup).not.toContain("Language");
   });
 
-  it("renders independent model API and local Agent proxy actions", () => {
+  it("renders local bridge as its own secondary page in model settings", () => {
     const markup = renderToStaticMarkup(
-      <App initialPage="settings" initialSettingsSection="model" />
+      <App
+        initialPage="settings"
+        initialSettingsSection="model"
+        initialModelSettingsSection="local-bridge"
+      />
     );
 
-    expect(markup).toContain("Save model API");
-    expect(markup).toContain("Test API key");
-    expect(markup).toContain("Save local Agent proxy");
-    expect(markup).not.toContain("Save execution settings");
+    expect(markup).toContain('aria-label="Model settings sections"');
+    expect(markup).toContain("Model settings");
+    expect(markup).toContain("Local bridge");
+    expect(markup).toContain("Local bridge");
+    expect(markup).toContain("Execution bridge");
+    expect(markup).toContain("Task Workflow dispatch");
+    expect(markup).toContain("settings-agent-proxy-panel");
+    expect(markup).toContain("forgecli bridge bind --server");
+    expect(markup).toContain("CLI setup is not available in this build");
+    expect(markup).not.toContain("settings-model-api-panel");
+    expect(markup).not.toContain("Model base URL");
+    expect(markup).not.toContain("Language");
+  });
+
+  it("renders independent model API and local bridge actions", () => {
+    const modelMarkup = renderToStaticMarkup(
+      <App initialPage="settings" initialSettingsSection="model" />
+    );
+    const localBridgeMarkup = renderToStaticMarkup(
+      <App
+        initialPage="settings"
+        initialSettingsSection="model"
+        initialModelSettingsSection="local-bridge"
+      />
+    );
+
+    expect(modelMarkup).toContain("Save model API");
+    expect(modelMarkup).toContain("Test API key");
+    expect(modelMarkup).not.toContain("Save local bridge");
+    expect(localBridgeMarkup).toContain("Save local bridge");
+    expect(localBridgeMarkup).not.toContain("Save model API");
+    expect(modelMarkup).not.toContain("Save execution settings");
+    expect(localBridgeMarkup).not.toContain("Save execution settings");
   });
 
   it("shows a masked API key value and keeps key help beside the model title", () => {

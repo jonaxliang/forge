@@ -45,15 +45,51 @@ async function configureModel(app: ReturnType<typeof createApp>) {
 
 function createPlanningApp(options: Parameters<typeof createApp>[0] = {}) {
   return createApp({
-    requirementPlanner: async ({ requirement }) => [
-      {
-        body: `Planned from requirement: ${requirement.body}`,
-        sortOrder: 0,
-        title: `Task: ${requirement.title}`
-      }
-    ],
+    requirementPlanner: async ({ requirement }) => ({
+      items: [
+        {
+          body: `Planned from requirement: ${requirement.body}`,
+          sortOrder: 0,
+          title: `Task: ${requirement.title}`
+        }
+      ],
+      summary: `Split ${requirement.title} into executable tasks.`
+    }),
     ...options
   });
+}
+
+async function createDecompositionResultForRequirement(
+  app: ReturnType<typeof createApp>,
+  requirementId: string
+) {
+  const response = await app.request(
+    `/api/requirements/${requirementId}/decomposition-result`,
+    {
+      method: "POST"
+    }
+  );
+
+  return (await response.json()) as {
+    decompositionResult: { id: string; requirementId: string };
+    requirement: { id: string; status: string };
+  };
+}
+
+async function generateTasksFromDecompositionResult(
+  app: ReturnType<typeof createApp>,
+  decompositionResultId: string
+) {
+  const response = await app.request(
+    `/api/decomposition-results/${decompositionResultId}/generate-tasks`,
+    {
+      method: "POST"
+    }
+  );
+
+  return (await response.json()) as {
+    tasks: Array<{ id: string; projectId: string | null; requirementId: string }>;
+  };
 }
 
 describe("GET /api/health", () => {
@@ -258,7 +294,7 @@ describe("Project API", () => {
 });
 
 describe("Execution settings API", () => {
-  it("updates model and local Agent proxy settings without returning the API key", async () => {
+  it("updates model and local execution settings without returning the API key", async () => {
     const app = createApp();
 
     const updateResponse = await app.request("/api/execution-settings", {
@@ -434,20 +470,23 @@ describe("Workflow file API", () => {
         source: `
 name: Coding workflow
 scope: task
+version: "1.1"
 nodes:
   - id: analyze
     type: requirement-analysis
     executor: skill:requirements
     outputs:
-      - analysis.md
+      - kind: file
+        ref: analysis.md
     exit:
       maxRetries: 2
   - id: implement
     type: coding
-    after: analyze
+    dependsOn: analyze
     executor: skill:code
     outputs:
-      - diff.patch
+      - kind: file
+        ref: diff.patch
     exit:
       maxRetries: 1
 `
@@ -528,7 +567,7 @@ nodes:
     instruction:
       text: Write a scoped implementation plan.
     outputs:
-      - artifact:plan
+      - artifact: plan
     exit:
       maxRetries: 1
       review: human
@@ -597,12 +636,14 @@ nodes:
     const source = `
 name: Coding workflow
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
     executor: skill:code
     outputs:
-      - diff.patch
+      - kind: file
+        ref: diff.patch
     exit:
       maxRetries: 1
 `;
@@ -639,12 +680,14 @@ nodes:
     const source = (name: string) => `
 name: ${name}
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
     executor: skill:code
     outputs:
-      - diff.patch
+      - kind: file
+        ref: diff.patch
     exit:
       maxRetries: 1
 `;
@@ -701,6 +744,161 @@ nodes:
     });
   });
 
+  it("deletes duplicate known base Workflow templates by semantic meaning", async () => {
+    const app = createApp();
+    const source = (name: string, nodeIds: string[]) => `
+name: ${name}
+scope: requirement
+version: "1.1"
+nodes:
+${nodeIds
+  .map(
+    (nodeId, index) => `  - id: ${nodeId}
+    type: ${index === 0 ? "requirement-intake" : "task-drafting"}
+    ${index === 0 ? "" : `dependsOn: ${nodeIds[index - 1]}\n    `}executor: agent:planner
+    outputs:
+      - kind: file
+        ref: ${nodeId}.md
+    exit:
+      maxRetries: 1`
+  )
+  .join("\n")}
+`;
+
+    await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({ source: source("Requirement split", ["split"]) }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: source("Software Change Requirement", [
+          "intake",
+          "decompose",
+          "risk-review",
+          "package"
+        ])
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: source("Software Change Requirement", ["split-again"])
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+
+    const listResponse = await app.request("/api/workflow-files");
+    const listBody = (await listResponse.json()) as {
+      workflowFiles: Array<{
+        name: string;
+        nodeCount: number;
+        templateType: string;
+      }>;
+    };
+
+    expect(listResponse.status).toBe(200);
+    expect(listBody.workflowFiles).toHaveLength(1);
+    expect(listBody.workflowFiles[0]).toMatchObject({
+      name: "需求拆解模板",
+      nodeCount: 4,
+      templateType: "builtin"
+    });
+
+    const secondListBody = (await (
+      await app.request("/api/workflow-files")
+    ).json()) as {
+      workflowFiles: Array<{ name: string }>;
+    };
+
+    expect(secondListBody.workflowFiles).toHaveLength(1);
+  });
+
+  it("marks imported Workflow templates as custom unless the caller selects a built-in template", async () => {
+    const app = createApp();
+    const source = `
+name: Custom writing flow
+scope: task
+version: "1.1"
+nodes:
+  - id: draft
+    type: writing
+    executor: agent:writer
+    outputs:
+      - kind: file
+        ref: draft.md
+    exit:
+      maxRetries: 1
+`;
+
+    const customResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({ source }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+    const builtinResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({ source, templateType: "builtin" }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+
+    await expect(customResponse.json()).resolves.toMatchObject({
+      workflowFile: { templateType: "custom" }
+    });
+    await expect(builtinResponse.json()).resolves.toMatchObject({
+      workflowFile: { templateType: "builtin" }
+    });
+  });
+
+  it("renames the autonomous travel guide test Workflow template by concrete purpose", async () => {
+    const app = createApp();
+
+    await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: 自主测试任务完成
+scope: task
+version: "1.1"
+nodes:
+  - id: write_travel_guide
+    type: coding
+    executor: agent:autonomous-test-agent
+    outputs:
+      - kind: file
+        ref: travel-guide.md
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+
+    const listResponse = await app.request("/api/workflow-files");
+    const listBody = (await listResponse.json()) as {
+      workflowFiles: Array<{ definition: string; name: string; nodeCount: number }>;
+    };
+
+    expect(listResponse.status).toBe(200);
+    expect(listBody.workflowFiles).toHaveLength(1);
+    expect(listBody.workflowFiles[0]).toMatchObject({
+      name: "旅行指南编写测试模板",
+      nodeCount: 1
+    });
+    expect(JSON.parse(listBody.workflowFiles[0].definition)).toMatchObject({
+      name: "旅行指南编写测试模板",
+      nodes: [
+        expect.objectContaining({
+          id: "write_travel_guide",
+          type: "coding"
+        })
+      ],
+      scope: "task"
+    });
+  });
+
   it("returns a clear validation error for invalid workflow files", async () => {
     const app = createApp();
 
@@ -709,10 +907,11 @@ nodes:
         source: `
 name: Bad workflow
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
-    after: missing
+    dependsOn: missing
     executor: skill:code
     exit:
       maxRetries: 1
@@ -732,6 +931,33 @@ nodes:
 });
 
 describe("Requirement API", () => {
+  async function importRequirementWorkflow(app: ReturnType<typeof createApp>) {
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: task
+version: "1.1"
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    return workflowBody.workflowFile;
+  }
+
   it("keeps generated work associated with the selected Project", async () => {
     const app = createPlanningApp();
     await configureModel(app);
@@ -748,34 +974,14 @@ describe("Requirement API", () => {
       method: "POST"
     });
     const project = (await projectResponse.json()) as { id: string };
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
+    const workflowFile = await importRequirementWorkflow(app);
 
     const response = await app.request("/api/requirements", {
       body: JSON.stringify({
         body: "Write a Ningbo travel guide.",
         projectId: project.id,
         title: "Ningbo guide",
-        workflowFileId: workflowBody.workflowFile.id
+        workflowFileId: workflowFile.id
       }),
       headers: {
         "content-type": "application/json"
@@ -783,115 +989,92 @@ nodes:
       method: "POST"
     });
     const body = (await response.json()) as {
-      requirement: { projectId: string };
-      taskDrafts: Array<{ id: string; projectId: string }>;
+      requirement: { id: string; projectId: string; status: string };
     };
-    const approveResponse = await app.request(
-      `/api/task-drafts/${body.taskDrafts[0].id}/approve`,
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      body.requirement.id
+    );
+    const generatedBody = await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
+
+    expect(response.status).toBe(201);
+    expect(body.requirement).toMatchObject({
+      projectId: project.id,
+      status: "init"
+    });
+    expect(decompositionBody.decompositionResult.requirementId).toBe(
+      body.requirement.id
+    );
+    expect(decompositionBody.requirement.status).toBe("ready_to_generate_tasks");
+    expect(generatedBody).toMatchObject({
+      tasks: [
+        {
+          projectId: project.id,
+          requirementId: body.requirement.id,
+          status: "init"
+        }
+      ]
+    });
+  });
+
+  it("saves a requirement and fails decomposition when the model is not configured", async () => {
+    const app = createApp();
+    const workflowFile = await importRequirementWorkflow(app);
+
+    const response = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Build the minimum Requirement to decomposition result flow.",
+        title: "Generate decomposition result",
+        workflowFileId: workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const body = (await response.json()) as {
+      decompositionResult: null;
+      requirement: { id: string };
+    };
+
+    expect(response.status).toBe(201);
+    expect(body).toMatchObject({
+      decompositionResult: null,
+      requirement: {
+        body: "Build the minimum Requirement to decomposition result flow.",
+        status: "init",
+        title: "Generate decomposition result",
+        workflowFileId: workflowFile.id
+      }
+    });
+
+    const decompositionResponse = await app.request(
+      `/api/requirements/${body.requirement.id}/decomposition-result`,
       {
         method: "POST"
       }
     );
 
-    expect(response.status).toBe(201);
-    expect(body.requirement.projectId).toBe(project.id);
-    expect(body.taskDrafts[0].projectId).toBe(project.id);
-    expect(approveResponse.status).toBe(201);
-    await expect(approveResponse.json()).resolves.toMatchObject({
-      task: {
-        projectId: project.id,
-        requirementId: expect.any(String)
+    expect(decompositionResponse.status).toBe(400);
+    await expect(decompositionResponse.json()).resolves.toMatchObject({
+      decompositionResult: null,
+      requirement: {
+        status: "decomposition_failed"
       }
     });
   });
 
-  it("saves a requirement without generating tasks when the model is not configured", async () => {
-    const app = createApp();
-
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
-
-    const response = await app.request("/api/requirements", {
-      body: JSON.stringify({
-        body: "Build the minimum Requirement to Task Draft flow.",
-        title: "Generate draft tasks",
-        workflowFileId: workflowBody.workflowFile.id
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      planning: {
-        reason: "model_not_configured",
-        status: "blocked"
-      },
-      requirement: {
-        body: "Build the minimum Requirement to Task Draft flow.",
-        status: "open",
-        title: "Generate draft tasks",
-        workflowFileId: workflowBody.workflowFile.id
-      },
-      taskDrafts: []
-    });
-
-    const taskDraftsResponse = await app.request("/api/task-drafts");
-
-    expect(taskDraftsResponse.status).toBe(200);
-    await expect(taskDraftsResponse.json()).resolves.toEqual({ taskDrafts: [] });
-  });
-
-  it("plans task drafts for a saved requirement after model configuration", async () => {
+  it("creates an editable decomposition result for a saved requirement", async () => {
     const app = createPlanningApp();
-
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
+    const workflowFile = await importRequirementWorkflow(app);
     const requirementResponse = await app.request("/api/requirements", {
       body: JSON.stringify({
         body: "Write a research report about LLM Wiki.",
         title: "LLM Wiki research report",
-        workflowFileId: workflowBody.workflowFile.id
+        workflowFileId: workflowFile.id
       }),
       headers: {
         "content-type": "application/json"
@@ -899,145 +1082,46 @@ nodes:
       method: "POST"
     });
     const requirementBody = (await requirementResponse.json()) as {
+      decompositionResult: null;
       requirement: { id: string };
-      taskDrafts: [];
     };
 
     await configureModel(app);
 
     const planResponse = await app.request(
-      `/api/requirements/${requirementBody.requirement.id}/task-drafts`,
+      `/api/requirements/${requirementBody.requirement.id}/decomposition-result`,
       {
         method: "POST"
       }
     );
 
     expect(requirementResponse.status).toBe(201);
-    expect(requirementBody.taskDrafts).toEqual([]);
+    expect(requirementBody.decompositionResult).toBeNull();
     expect(planResponse.status).toBe(201);
     await expect(planResponse.json()).resolves.toMatchObject({
+      decompositionResult: {
+        items: [
+          {
+            body: "Planned from requirement: Write a research report about LLM Wiki.",
+            sortOrder: 0,
+            title: "Task: LLM Wiki research report"
+          }
+        ],
+        requirementId: requirementBody.requirement.id,
+        summary: "Split LLM Wiki research report into executable tasks."
+      },
       requirement: {
         id: requirementBody.requirement.id,
-        status: "open"
-      },
-      taskDrafts: [
+        status: "ready_to_generate_tasks"
+      }
+    });
+    await expect(
+      (await app.request("/api/decomposition-results")).json()
+    ).resolves.toMatchObject({
+      decompositionResults: [
         {
           requirementId: requirementBody.requirement.id,
-          sortOrder: 0,
-          title: "Task: LLM Wiki research report"
-        }
-      ]
-    });
-    await expect((await app.request("/api/task-drafts")).json()).resolves.toMatchObject({
-      taskDrafts: [
-        {
-          requirementId: requirementBody.requirement.id,
-          title: "Task: LLM Wiki research report"
-        }
-      ]
-    });
-  });
-
-  it("uses a configured planner to create task drafts from a requirement", async () => {
-    const app = createPlanningApp();
-    await configureModel(app);
-
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
-
-    const response = await app.request("/api/requirements", {
-      body: JSON.stringify({
-        body: "Build the minimum Requirement to Task flow.",
-        title: "Generate tasks",
-        workflowFileId: workflowBody.workflowFile.id
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      requirement: {
-        status: "open",
-        title: "Generate tasks"
-      },
-      taskDrafts: [
-        {
-          sortOrder: 0,
-          title: "Task: Generate tasks"
-        }
-      ]
-    });
-  });
-
-  it("plans requirement task drafts with a task-scoped workflow file", async () => {
-    const app = createPlanningApp();
-    await configureModel(app);
-
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Task workflow
-scope: task
-nodes:
-  - id: implement
-    type: coding
-    executor: skill:code
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
-
-    const response = await app.request("/api/requirements", {
-      body: JSON.stringify({
-        body: "This should create draft work.",
-        title: "Generate tasks from task workflow",
-        workflowFileId: workflowBody.workflowFile.id
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      requirement: {
-        status: "open",
-        title: "Generate tasks from task workflow"
-      },
-      taskDrafts: [
-        {
-          title: "Task: Generate tasks from task workflow"
+          summary: "Split LLM Wiki research report into executable tasks."
         }
       ]
     });
@@ -1046,33 +1130,12 @@ nodes:
   it("soft deletes a requirement and its generated tasks", async () => {
     const app = createPlanningApp();
     await configureModel(app);
-
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
+    const workflowFile = await importRequirementWorkflow(app);
     const requirementResponse = await app.request("/api/requirements", {
       body: JSON.stringify({
         body: "Create work then remove it.",
         title: "Disposable requirement",
-        workflowFileId: workflowBody.workflowFile.id
+        workflowFileId: workflowFile.id
       }),
       headers: {
         "content-type": "application/json"
@@ -1081,12 +1144,16 @@ nodes:
     });
     const requirementBody = (await requirementResponse.json()) as {
       requirement: { id: string };
-      taskDrafts: [{ id: string }];
     };
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
 
-    await app.request(`/api/task-drafts/${requirementBody.taskDrafts[0].id}/approve`, {
-      method: "POST"
-    });
+    await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
 
     const deleteResponse = await app.request(
       `/api/requirements/${requirementBody.requirement.id}`,
@@ -1119,33 +1186,13 @@ nodes:
       method: "POST"
     });
     const project = (await projectResponse.json()) as { id: string };
-    const workflowResponse = await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({
-        source: `
-name: Requirement split
-scope: task
-nodes:
-  - id: split
-    type: task-drafting
-    executor: skill:requirements
-    exit:
-      maxRetries: 1
-`
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const workflowBody = (await workflowResponse.json()) as {
-      workflowFile: { id: string };
-    };
+    const workflowFile = await importRequirementWorkflow(app);
     const firstResponse = await app.request("/api/requirements", {
       body: JSON.stringify({
         body: "First requirement.",
         projectId: project.id,
         title: "Original requirement",
-        workflowFileId: workflowBody.workflowFile.id
+        workflowFileId: workflowFile.id
       }),
       headers: {
         "content-type": "application/json"
@@ -1157,7 +1204,7 @@ nodes:
         body: "Second requirement.",
         projectId: project.id,
         title: "Existing requirement",
-        workflowFileId: workflowBody.workflowFile.id
+        workflowFileId: workflowFile.id
       }),
       headers: {
         "content-type": "application/json"
@@ -1206,16 +1253,17 @@ nodes:
   });
 });
 
-describe("Task Draft approval API", () => {
-  async function createDraft(
+describe("Decomposition Result API", () => {
+  async function createResult(
     app: ReturnType<typeof createApp>,
-    title = "Approve this draft"
+    title = "Generate this task"
   ) {
     const workflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
         source: `
 name: Requirement split
 scope: task
+version: "1.1"
 nodes:
   - id: split
     type: task-drafting
@@ -1234,7 +1282,7 @@ nodes:
     };
     const requirementResponse = await app.request("/api/requirements", {
       body: JSON.stringify({
-        body: "Turn this into a task.",
+        body: "Turn this into tasks.",
         title,
         workflowFileId: workflowBody.workflowFile.id
       }),
@@ -1243,100 +1291,108 @@ nodes:
       },
       method: "POST"
     });
-
-    return (await requirementResponse.json()) as {
-      taskDrafts: [{ id: string; requirementId: string }];
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
     };
+
+    return createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
   }
 
-  it("edits, reorders, deletes and approves task drafts into tasks", async () => {
+  it("edits a decomposition result and generates init tasks once", async () => {
     const app = createPlanningApp();
     await configureModel(app);
-    const created = await createDraft(app);
-    const draftId = created.taskDrafts[0].id;
+    const created = await createResult(app);
 
-    const updateResponse = await app.request(`/api/task-drafts/${draftId}`, {
-      body: JSON.stringify({
-        body: "Updated body",
-        title: "Updated title"
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "PATCH"
-    });
-
-    expect(updateResponse.status).toBe(200);
-    await expect(updateResponse.json()).resolves.toMatchObject({
-      body: "Updated body",
-      title: "Updated title"
-    });
-
-    const reorderResponse = await app.request("/api/task-drafts/reorder", {
-      body: JSON.stringify({
-        order: [{ id: draftId, sortOrder: 3 }]
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-
-    expect(reorderResponse.status).toBe(200);
-    await expect(reorderResponse.json()).resolves.toMatchObject({
-      taskDrafts: [
-        {
-          id: draftId,
-          sortOrder: 3
-        }
-      ]
-    });
-
-    const approveResponse = await app.request(`/api/task-drafts/${draftId}/approve`, {
-      method: "POST"
-    });
-
-    expect(approveResponse.status).toBe(201);
-    await expect(approveResponse.json()).resolves.toMatchObject({
-      task: {
-        requirementId: created.taskDrafts[0].requirementId,
-        status: "todo",
-        title: "Updated title"
-      }
-    });
-
-    const tasksResponse = await app.request("/api/tasks");
-
-    expect(tasksResponse.status).toBe(200);
-    await expect(tasksResponse.json()).resolves.toMatchObject({
-      tasks: [
-        {
-          requirementId: created.taskDrafts[0].requirementId,
-          status: "todo",
-          title: "Updated title"
-        }
-      ]
-    });
-
-    const secondCreated = await createDraft(app, "Delete this draft");
-    const deleteResponse = await app.request(
-      `/api/task-drafts/${secondCreated.taskDrafts[0].id}`,
+    const updateResponse = await app.request(
+      `/api/decomposition-results/${created.decompositionResult.id}`,
       {
-        method: "DELETE"
+        body: JSON.stringify({
+          summary: "Updated split",
+          tasks: [
+            {
+              body: "Updated body",
+              title: "Updated title"
+            },
+            {
+              body: "Second body",
+              title: "Second task"
+            }
+          ]
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "PATCH"
       }
     );
 
-    expect(deleteResponse.status).toBe(204);
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      decompositionResult: {
+        items: [
+          {
+            body: "Updated body",
+            sortOrder: 0,
+            title: "Updated title"
+          },
+          {
+            body: "Second body",
+            sortOrder: 1,
+            title: "Second task"
+          }
+        ],
+        summary: "Updated split"
+      }
+    });
+
+    const generateResponse = await app.request(
+      `/api/decomposition-results/${created.decompositionResult.id}/generate-tasks`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(generateResponse.status).toBe(201);
+    await expect(generateResponse.json()).resolves.toMatchObject({
+      requirement: {
+        status: "tasks_generated"
+      },
+      tasks: [
+        {
+          requirementId: created.decompositionResult.requirementId,
+          status: "init",
+          title: "Updated title"
+        },
+        {
+          requirementId: created.decompositionResult.requirementId,
+          status: "init",
+          title: "Second task"
+        }
+      ]
+    });
+
+    const duplicateResponse = await app.request(
+      `/api/decomposition-results/${created.decompositionResult.id}/generate-tasks`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(duplicateResponse.status).toBe(409);
   });
 });
 
-describe("Workflow Run API", () => {
+describe("Task Workflow API", () => {
   async function createTask(app: ReturnType<typeof createApp>) {
     const workflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
         source: `
 name: Requirement split
 scope: task
+version: "1.1"
 nodes:
   - id: split
     type: task-drafting
@@ -1365,21 +1421,21 @@ nodes:
       method: "POST"
     });
     const requirementBody = (await requirementResponse.json()) as {
-      taskDrafts: [{ id: string }];
+      requirement: { id: string };
     };
-    const approveResponse = await app.request(
-      `/api/task-drafts/${requirementBody.taskDrafts[0].id}/approve`,
-      {
-        method: "POST"
-      }
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+    const generatedBody = await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
     );
 
-    return (await approveResponse.json()) as {
-      task: { id: string };
-    };
+    return { task: generatedBody.tasks[0] };
   }
 
-  it("starts a task workflow run by enqueueing nodes through the configured Agent proxy", async () => {
+  it("starts a task workflow run by enqueueing nodes through the configured local executor", async () => {
     const agentProxyRequests: unknown[] = [];
     const app = createPlanningApp({
       agentProxyClient: async (input) => {
@@ -1402,6 +1458,7 @@ nodes:
         source: `
 name: Task implementation
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: planning
@@ -1410,7 +1467,7 @@ nodes:
       maxRetries: 1
   - id: code
     type: coding
-    after: plan
+    dependsOn: plan
     executor: skill:code
     exit:
       maxRetries: 1
@@ -1485,7 +1542,7 @@ nodes:
     });
   });
 
-  it("rejects workflow run starts until a local Agent proxy is configured", async () => {
+  it("rejects task workflow starts until local execution is configured", async () => {
     const app = createPlanningApp();
     await configureModel(app);
     const createdTask = await createTask(app);
@@ -1494,6 +1551,7 @@ nodes:
         source: `
 name: Task implementation
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: planning
@@ -1526,11 +1584,11 @@ nodes:
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/Agent proxy/i)
+      error: expect.stringMatching(/local bridge/i)
     });
   });
 
-  it("queues Workflow Run work for an online Bridge when no temporary Agent proxy is configured", async () => {
+  it("queues task workflow work for an online local bridge", async () => {
     const app = createPlanningApp();
     await configureModel(app);
     const createdTask = await createTask(app);
@@ -1569,6 +1627,7 @@ nodes:
         source: `
 name: Task implementation
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
@@ -1617,7 +1676,7 @@ nodes:
     });
   });
 
-  it("updates Node Run state when a Bridge completes a job", async () => {
+  it("updates Node Run state when a local bridge completes a job", async () => {
     const app = createPlanningApp();
     await configureModel(app);
     const createdTask = await createTask(app);
@@ -1644,6 +1703,7 @@ nodes:
         source: `
 name: Task implementation
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
@@ -1719,12 +1779,14 @@ nodes:
   it("rejects workflow runs for requirement-scoped workflow files", async () => {
     const app = createPlanningApp();
     await configureModel(app);
+    const createdTask = await createTask(app);
 
     const requirementWorkflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
         source: `
 name: Requirement workflow
 scope: requirement
+version: "1.1"
 nodes:
   - id: split
     type: task-drafting
@@ -1741,32 +1803,9 @@ nodes:
     const requirementWorkflowBody = (await requirementWorkflowResponse.json()) as {
       workflowFile: { definition: string; id: string; scope: string };
     };
-    const requirementResponse = await app.request("/api/requirements", {
-      body: JSON.stringify({
-        body: "Create a Task to validate workflow scope.",
-        title: "Validate workflow scope",
-        workflowFileId: requirementWorkflowBody.workflowFile.id
-      }),
-      headers: {
-        "content-type": "application/json"
-      },
-      method: "POST"
-    });
-    const requirementBody = (await requirementResponse.json()) as {
-      taskDrafts: Array<{ id: string }>;
-    };
-    const approveResponse = await app.request(
-      `/api/task-drafts/${requirementBody.taskDrafts[0]?.id}/approve`,
-      {
-        method: "POST"
-      }
-    );
-    const approveBody = (await approveResponse.json()) as {
-      task: { id: string };
-    };
 
     const runResponse = await app.request(
-      `/api/tasks/${approveBody.task.id}/workflow-runs`,
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
       {
         body: JSON.stringify({
           workflowFileId: requirementWorkflowBody.workflowFile.id
@@ -1783,8 +1822,6 @@ nodes:
     expect(JSON.parse(requirementWorkflowBody.workflowFile.definition)).toMatchObject({
       scope: "requirement"
     });
-    expect(requirementResponse.status).toBe(201);
-    expect(approveResponse.status).toBe(201);
     expect(runResponse.status).toBe(400);
     await expect(runResponse.json()).resolves.toMatchObject({
       error: "Selected workflow file must be task-scoped"
@@ -1798,6 +1835,7 @@ nodes:
         source: `
 name: Task implementation
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: planning

@@ -9,9 +9,22 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 export const artifactStorageModes = ["local-only", "cloud"] as const;
 export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
 export const workflowScopes = ["requirement", "task"] as const;
-export const requirementStatuses = ["open", "running", "completed", "failed"] as const;
-export const taskDraftStatuses = ["draft"] as const;
-export const taskStatuses = ["todo", "in_progress", "done"] as const;
+export const requirementStatuses = [
+  "init",
+  "decomposing",
+  "decomposition_failed",
+  "ready_to_generate_tasks",
+  "tasks_generated",
+  "completed"
+] as const;
+export const taskStatuses = [
+  "init",
+  "running",
+  "failed",
+  "pending_acceptance",
+  "completed",
+  "cancelled"
+] as const;
 export const workflowRunStatuses = ["running", "succeeded", "failed"] as const;
 export const agentConnectorTypes = ["cli", "mcp"] as const;
 export const agentBindingStatuses = ["online", "offline", "error"] as const;
@@ -49,7 +62,6 @@ export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
 export type DbStrategy = (typeof dbStrategies)[number];
 export type WorkflowScope = (typeof workflowScopes)[number];
 export type RequirementStatus = (typeof requirementStatuses)[number];
-export type TaskDraftStatus = (typeof taskDraftStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
 export type WorkflowRunStatus = (typeof workflowRunStatuses)[number];
 export type NodeRunStatus = (typeof nodeRunStatuses)[number];
@@ -155,6 +167,7 @@ export type WorkflowFileMetadata = {
   scope: WorkflowScope;
   nodeCount: number;
   definition: string;
+  templateType: "builtin" | "custom";
   createdAt: string;
 };
 
@@ -163,6 +176,7 @@ export type CreateWorkflowFileMetadataInput = {
   scope: WorkflowScope;
   nodeCount: number;
   definition?: string;
+  templateType?: "builtin" | "custom";
 };
 
 export type UpdateWorkflowFileMetadataInput = {
@@ -174,6 +188,7 @@ export type WorkflowFileRepository = {
   createWorkflowFileMetadata(
     input: CreateWorkflowFileMetadataInput
   ): Promise<WorkflowFileMetadata>;
+  deleteWorkflowFileMetadata(id: string): Promise<void>;
   getWorkflowFileMetadata(id: string): Promise<WorkflowFileMetadata | null>;
   listWorkflowFileMetadata(): Promise<WorkflowFileMetadata[]>;
   updateWorkflowFileMetadata(
@@ -247,45 +262,52 @@ export type RequirementRepository = {
   ): Promise<Requirement>;
 };
 
-export type TaskDraft = {
-  id: string;
-  projectId: string | null;
-  requirementId: string;
+export type DecompositionResultItem = {
   title: string;
   body: string;
   sortOrder: number;
-  status: TaskDraftStatus;
+};
+
+export type DecompositionResult = {
+  id: string;
+  projectId: string | null;
+  requirementId: string;
+  summary: string;
+  items: DecompositionResultItem[];
   createdAt: string;
   updatedAt: string;
 };
 
-export type CreateTaskDraftInput = {
+export type SaveDecompositionResultInput = {
   projectId?: string | null;
   requirementId: string;
-  title: string;
-  body: string;
-  sortOrder: number;
+  summary: string;
+  items: DecompositionResultItem[];
 };
 
-export type TaskDraftRepository = {
-  createTaskDraft(input: CreateTaskDraftInput): Promise<TaskDraft>;
-  deleteTaskDraft(id: string): Promise<void>;
-  getTaskDraft(id: string): Promise<TaskDraft | null>;
-  listTaskDrafts(): Promise<TaskDraft[]>;
-  reorderTaskDrafts(order: TaskDraftOrderInput[]): Promise<TaskDraft[]>;
-  updateTaskDraft(input: UpdateTaskDraftInput): Promise<TaskDraft>;
-};
-
-export type UpdateTaskDraftInput = {
+export type UpdateDecompositionResultInput = {
   id: string;
-  title: string;
-  body: string;
+  summary: string;
+  items: DecompositionResultItem[];
 };
 
-export type TaskDraftOrderInput = {
-  id: string;
-  sortOrder: number;
+export type DecompositionResultRepository = {
+  getDecompositionResult(id: string): Promise<DecompositionResult | null>;
+  getDecompositionResultForRequirement(
+    requirementId: string
+  ): Promise<DecompositionResult | null>;
+  saveDecompositionResult(
+    input: SaveDecompositionResultInput
+  ): Promise<DecompositionResult>;
+  updateDecompositionResult(
+    input: UpdateDecompositionResultInput
+  ): Promise<DecompositionResult>;
 };
+
+export type CreateTasksFromDecompositionResultInput = Pick<
+  DecompositionResult,
+  "items" | "projectId" | "requirementId"
+>;
 
 export type Task = {
   id: string;
@@ -300,7 +322,9 @@ export type Task = {
 };
 
 export type TaskRepository = {
-  createTaskFromDraft(draft: TaskDraft): Promise<Task>;
+  createTasksFromDecompositionResult(
+    input: CreateTasksFromDecompositionResultInput
+  ): Promise<Task[]>;
   deleteTasksForRequirement(requirementId: string): Promise<void>;
   getTask(id: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
@@ -436,6 +460,7 @@ const workflowFiles = sqliteTable("workflow_files", {
   scope: text("scope").notNull(),
   nodeCount: integer("node_count").notNull(),
   definition: text("definition").notNull(),
+  templateType: text("template_type").notNull(),
   createdAt: text("created_at").notNull()
 });
 
@@ -469,19 +494,17 @@ const requirements = sqliteTable("requirements", {
 
 type RequirementRow = typeof requirements.$inferSelect;
 
-const taskDrafts = sqliteTable("task_drafts", {
+const decompositionResults = sqliteTable("decomposition_results", {
   id: text("id").primaryKey(),
   projectId: text("project_id"),
   requirementId: text("requirement_id").notNull(),
-  title: text("title").notNull(),
-  body: text("body").notNull(),
-  sortOrder: integer("sort_order").notNull(),
-  status: text("status").notNull(),
+  summary: text("summary").notNull(),
+  items: text("items").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
 });
 
-type TaskDraftRow = typeof taskDrafts.$inferSelect;
+type DecompositionResultRow = typeof decompositionResults.$inferSelect;
 
 const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
@@ -575,8 +598,8 @@ export function createInMemoryRequirementRepository(): RequirementRepository {
   return createRequirementRepository(new Database(":memory:"));
 }
 
-export function createInMemoryTaskDraftRepository(): TaskDraftRepository {
-  return createTaskDraftRepository(new Database(":memory:"));
+export function createInMemoryDecompositionResultRepository(): DecompositionResultRepository {
+  return createDecompositionResultRepository(new Database(":memory:"));
 }
 
 export function createInMemoryTaskRepository(): TaskRepository {
@@ -619,11 +642,11 @@ export function createSqliteRequirementRepository(
   return createRequirementRepository(new Database(filename));
 }
 
-export function createSqliteTaskDraftRepository(
+export function createSqliteDecompositionResultRepository(
   filename = ".forge/forge.sqlite"
-): TaskDraftRepository {
+): DecompositionResultRepository {
   mkdirSync(dirname(filename), { recursive: true });
-  return createTaskDraftRepository(new Database(filename));
+  return createDecompositionResultRepository(new Database(filename));
 }
 
 export function createSqliteTaskRepository(
@@ -761,6 +784,7 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       scope TEXT NOT NULL,
       node_count INTEGER NOT NULL,
       definition TEXT NOT NULL DEFAULT '{}',
+      template_type TEXT NOT NULL DEFAULT 'custom',
       created_at TEXT NOT NULL
     )
   `);
@@ -791,14 +815,12 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
     )
   `);
   db.run(`
-    CREATE TABLE IF NOT EXISTS task_drafts (
+    CREATE TABLE IF NOT EXISTS decomposition_results (
       id TEXT PRIMARY KEY NOT NULL,
       project_id TEXT,
-      requirement_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      sort_order INTEGER NOT NULL,
-      status TEXT NOT NULL,
+      requirement_id TEXT NOT NULL UNIQUE,
+      summary TEXT NOT NULL,
+      items TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -867,8 +889,8 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(db, "workflow_files", "template_type", "TEXT NOT NULL DEFAULT 'custom'");
   ensureSqliteColumn(db, "requirements", "project_id", "TEXT");
-  ensureSqliteColumn(db, "task_drafts", "project_id", "TEXT");
   ensureSqliteColumn(db, "tasks", "project_id", "TEXT");
   ensureSqliteColumn(db, "requirements", "deleted_at", "TEXT");
   ensureSqliteColumn(db, "tasks", "deleted_at", "TEXT");
@@ -904,17 +926,13 @@ function getSqliteErrorMessage(error: unknown): string {
 }
 
 function updateWorkflowDefinitionName(definition: string, name: string) {
-  try {
-    const parsed = JSON.parse(definition) as { name?: unknown };
+  const parsed = JSON.parse(definition) as { name?: unknown };
 
-    if (parsed && typeof parsed === "object") {
-      return JSON.stringify({
-        ...parsed,
-        name
-      });
-    }
-  } catch {
-    // Keep invalid legacy definitions untouched except for the metadata name.
+  if (parsed && typeof parsed === "object") {
+    return JSON.stringify({
+      ...parsed,
+      name
+    });
   }
 
   return definition;
@@ -964,6 +982,7 @@ function createWorkflowFileRepository(
         scope: input.scope,
         nodeCount: input.nodeCount,
         definition: input.definition ?? "{}",
+        templateType: input.templateType ?? "custom",
         createdAt: new Date().toISOString()
       };
 
@@ -973,6 +992,13 @@ function createWorkflowFileRepository(
         .run();
 
       return workflowFile;
+    },
+
+    async deleteWorkflowFileMetadata(id) {
+      await db
+        .delete(workflowFiles)
+        .where(eq(workflowFiles.id, id))
+        .run();
     },
 
     async getWorkflowFileMetadata(id) {
@@ -1110,7 +1136,7 @@ function createRequirementRepository(
         title,
         body: input.body.trim(),
         workflowFileId: input.workflowFileId,
-        status: "open",
+        status: "init",
         errorMessage: null,
         deletedAt: null,
         createdAt: now,
@@ -1254,104 +1280,107 @@ async function findActiveRequirementByProjectAndTitle(
     .get();
 }
 
-function createTaskDraftRepository(
+function normalizeDecompositionItems(items: DecompositionResultItem[]) {
+  return items.map((item, index) => ({
+    body: item.body.trim(),
+    sortOrder: item.sortOrder ?? index,
+    title: item.title.trim()
+  }));
+}
+
+function createDecompositionResultRepository(
   sqlite: Database.Database
-): TaskDraftRepository {
+): DecompositionResultRepository {
   const db = drizzle(sqlite);
   initializeSqliteSchema(db);
 
   return {
-    async createTaskDraft(input) {
+    async getDecompositionResult(id) {
+      const row = await db
+        .select()
+        .from(decompositionResults)
+        .where(eq(decompositionResults.id, id))
+        .get();
+
+      return row ? toDecompositionResult(row) : null;
+    },
+
+    async getDecompositionResultForRequirement(requirementId) {
+      const row = await db
+        .select()
+        .from(decompositionResults)
+        .where(eq(decompositionResults.requirementId, requirementId))
+        .get();
+
+      return row ? toDecompositionResult(row) : null;
+    },
+
+    async saveDecompositionResult(input) {
+      const existing = await db
+        .select()
+        .from(decompositionResults)
+        .where(eq(decompositionResults.requirementId, input.requirementId))
+        .get();
+
+      if (existing) {
+        return this.updateDecompositionResult({
+          id: existing.id,
+          items: input.items,
+          summary: input.summary
+        });
+      }
+
       const now = new Date().toISOString();
-      const taskDraft: TaskDraft = {
-        id: `tdf_${randomUUID()}`,
+      const result: DecompositionResult = {
+        id: `dcr_${randomUUID()}`,
         projectId: input.projectId?.trim() || null,
         requirementId: input.requirementId,
-        title: input.title.trim(),
-        body: input.body.trim(),
-        sortOrder: input.sortOrder,
-        status: "draft",
+        summary: input.summary.trim(),
+        items: normalizeDecompositionItems(input.items),
         createdAt: now,
         updatedAt: now
       };
 
-      await db.insert(taskDrafts).values(taskDraft).run();
+      await db
+        .insert(decompositionResults)
+        .values({
+          ...result,
+          items: JSON.stringify(result.items)
+        })
+        .run();
 
-      return taskDraft;
+      return result;
     },
 
-    async deleteTaskDraft(id) {
-      await db.delete(taskDrafts).where(eq(taskDrafts.id, id)).run();
-    },
-
-    async getTaskDraft(id) {
+    async updateDecompositionResult(input) {
       const row = await db
         .select()
-        .from(taskDrafts)
-        .where(eq(taskDrafts.id, id))
-        .get();
-
-      return row ? toTaskDraft(row) : null;
-    },
-
-    async listTaskDrafts() {
-      const rows = await db
-        .select()
-        .from(taskDrafts)
-        .orderBy(asc(taskDrafts.sortOrder), asc(taskDrafts.createdAt));
-
-      return rows.map(toTaskDraft);
-    },
-
-    async reorderTaskDrafts(order) {
-      for (const item of order) {
-        await db
-          .update(taskDrafts)
-          .set({
-            sortOrder: item.sortOrder,
-            updatedAt: new Date().toISOString()
-          })
-          .where(eq(taskDrafts.id, item.id))
-          .run();
-      }
-
-      const rows = await db
-        .select()
-        .from(taskDrafts)
-        .orderBy(asc(taskDrafts.sortOrder), asc(taskDrafts.createdAt));
-
-      return rows.map(toTaskDraft);
-    },
-
-    async updateTaskDraft(input) {
-      const row = await db
-        .select()
-        .from(taskDrafts)
-        .where(eq(taskDrafts.id, input.id))
+        .from(decompositionResults)
+        .where(eq(decompositionResults.id, input.id))
         .get();
 
       if (!row) {
-        throw new Error(`Task draft not found: ${input.id}`);
+        throw new Error(`Decomposition result not found: ${input.id}`);
       }
 
-      const updated = {
-        ...row,
-        title: input.title.trim(),
-        body: input.body.trim(),
+      const updated: DecompositionResult = {
+        ...toDecompositionResult(row),
+        summary: input.summary.trim(),
+        items: normalizeDecompositionItems(input.items),
         updatedAt: nextTimestamp(row.updatedAt)
       };
 
       await db
-        .update(taskDrafts)
+        .update(decompositionResults)
         .set({
-          body: updated.body,
-          title: updated.title,
+          items: JSON.stringify(updated.items),
+          summary: updated.summary,
           updatedAt: updated.updatedAt
         })
-        .where(eq(taskDrafts.id, input.id))
+        .where(eq(decompositionResults.id, input.id))
         .run();
 
-      return toTaskDraft(updated);
+      return updated;
     }
   };
 }
@@ -1361,23 +1390,25 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
   initializeSqliteSchema(db);
 
   return {
-    async createTaskFromDraft(draft) {
+    async createTasksFromDecompositionResult(input) {
       const now = new Date().toISOString();
-      const task: Task = {
+      const createdTasks = normalizeDecompositionItems(input.items).map((item) => ({
         id: `tsk_${randomUUID()}`,
-        projectId: draft.projectId,
-        requirementId: draft.requirementId,
-        title: draft.title,
-        body: draft.body,
-        status: "todo",
+        projectId: input.projectId,
+        requirementId: input.requirementId,
+        title: item.title,
+        body: item.body,
+        status: "init" as const,
         deletedAt: null,
         createdAt: now,
         updatedAt: now
-      };
+      }));
 
-      await db.insert(tasks).values(task).run();
+      if (createdTasks.length > 0) {
+        await db.insert(tasks).values(createdTasks).run();
+      }
 
-      return task;
+      return createdTasks;
     },
 
     async deleteTasksForRequirement(requirementId) {
@@ -1728,6 +1759,7 @@ function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
     scope: row.scope as WorkflowScope,
     nodeCount: row.nodeCount,
     definition: row.definition,
+    templateType: row.templateType as WorkflowFileMetadata["templateType"],
     createdAt: row.createdAt
   };
 }
@@ -1760,15 +1792,15 @@ function toRequirement(row: RequirementRow): Requirement {
   };
 }
 
-function toTaskDraft(row: TaskDraftRow): TaskDraft {
+function toDecompositionResult(
+  row: DecompositionResultRow
+): DecompositionResult {
   return {
     id: row.id,
     projectId: row.projectId,
     requirementId: row.requirementId,
-    title: row.title,
-    body: row.body,
-    sortOrder: row.sortOrder,
-    status: row.status as TaskDraftStatus,
+    summary: row.summary,
+    items: JSON.parse(row.items) as DecompositionResultItem[],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };

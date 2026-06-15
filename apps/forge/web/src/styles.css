@@ -217,6 +217,14 @@ h3 {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  border-radius: var(--radius-panel);
+  color: inherit;
+  text-decoration: none;
+}
+
+.brand-lockup:focus-visible {
+  outline: 3px solid rgba(20, 154, 150, 0.32);
+  outline-offset: 4px;
 }
 
 .brand-logo {
@@ -574,6 +582,10 @@ h3 {
   padding: var(--space-section);
 }
 
+.quick-actions-panel {
+  box-shadow: none;
+}
+
 .first-project-card {
   background:
     linear-gradient(180deg, #ffffff 0%, #f9fcfd 100%);
@@ -864,6 +876,40 @@ h3 {
   transform: none;
 }
 
+.settings-secondary-nav {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 4px;
+  align-items: center;
+  width: min(100%, 420px);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: #ffffff;
+  padding: 4px;
+}
+
+.settings-secondary-nav-item {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
+  color: #526174;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.2;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.settings-secondary-nav-item:hover:not(:disabled),
+.settings-secondary-nav-item[aria-pressed="true"] {
+  border-color: rgba(19, 128, 125, 0.26);
+  background: #eef8f7;
+  color: var(--color-accent-strong);
+  box-shadow: none;
+  transform: none;
+}
+
 .settings-content,
 .settings-form {
   display: grid;
@@ -878,6 +924,13 @@ h3 {
   border-radius: var(--radius-panel);
   background: var(--color-panel-soft);
   padding: var(--space-section);
+}
+
+.quick-actions-panel .studio-label,
+.work-section .studio-label,
+.settings-section .studio-label,
+.template-library-panel .studio-label {
+  color: #425064;
 }
 
 .settings-block-stack {
@@ -1062,6 +1115,13 @@ h3 {
   border-radius: var(--radius-panel);
   background: var(--color-panel-soft);
   padding: var(--space-section);
+}
+
+.settings-section,
+.template-import-panel,
+.template-library-panel,
+.template-preview-panel {
+  box-shadow: none;
 }
 
 .template-import-modes {
@@ -1412,6 +1472,135 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.workflow-dag-map {
+  overflow-x: auto;
+  border: 1px solid #cddfe2;
+  border-radius: var(--radius-panel);
+  background:
+    linear-gradient(180deg, rgba(236, 253, 251, 0.42), rgba(248, 250, 252, 0.82)),
+    #ffffff;
+  padding: 12px;
+}
+
+.workflow-dag-canvas {
+  position: relative;
+  width: var(--workflow-dag-width);
+  min-width: var(--workflow-dag-width);
+  height: var(--workflow-dag-height);
+}
+
+.workflow-dag-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.workflow-dag-edges path {
+  fill: none;
+  stroke: #7ea9ad;
+  stroke-width: 1.7;
+}
+
+.workflow-dag-edges marker path {
+  fill: #7ea9ad;
+  stroke: none;
+}
+
+.workflow-dag-card {
+  position: absolute;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  width: 230px;
+  height: 320px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbfc 100%);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045);
+  padding: 12px;
+}
+
+.workflow-dag-card .workflow-node-index {
+  width: 30px;
+  height: 30px;
+  font-size: 11px;
+}
+
+.workflow-dag-card .workflow-node-copy {
+  gap: 6px;
+}
+
+.workflow-dag-card .workflow-node-copy h3 {
+  font-size: 14px;
+}
+
+.workflow-dag-card .workflow-node-copy p {
+  font-size: 12px;
+  line-height: 1.32;
+}
+
+.workflow-dag-card .workflow-node-meta {
+  gap: 4px;
+}
+
+.workflow-dag-card .workflow-node-meta span,
+.workflow-dag-card .workflow-node-dependency {
+  font-size: 11px !important;
+  line-height: 1.25;
+  padding: 4px 6px;
+}
+
+.workflow-dag-card .workflow-node-contract {
+  gap: 3px;
+}
+
+.workflow-dag-card .workflow-node-contract span {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.workflow-dag-card-start,
+.workflow-dag-card-end {
+  align-items: center;
+  height: 96px;
+  border-color: rgba(19, 128, 125, 0.26);
+  background: #f0fdfa;
+  box-shadow: none;
+  transform: translateY(112px);
+}
+
+.workflow-dag-card-start .workflow-node-copy,
+.workflow-dag-card-end .workflow-node-copy {
+  align-content: center;
+}
+
+.workflow-node-title-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workflow-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.workflow-node-badges span {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(19, 128, 125, 0.24);
+  border-radius: 999px;
+  background: #ecfdfb;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 0 6px;
+}
+
 .workflow-graph-lane {
   display: grid;
   grid-auto-columns: minmax(280px, 1fr);
@@ -1691,7 +1880,7 @@ h3 {
 
 .progress-ribbon {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(220px, 1.2fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   overflow: hidden;
   border: 1px solid rgba(205, 216, 228, 0.9);
@@ -1699,6 +1888,10 @@ h3 {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94));
   box-shadow: var(--shadow-panel);
+}
+
+.progress-ribbon-with-status {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(220px, 1.2fr);
 }
 
 .progress-item {
@@ -2024,6 +2217,13 @@ h3 {
   min-height: 54px;
 }
 
+.lane-empty-quiet {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--color-subtle);
+}
+
 .lane-empty-with-mascot span {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -2064,6 +2264,32 @@ h3 {
 }
 
 @media (max-width: 1180px) {
+  .brand-tagline {
+    display: none;
+  }
+
+  .brand-logo {
+    width: 44px;
+    height: 44px;
+  }
+
+  .brand-lockup h1 {
+    font-size: 28px;
+  }
+
+  .nav-actions,
+  .page-nav {
+    flex-wrap: nowrap;
+  }
+
+  .project-switcher {
+    min-width: 238px;
+  }
+
+  .nav-actions .nav-button {
+    padding: 0 12px;
+  }
+
   .hero-grid,
   .first-project-layout,
   .template-page-heading-row,
@@ -2076,7 +2302,11 @@ h3 {
   }
 
   .progress-ribbon {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .progress-ribbon-with-status {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .progress-ribbon > p {
@@ -2129,15 +2359,24 @@ h3 {
   }
 
   .page-nav {
-    display: grid;
+    display: flex;
     grid-column: 1 / -1;
     grid-row: 2;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .page-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .page-nav .nav-button {
-    width: 100%;
+    width: auto;
+    min-width: max-content;
   }
 
   .project-switcher {
@@ -2187,6 +2426,11 @@ h3 {
 }
 
 @media (max-width: 640px) {
+  .studio-shell {
+    gap: 12px;
+    padding: 10px;
+  }
+
   .studio-hero,
   .first-project-card,
   .quick-actions-panel,
@@ -2195,13 +2439,67 @@ h3 {
   .setup-panel,
   .work-section {
     border-radius: var(--radius-panel);
-    padding: 14px;
+    padding: 12px;
+  }
+
+  .studio-hero {
+    gap: 12px;
+  }
+
+  .studio-nav {
+    gap: 10px;
+  }
+
+  .brand-lockup {
+    gap: 10px;
   }
 
   .brand-logo {
-    width: 48px;
-    height: 48px;
-    border-radius: 14px;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .brand-lockup h1 {
+    font-size: 22px;
+    line-height: 1.05;
+  }
+
+  .project-switcher {
+    gap: 0;
+  }
+
+  .project-switcher-label {
+    display: none;
+  }
+
+  .project-switcher-control {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .project-create-button,
+  .project-switcher select,
+  .settings-icon-button,
+  .nav-actions .nav-button {
+    min-height: 38px !important;
+    height: 38px;
+  }
+
+  .settings-icon-button {
+    width: 38px;
+    min-width: 38px;
+    flex-basis: 38px;
+  }
+
+  .page-nav {
+    gap: 6px;
+  }
+
+  .page-nav .nav-button {
+    min-height: 36px !important;
+    height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
   }
 
   .two-field-grid,
@@ -2215,6 +2513,11 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .settings-secondary-nav {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
   .settings-actions {
     display: grid;
   }
@@ -2223,10 +2526,26 @@ h3 {
     width: 100%;
   }
 
-  .section-heading-with-action button,
-  .requirement-row-actions,
-  .requirement-row-actions button {
+  .section-heading-with-action button {
     width: 100%;
+  }
+
+  .requirement-row-actions,
+  .compact-record-actions,
+  .template-row-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .requirement-row-actions button,
+  .compact-record-actions button,
+  .template-row-actions button {
+    width: 100%;
+  }
+
+  .requirement-row-actions button:first-child {
+    grid-column: 1 / -1;
   }
 
   .template-page-actions {
@@ -2257,13 +2576,31 @@ h3 {
     justify-self: start;
   }
 
-  .template-row-actions {
-    width: 100%;
-    justify-content: stretch;
+  .workflow-dag-map {
+    overflow-x: visible;
   }
 
-  .template-row-actions button {
-    flex: 1 1 120px;
+  .workflow-dag-canvas {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+  }
+
+  .workflow-dag-edges {
+    display: none;
+  }
+
+  .workflow-dag-card {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+
+  .workflow-dag-card-start,
+  .workflow-dag-card-end {
+    transform: none;
   }
 
   .workflow-graph-lane {
@@ -2280,7 +2617,7 @@ h3 {
   }
 
   .record-header button {
-    width: 100%;
+    width: auto;
   }
 
   .compact-record-actions {

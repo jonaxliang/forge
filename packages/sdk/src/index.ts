@@ -59,12 +59,24 @@ export type WorkflowFileMetadata = {
   scope: WorkflowScope;
   nodeCount: number;
   definition: string;
+  templateType?: "builtin" | "custom";
   createdAt: string;
 };
 
-export type RequirementStatus = "open" | "running" | "completed" | "failed";
-export type TaskDraftStatus = "draft";
-export type TaskStatus = "todo" | "in_progress" | "done";
+export type RequirementStatus =
+  | "init"
+  | "decomposing"
+  | "decomposition_failed"
+  | "ready_to_generate_tasks"
+  | "tasks_generated"
+  | "completed";
+export type TaskStatus =
+  | "init"
+  | "running"
+  | "failed"
+  | "pending_acceptance"
+  | "completed"
+  | "cancelled";
 
 export type Requirement = {
   id: string;
@@ -79,14 +91,18 @@ export type Requirement = {
   updatedAt: string;
 };
 
-export type TaskDraft = {
-  id: string;
-  projectId: string | null;
-  requirementId: string;
+export type DecompositionResultItem = {
   title: string;
   body: string;
   sortOrder: number;
-  status: TaskDraftStatus;
+};
+
+export type DecompositionResult = {
+  id: string;
+  projectId: string | null;
+  requirementId: string;
+  summary: string;
+  items: DecompositionResultItem[];
   createdAt: string;
   updatedAt: string;
 };
@@ -208,23 +224,32 @@ export type UpdateWorkflowFileRequest = {
   name: string;
 };
 
-export type UpdateTaskDraftRequest = {
-  title: string;
-  body: string;
-};
-
-export type TaskDraftOrderItem = {
-  id: string;
-  sortOrder: number;
+export type UpdateDecompositionResultRequest = {
+  summary: string;
+  tasks: Array<{
+    title: string;
+    body: string;
+  }>;
 };
 
 export type CreateRequirementResponse = {
+  decompositionResult: DecompositionResult | null;
+  requirement: Requirement;
+};
+
+export type CreateDecompositionResultResponse = {
+  decompositionResult: DecompositionResult | null;
+  error?: string;
   planning?: {
     reason: "model_not_configured";
     status: "blocked";
   };
   requirement: Requirement;
-  taskDrafts: TaskDraft[];
+};
+
+export type GenerateTasksResponse = {
+  requirement: Requirement;
+  tasks: Task[];
 };
 
 export type ImportWorkflowFileResponse = {
@@ -397,10 +422,11 @@ export async function listWorkflowFiles(
 
 export async function importWorkflowFile(
   source: string,
-  baseUrl = ""
+  baseUrl = "",
+  options: { templateType?: WorkflowFileMetadata["templateType"] } = {}
 ): Promise<ImportWorkflowFileResponse> {
   const response = await fetch(apiUrl(baseUrl, "/workflow-files/import"), {
-    body: JSON.stringify({ source }),
+    body: JSON.stringify({ source, ...options }),
     headers: {
       "content-type": "application/json"
     },
@@ -473,21 +499,24 @@ export async function createRequirement(
   return response.json() as Promise<CreateRequirementResponse>;
 }
 
-export async function planRequirementTaskDrafts(
+export async function createRequirementDecompositionResult(
   id: string,
   baseUrl = ""
-): Promise<CreateRequirementResponse> {
-  const response = await fetch(apiUrl(baseUrl, `/requirements/${id}/task-drafts`), {
-    method: "POST"
-  });
+): Promise<CreateDecompositionResultResponse> {
+  const response = await fetch(
+    apiUrl(baseUrl, `/requirements/${id}/decomposition-result`),
+    {
+      method: "POST"
+    }
+  );
 
   if (!response.ok) {
     const body = (await response.json()) as { error?: string };
 
-    throw new Error(body.error ?? "Requirement planning failed");
+    throw new Error(body.error ?? "Requirement decomposition failed");
   }
 
-  return response.json() as Promise<CreateRequirementResponse>;
+  return response.json() as Promise<CreateDecompositionResultResponse>;
 }
 
 export async function deleteRequirement(
@@ -527,24 +556,30 @@ export async function updateRequirement(
   return response.json() as Promise<Requirement>;
 }
 
-export async function listTaskDrafts(baseUrl = ""): Promise<TaskDraft[]> {
-  const response = await fetch(apiUrl(baseUrl, "/task-drafts"));
+export async function listDecompositionResults(
+  baseUrl = ""
+): Promise<DecompositionResult[]> {
+  const response = await fetch(apiUrl(baseUrl, "/decomposition-results"));
 
   if (!response.ok) {
-    throw new Error(`Task draft list failed with status ${response.status}`);
+    throw new Error(
+      `Decomposition result list failed with status ${response.status}`
+    );
   }
 
-  const body = (await response.json()) as { taskDrafts: TaskDraft[] };
+  const body = (await response.json()) as {
+    decompositionResults: DecompositionResult[];
+  };
 
-  return body.taskDrafts;
+  return body.decompositionResults;
 }
 
-export async function updateTaskDraft(
+export async function updateDecompositionResult(
   id: string,
-  input: UpdateTaskDraftRequest,
+  input: UpdateDecompositionResultRequest,
   baseUrl = ""
-): Promise<TaskDraft> {
-  const response = await fetch(apiUrl(baseUrl, `/task-drafts/${id}`), {
+): Promise<DecompositionResult> {
+  const response = await fetch(apiUrl(baseUrl, `/decomposition-results/${id}`), {
     body: JSON.stringify(input),
     headers: {
       "content-type": "application/json"
@@ -555,65 +590,34 @@ export async function updateTaskDraft(
   if (!response.ok) {
     const body = (await response.json()) as { error?: string };
 
-    throw new Error(body.error ?? "Task draft update failed");
+    throw new Error(body.error ?? "Decomposition result update failed");
   }
 
-  return response.json() as Promise<TaskDraft>;
+  const body = (await response.json()) as {
+    decompositionResult: DecompositionResult;
+  };
+
+  return body.decompositionResult;
 }
 
-export async function deleteTaskDraft(
+export async function generateTasksFromDecompositionResult(
   id: string,
   baseUrl = ""
-): Promise<void> {
-  const response = await fetch(apiUrl(baseUrl, `/task-drafts/${id}`), {
-    method: "DELETE"
-  });
-
-  if (!response.ok) {
-    throw new Error(`Task draft deletion failed with status ${response.status}`);
-  }
-}
-
-export async function reorderTaskDrafts(
-  order: TaskDraftOrderItem[],
-  baseUrl = ""
-): Promise<TaskDraft[]> {
-  const response = await fetch(apiUrl(baseUrl, "/task-drafts/reorder"), {
-    body: JSON.stringify({ order }),
-    headers: {
-      "content-type": "application/json"
-    },
-    method: "POST"
-  });
+): Promise<GenerateTasksResponse> {
+  const response = await fetch(
+    apiUrl(baseUrl, `/decomposition-results/${id}/generate-tasks`),
+    {
+      method: "POST"
+    }
+  );
 
   if (!response.ok) {
     const body = (await response.json()) as { error?: string };
 
-    throw new Error(body.error ?? "Task draft reorder failed");
+    throw new Error(body.error ?? "Task generation failed");
   }
 
-  const body = (await response.json()) as { taskDrafts: TaskDraft[] };
-
-  return body.taskDrafts;
-}
-
-export async function approveTaskDraft(
-  id: string,
-  baseUrl = ""
-): Promise<Task> {
-  const response = await fetch(apiUrl(baseUrl, `/task-drafts/${id}/approve`), {
-    method: "POST"
-  });
-
-  if (!response.ok) {
-    const body = (await response.json()) as { error?: string };
-
-    throw new Error(body.error ?? "Task draft approval failed");
-  }
-
-  const body = (await response.json()) as { task: Task };
-
-  return body.task;
+  return response.json() as Promise<GenerateTasksResponse>;
 }
 
 export async function listTasks(baseUrl = ""): Promise<Task[]> {

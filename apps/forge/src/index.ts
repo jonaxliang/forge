@@ -1,10 +1,10 @@
 import {
+  createSqliteDecompositionResultRepository,
   createSqliteExecutionSettingsRepository,
   createSqliteBridgeRepository,
   createSqliteProjectRepository,
   createSqliteRequirementRepository,
   createSqliteTaskRepository,
-  createSqliteTaskDraftRepository,
   createSqliteWorkflowRunRepository,
   createSqliteWorkflowFileRepository
 } from "@forge/db";
@@ -24,10 +24,11 @@ const sqlitePath = resolveForgeSqlitePath({
 const webAssetsRoot = getWebAssetsRoot();
 const app = createApp({
   bridgeRepository: createSqliteBridgeRepository(sqlitePath),
+  decompositionResultRepository:
+    createSqliteDecompositionResultRepository(sqlitePath),
   executionSettingsRepository: createSqliteExecutionSettingsRepository(sqlitePath),
   projectRepository: createSqliteProjectRepository(sqlitePath),
   requirementRepository: createSqliteRequirementRepository(sqlitePath),
-  taskDraftRepository: createSqliteTaskDraftRepository(sqlitePath),
   taskRepository: createSqliteTaskRepository(sqlitePath),
   workflowRunRepository: createSqliteWorkflowRunRepository(sqlitePath),
   workflowFileRepository: createSqliteWorkflowFileRepository(sqlitePath),

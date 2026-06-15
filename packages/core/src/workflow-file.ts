@@ -2,7 +2,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 
 export const workflowScopes = ["requirement", "task"] as const;
-export const workflowVersions = ["1", "1.1"] as const;
+export const workflowVersions = ["1.1"] as const;
 export const workflowReviewModes = ["model", "human", "none"] as const;
 export const workflowArtifactTypes = [
   "markdown",
@@ -21,79 +21,84 @@ const stringListSchema = z.preprocess((value) => {
   return value;
 }, z.array(z.string().trim().min(1))).optional();
 
-const workflowInputSchema = z.object({
-  id: z.string().trim().min(1),
-  type: z.string().trim().min(1),
-  required: z.boolean().optional().default(false)
-});
+const workflowInputSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    type: z.string().trim().min(1),
+    required: z.boolean().optional().default(false)
+  })
+  .strict();
 
-const workflowSkillSchema = z.object({
-  id: z.string().trim().min(1),
-  ref: z.string().trim().min(1)
-});
+const workflowSkillSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    ref: z.string().trim().min(1)
+  })
+  .strict();
 
-const workflowAgentSchema = z.object({
-  id: z.string().trim().min(1),
-  role: z.string().trim().min(1)
-});
+const workflowAgentSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    role: z.string().trim().min(1)
+  })
+  .strict();
 
-const workflowArtifactSchema = z.object({
-  id: z.string().trim().min(1),
-  type: z.enum(workflowArtifactTypes),
-  path: z.string().trim().min(1)
-});
+const workflowArtifactSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    type: z.enum(workflowArtifactTypes),
+    path: z.string().trim().min(1)
+  })
+  .strict();
 
 const workflowInstructionSchema = z
   .object({
     ref: z.string().trim().min(1).optional(),
     text: z.string().trim().min(1).optional()
   })
+  .strict()
   .refine((instruction) => instruction.ref || instruction.text, {
     message: "Workflow instruction must include ref or text"
   });
 
-const workflowNodeOutputInputSchema = z.union([
-  z.string().trim(),
-  z.object({
-    artifact: z.string().trim()
-  }),
-  z.object({
-    kind: z.literal("file"),
-    ref: z.string().trim().min(1)
-  })
+export const workflowNodeOutputSchema = z.union([
+  z
+    .object({
+      artifact: z.string().trim().min(1)
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("file"),
+      ref: z.string().trim().min(1)
+    })
+    .strict()
 ]);
 
-export type WorkflowNodeOutput =
-  | {
-      artifact: string;
-    }
-  | {
-      kind: "file";
-      ref: string;
-    };
+export type WorkflowNodeOutput = z.infer<typeof workflowNodeOutputSchema>;
 
-export const workflowNodeOutputSchema =
-  workflowNodeOutputInputSchema.transform(normalizeNodeOutput);
+const workflowHumanReviewSchema = z
+  .object({
+    required: z.boolean().optional().default(false),
+    reason: z.string().trim().optional().default("")
+  })
+  .strict();
 
-const workflowHumanReviewSchema = z.object({
-  required: z.boolean().optional().default(false),
-  reason: z.string().trim().optional().default("")
-});
-
-const workflowNodeExitSchema = z.object({
-  maxRetries: z.number().int().min(0),
-  criteria: z.array(z.string().trim().min(1)).optional().default([]),
-  review: z.enum(workflowReviewModes).optional().default("model"),
-  retryInstruction: z.string().trim().optional().default("")
-});
+const workflowNodeExitSchema = z
+  .object({
+    maxRetries: z.number().int().min(0),
+    criteria: z.array(z.string().trim().min(1)).optional().default([]),
+    review: z.enum(workflowReviewModes).optional().default("model"),
+    retryInstruction: z.string().trim().optional().default("")
+  })
+  .strict();
 
 export const workflowNodeSchema = z
   .object({
     id: z.string().trim().min(1),
     type: z.string().trim().min(1),
     description: z.string().trim().optional(),
-    after: stringListSchema,
-    dependsOn: stringListSchema,
+    dependsOn: stringListSchema.default([]),
     executor: z.string().trim().min(1),
     uses: stringListSchema.default([]),
     inputs: stringListSchema.default([]),
@@ -102,8 +107,9 @@ export const workflowNodeSchema = z
     exit: workflowNodeExitSchema,
     humanReview: workflowHumanReviewSchema.optional()
   })
+  .strict()
   .transform((node) => ({
-    dependsOn: mergeDependencies(node.dependsOn, node.after),
+    dependsOn: node.dependsOn,
     executor: node.executor,
     exit: node.exit,
     id: node.id,
@@ -120,13 +126,14 @@ export const workflowFileSchema = z
   .object({
     name: z.string(),
     scope: z.enum(workflowScopes),
-    version: z.enum(workflowVersions).optional().default("1"),
+    version: z.enum(workflowVersions),
     inputs: z.array(workflowInputSchema).optional().default([]),
     skills: z.array(workflowSkillSchema).optional().default([]),
     agents: z.array(workflowAgentSchema).optional().default([]),
     artifacts: z.array(workflowArtifactSchema).optional().default([]),
     nodes: z.array(workflowNodeSchema).min(1)
   })
+  .strict()
   .superRefine((workflow, context) => {
     validateWorkflowFile(workflow, (message) => {
       context.addIssue({
@@ -165,28 +172,6 @@ export function parseWorkflowFile(source: string): WorkflowFile {
   }
 
   return result.data;
-}
-
-function mergeDependencies(dependsOn: string[] | undefined, after: string[] | undefined) {
-  return [...new Set([...(dependsOn ?? []), ...(after ?? [])])];
-}
-
-function normalizeNodeOutput(
-  output: z.infer<typeof workflowNodeOutputInputSchema>
-): WorkflowNodeOutput {
-  if (typeof output === "string") {
-    if (output.startsWith("artifact:")) {
-      return { artifact: output.slice("artifact:".length) };
-    }
-
-    return { kind: "file", ref: output };
-  }
-
-  if ("artifact" in output) {
-    return { artifact: output.artifact };
-  }
-
-  return { kind: "file", ref: output.ref };
 }
 
 function validateWorkflowFile(workflow: WorkflowFile, addIssue: (message: string) => void) {
