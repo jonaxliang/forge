@@ -3,40 +3,60 @@ import { getNextRunnableNode, nodeStatuses, planWorkflowDag } from "./workflow-r
 import type { WorkflowFile } from "./workflow-file";
 
 const workflow: WorkflowFile = {
+  agents: [],
+  artifacts: [],
+  inputs: [],
   name: "Task workflow",
-  scope: "task",
   nodes: [
     {
-      id: "plan",
-      type: "planning",
       dependsOn: [],
       executor: "skill:plan",
-      outputs: [],
       exit: {
-        maxRetries: 1
-      }
+        criteria: [],
+        maxRetries: 1,
+        retryInstruction: "",
+        review: "model"
+      },
+      id: "plan",
+      inputs: [],
+      outputs: [],
+      type: "planning",
+      uses: []
     },
     {
-      id: "code",
-      type: "coding",
       dependsOn: ["plan"],
       executor: "skill:code",
-      outputs: [],
       exit: {
-        maxRetries: 1
-      }
+        criteria: [],
+        maxRetries: 1,
+        retryInstruction: "",
+        review: "model"
+      },
+      id: "code",
+      inputs: [],
+      outputs: [],
+      type: "coding",
+      uses: []
     },
     {
-      id: "review",
-      type: "review",
       dependsOn: ["code"],
       executor: "skill:review",
-      outputs: [],
       exit: {
-        maxRetries: 1
-      }
+        criteria: [],
+        maxRetries: 1,
+        retryInstruction: "",
+        review: "model"
+      },
+      id: "review",
+      inputs: [],
+      outputs: [],
+      type: "review",
+      uses: []
     }
-  ]
+  ],
+  scope: "task",
+  skills: [],
+  version: "1"
 };
 
 describe("workflow run state machine", () => {
