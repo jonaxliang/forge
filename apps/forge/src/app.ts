@@ -219,6 +219,55 @@ export function createApp({
   const proxyClient = agentProxyClient ?? startWorkflowRunViaAgentProxy;
   const testModelApi = modelApiTester ?? testModelApiWithProvider;
 
+  async function planTaskDraftsForRequirement(requirement: {
+    id: string;
+    projectId: string | null;
+    workflowFileId: string;
+    title: string;
+    body: string;
+  }) {
+    const workflowFile = await workflowFiles.getWorkflowFileMetadata(
+      requirement.workflowFileId
+    );
+
+    if (!workflowFile) {
+      throw new Error("Selected workflow file was not found");
+    }
+
+    const settings = await executionSettings.getExecutionSettings();
+
+    if (!isModelConfigured(settings)) {
+      return {
+        planning: {
+          reason: "model_not_configured" as const,
+          status: "blocked" as const
+        },
+        taskDrafts: []
+      };
+    }
+
+    const plannedTaskDrafts = await planner({
+      requirement,
+      settings,
+      workflowFile
+    });
+    const generatedTaskDrafts = [];
+
+    for (const [index, taskDraft] of plannedTaskDrafts.entries()) {
+      generatedTaskDrafts.push(
+        await taskDrafts.createTaskDraft({
+          body: taskDraft.body,
+          projectId: requirement.projectId,
+          requirementId: requirement.id,
+          sortOrder: taskDraft.sortOrder ?? index,
+          title: taskDraft.title
+        })
+      );
+    }
+
+    return { taskDrafts: generatedTaskDrafts };
+  }
+
   api.get("/health", (c) => c.json(createHealthPayload()));
 
   api.get("/execution-settings", async (c) => {
@@ -529,53 +578,64 @@ export function createApp({
     }
 
     try {
-      const workflowFile = await workflowFiles.getWorkflowFileMetadata(
-        requirement.workflowFileId
-      );
-
-      if (!workflowFile) {
-        throw new Error("Selected workflow file was not found");
-      }
-
-      const settings = await executionSettings.getExecutionSettings();
-
-      if (!isModelConfigured(settings)) {
-        return c.json(
-          {
-            planning: {
-              reason: "model_not_configured",
-              status: "blocked"
-            },
-            requirement,
-            taskDrafts: []
-          },
-          201
-        );
-      }
-
-      const plannedTaskDrafts = await planner({
-        requirement,
-        settings,
-        workflowFile
-      });
-      const generatedTaskDrafts = [];
-
-      for (const [index, taskDraft] of plannedTaskDrafts.entries()) {
-        generatedTaskDrafts.push(
-          await taskDrafts.createTaskDraft({
-            body: taskDraft.body,
-            projectId: requirement.projectId,
-            requirementId: requirement.id,
-            sortOrder: taskDraft.sortOrder ?? index,
-            title: taskDraft.title
-          })
-        );
-      }
+      const planningResult = await planTaskDraftsForRequirement(requirement);
 
       return c.json(
         {
+          ...planningResult,
           requirement,
-          taskDrafts: generatedTaskDrafts
+        },
+        201
+      );
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const failedRequirement = await requirements.updateRequirementStatus({
+        errorMessage: message,
+        id: requirement.id,
+        status: "failed"
+      });
+
+      return c.json(
+        {
+          error: message,
+          requirement: failedRequirement,
+          taskDrafts: []
+        },
+        400
+      );
+    }
+  });
+
+  api.post("/requirements/:id/task-drafts", async (c) => {
+    const requirement = (await requirements.listRequirements()).find(
+      (currentRequirement) => currentRequirement.id === c.req.param("id")
+    );
+
+    if (!requirement) {
+      return c.json({ error: "Requirement not found" }, 404);
+    }
+
+    const existingTaskDrafts = (await taskDrafts.listTaskDrafts()).filter(
+      (taskDraft) => taskDraft.requirementId === requirement.id
+    );
+    const existingTasks = (await tasks.listTasks()).filter(
+      (task) => task.requirementId === requirement.id
+    );
+
+    if (existingTaskDrafts.length > 0 || existingTasks.length > 0) {
+      return c.json(
+        { error: "Requirement already has generated work" },
+        409
+      );
+    }
+
+    try {
+      const planningResult = await planTaskDraftsForRequirement(requirement);
+
+      return c.json(
+        {
+          ...planningResult,
+          requirement
         },
         201
       );

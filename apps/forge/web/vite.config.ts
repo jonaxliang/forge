@@ -8,12 +8,6 @@ const webRoot = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react()],
   root: webRoot,
-  server: {
-    port: 5173,
-    proxy: {
-      "/api": "http://localhost:3001"
-    }
-  },
   build: {
     outDir: "dist"
   }

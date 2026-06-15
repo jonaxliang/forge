@@ -32,6 +32,25 @@ describe("Forge build configuration", () => {
     );
   });
 
+  it("keeps Forge development on the integrated server port", () => {
+    const forgePackage = readJson(resolve(repositoryRoot, "apps/forge/package.json"));
+    const viteConfig = readFileSync(
+      resolve(repositoryRoot, "apps/forge/web/vite.config.ts"),
+      "utf8"
+    );
+
+    expect(forgePackage.scripts?.dev).toBe(
+      "pnpm run build:web && sh -c 'pnpm run dev:server & pnpm run dev:web & wait'"
+    );
+    expect(forgePackage.scripts?.["dev:server"]).toContain("3001");
+    expect(forgePackage.scripts?.["dev:web"]).toBe(
+      "vite build --config web/vite.config.ts --watch"
+    );
+    expect(JSON.stringify(forgePackage.scripts)).not.toContain("5173");
+    expect(viteConfig).not.toContain("5173");
+    expect(viteConfig).not.toContain("proxy");
+  });
+
   it("keeps test files out of the server build output", () => {
     const forgeTsconfig = readJson(resolve(repositoryRoot, "apps/forge/tsconfig.json"));
 

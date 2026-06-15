@@ -10,6 +10,7 @@ import {
   listTaskWorkflowRuns,
   listTasks,
   listWorkflowFiles,
+  planRequirementTaskDrafts,
   startTaskWorkflowRun,
   testModelApi,
   updateExecutionSettings,
@@ -1008,6 +1009,46 @@ export function App({
     }
   }
 
+  async function handlePlanRequirementTaskDrafts(requirementId: string) {
+    setRequirementStatus({ kind: "status", key: "runningRequirementWorkflow" });
+
+    try {
+      const result = await planRequirementTaskDrafts(requirementId);
+      setRequirements((currentRequirements) =>
+        currentRequirements.map((requirement) =>
+          requirement.id === result.requirement.id
+            ? result.requirement
+            : requirement
+        )
+      );
+
+      const approvedTasks = await Promise.all(
+        result.taskDrafts.map((taskDraft) => approveTaskDraft(taskDraft.id))
+      );
+
+      setTasks((currentTasks) => [...currentTasks, ...approvedTasks]);
+      setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
+        ...currentWorkflowRuns,
+        ...Object.fromEntries(approvedTasks.map((task) => [task.id, []]))
+      }));
+      setRequirementStatus(
+        result.planning?.reason === "model_not_configured"
+          ? { kind: "status", key: "modelNotConfigured" }
+          : {
+              kind: "count",
+              key: "generatedTasks",
+              count: approvedTasks.length
+            }
+      );
+    } catch (error) {
+      setRequirementStatus(
+        error instanceof Error
+          ? { kind: "error", message: error.message }
+          : { kind: "status", key: "requirementCreationFailed" }
+      );
+    }
+  }
+
   async function handleUpdateRequirement(
     event: FormEvent<HTMLFormElement>,
     requirementId: string
@@ -1455,6 +1496,9 @@ export function App({
       <div className="requirements-management-list">
         {projectRequirements.map((requirement) => {
           const isEditingRequirement = editingRequirementId === requirement.id;
+          const canPlanRequirement =
+            requirement.status === "open" &&
+            !projectTasks.some((task) => task.requirementId === requirement.id);
 
           return (
             <article className="requirement-management-row" key={requirement.id}>
@@ -1491,6 +1535,17 @@ export function App({
                   </div>
                   <p className="form-helper">{t.workspace.requirementRenameHelp}</p>
                   <div className="requirement-row-actions">
+                    {canPlanRequirement ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() =>
+                          handlePlanRequirementTaskDrafts(requirement.id)
+                        }
+                        type="button"
+                      >
+                        {t.workspace.planRequirement}
+                      </button>
+                    ) : null}
                     <button type="submit">{t.workspace.saveRequirementName}</button>
                     <button
                       className="button-secondary"
@@ -1527,6 +1582,17 @@ export function App({
                     </StatusBadge>
                   </div>
                   <div className="requirement-row-actions">
+                    {canPlanRequirement ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() =>
+                          handlePlanRequirementTaskDrafts(requirement.id)
+                        }
+                        type="button"
+                      >
+                        {t.workspace.planRequirement}
+                      </button>
+                    ) : null}
                     <button
                       className="button-secondary"
                       onClick={() => {
@@ -2533,14 +2599,30 @@ export function App({
                             : ""}
                         </p>
                       </div>
-                      <button
-                        className="button-danger"
-                        onClick={() => handleDeleteRequirement(requirement.id)}
-                        title={t.workspace.requirementDeleteHelp}
-                        type="button"
-                      >
-                        {t.workspace.deleteRequirement}
-                      </button>
+                      <div className="compact-record-actions">
+                        {requirement.status === "open" &&
+                        !projectTasks.some(
+                          (task) => task.requirementId === requirement.id
+                        ) ? (
+                          <button
+                            className="button-secondary"
+                            onClick={() =>
+                              handlePlanRequirementTaskDrafts(requirement.id)
+                            }
+                            type="button"
+                          >
+                            {t.workspace.planRequirement}
+                          </button>
+                        ) : null}
+                        <button
+                          className="button-danger"
+                          onClick={() => handleDeleteRequirement(requirement.id)}
+                          title={t.workspace.requirementDeleteHelp}
+                          type="button"
+                        >
+                          {t.workspace.deleteRequirement}
+                        </button>
+                      </div>
                     </div>
                   </article>
                 ))

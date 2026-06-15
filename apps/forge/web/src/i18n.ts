@@ -215,6 +215,7 @@ type Messages = {
     allRequirementsBody: string;
     viewAllRequirements: string;
     noRequirements: string;
+    planRequirement: string;
     editRequirement: string;
     requirementNameLabel: string;
     renameRequirement: string;
@@ -553,6 +554,7 @@ const messages: Record<Locale, Messages> = {
         "Rename or remove active Requirements in the current Project.",
       viewAllRequirements: "View all Requirements",
       noRequirements: "No Requirements submitted yet.",
+      planRequirement: "Generate Tasks",
       editRequirement: "Edit",
       requirementNameLabel: "Requirement name",
       renameRequirement: "Rename",
@@ -878,6 +880,7 @@ const messages: Record<Locale, Messages> = {
         "在当前 Project 内改名或移除仍然有效的 Requirement。",
       viewAllRequirements: "查看全部需求",
       noRequirements: "暂无已提交需求。",
+      planRequirement: "生成 Task",
       editRequirement: "编辑",
       requirementNameLabel: "需求名称",
       renameRequirement: "改名",

@@ -863,6 +863,81 @@ nodes:
     await expect(taskDraftsResponse.json()).resolves.toEqual({ taskDrafts: [] });
   });
 
+  it("plans task drafts for a saved requirement after model configuration", async () => {
+    const app = createPlanningApp();
+
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: task
+nodes:
+  - id: split
+    type: task-drafting
+    executor: skill:requirements
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Write a research report about LLM Wiki.",
+        title: "LLM Wiki research report",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+      taskDrafts: [];
+    };
+
+    await configureModel(app);
+
+    const planResponse = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/task-drafts`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(requirementResponse.status).toBe(201);
+    expect(requirementBody.taskDrafts).toEqual([]);
+    expect(planResponse.status).toBe(201);
+    await expect(planResponse.json()).resolves.toMatchObject({
+      requirement: {
+        id: requirementBody.requirement.id,
+        status: "open"
+      },
+      taskDrafts: [
+        {
+          requirementId: requirementBody.requirement.id,
+          sortOrder: 0,
+          title: "Task: LLM Wiki research report"
+        }
+      ]
+    });
+    await expect((await app.request("/api/task-drafts")).json()).resolves.toMatchObject({
+      taskDrafts: [
+        {
+          requirementId: requirementBody.requirement.id,
+          title: "Task: LLM Wiki research report"
+        }
+      ]
+    });
+  });
+
   it("uses a configured planner to create task drafts from a requirement", async () => {
     const app = createPlanningApp();
     await configureModel(app);
