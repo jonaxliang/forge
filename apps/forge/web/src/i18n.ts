@@ -128,7 +128,11 @@ type Messages = {
     noPreviewTitle: string;
     noPreviewBody: string;
     workflowNameLabel: string;
+    editWorkflow: string;
+    editWorkflowAria: string;
     renameWorkflow: string;
+    previewWorkflow: string;
+    cancelWorkflowEdit: string;
     saveWorkflowName: string;
     workflowRenameHelp: string;
     dependsOn: (dependencies: string) => string;
@@ -458,7 +462,11 @@ const messages: Record<Locale, Messages> = {
       noPreviewTitle: "No template preview",
       noPreviewBody: "Import a Workflow File to inspect its nodes here.",
       workflowNameLabel: "Workflow name",
+      editWorkflow: "Edit",
+      editWorkflowAria: "Edit Workflow",
       renameWorkflow: "Rename Workflow",
+      previewWorkflow: "Preview Workflow",
+      cancelWorkflowEdit: "Cancel",
       saveWorkflowName: "Save Workflow name",
       workflowRenameHelp:
         "Workflow names are automatically numbered when a duplicate exists.",
@@ -784,7 +792,11 @@ const messages: Record<Locale, Messages> = {
       noPreviewTitle: "暂无模板预览",
       noPreviewBody: "导入 Workflow File 后，会在这里检查节点。",
       workflowNameLabel: "Workflow 名称",
+      editWorkflow: "编辑",
+      editWorkflowAria: "编辑 Workflow",
       renameWorkflow: "重命名 Workflow",
+      previewWorkflow: "预览 Workflow",
+      cancelWorkflowEdit: "取消",
       saveWorkflowName: "保存 Workflow 名称",
       workflowRenameHelp:
         "如果名称重复，Forge 会自动追加序号。",

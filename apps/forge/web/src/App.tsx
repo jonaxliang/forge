@@ -79,6 +79,8 @@ type AppProps = {
   initialTasks?: Task[];
   initialWorkbenchAction?: ActiveWorkbenchAction;
   initialWorkflowTemplateDialog?: WorkflowTemplateDialog;
+  initialEditingWorkflowId?: string;
+  initialPreviewWorkflowId?: string;
   initialWorkflowRunsByTaskId?: Record<string, WorkflowRunWithNodes[]>;
   initialWorkflowFiles?: WorkflowFileMetadata[];
 };
@@ -490,6 +492,8 @@ export function App({
   initialTasks = [],
   initialWorkbenchAction = null,
   initialWorkflowTemplateDialog = null,
+  initialEditingWorkflowId = "",
+  initialPreviewWorkflowId = "",
   initialWorkflowRunsByTaskId = {},
   initialWorkflowFiles = []
 }: AppProps = {}) {
@@ -543,7 +547,7 @@ export function App({
   const [selectedDefaultTemplateKey, setSelectedDefaultTemplateKey] =
     useState<string>(defaultWorkflowTemplates[0].key);
   const [selectedPreviewWorkflowId, setSelectedPreviewWorkflowId] = useState(
-    initialWorkflowFiles[0]?.id ?? ""
+    initialPreviewWorkflowId
   );
   const [workflowPreview, setWorkflowPreview] = useState<WorkflowFile | null>(
     null
@@ -559,6 +563,9 @@ export function App({
         workflowFile.name
       ])
     )
+  );
+  const [editingWorkflowId, setEditingWorkflowId] = useState(
+    initialEditingWorkflowId
   );
   const [workflowImportStatus, setWorkflowImportStatus] =
     useState<StatusMessage>({
@@ -646,7 +653,11 @@ export function App({
           setSelectedRequirementWorkflowId(nextWorkflowFiles[0]?.id ?? "");
           setSelectedTaskWorkflowId(nextWorkflowFiles[0]?.id ?? "");
           setSelectedPreviewWorkflowId((currentWorkflowFileId) =>
-            currentWorkflowFileId || nextWorkflowFiles[0]?.id || ""
+            nextWorkflowFiles.some(
+              (workflowFile) => workflowFile.id === currentWorkflowFileId
+            )
+              ? currentWorkflowFileId
+              : ""
           );
         }
 
@@ -864,7 +875,6 @@ export function App({
         ...currentNames,
         [result.workflowFile.id]: result.workflowFile.name
       }));
-      setSelectedPreviewWorkflowId(result.workflowFile.id);
       setSelectedRequirementWorkflowId(result.workflowFile.id);
       setSelectedTaskWorkflowId(result.workflowFile.id);
       setActiveWorkflowTemplateDialog(null);
@@ -1113,6 +1123,7 @@ export function App({
 
         setWorkflowPreview(updatedWorkflow);
       }
+      setEditingWorkflowId("");
       setWorkflowImportStatus({ kind: "status", key: "renamedWorkflow" });
     } catch (error) {
       setWorkflowImportStatus(
@@ -1332,7 +1343,7 @@ export function App({
   const selectedWorkflowFile =
     workflowFiles.find(
       (workflowFile) => workflowFile.id === selectedPreviewWorkflowId
-    ) ?? workflowFiles[0];
+    ) ?? null;
   const parsedSelectedWorkflow = selectedWorkflowFile
     ? parseWorkflowDefinition(selectedWorkflowFile.definition)
     : null;
@@ -1340,20 +1351,174 @@ export function App({
     parsedSelectedWorkflow ??
     (selectedWorkflowFile?.id === selectedPreviewWorkflowId
       ? workflowPreview
-      : null) ??
-    (workflowImportMode === "default" ? selectedDefaultTemplate.workflow : null);
-  const selectedWorkflowInputs = selectedWorkflowPreview?.inputs ?? [];
-  const selectedWorkflowSkills = selectedWorkflowPreview?.skills ?? [];
-  const selectedWorkflowAgents = selectedWorkflowPreview?.agents ?? [];
-  const selectedWorkflowArtifacts = selectedWorkflowPreview?.artifacts ?? [];
-  const selectedWorkflowArtifactTypes = [
-    ...new Set(selectedWorkflowArtifacts.map((artifact) => artifact.type))
-  ];
+      : null);
   const isNewWorkflowDialog = activeWorkflowTemplateDialog === "new";
   const isImportWorkflowDialog = activeWorkflowTemplateDialog === "import";
   const workflowTemplateDialogTitle = isNewWorkflowDialog
     ? t.templatePage.newWorkflow
     : t.templatePage.importWorkflow;
+
+  function renderWorkflowPreviewGraph(
+    preview: WorkflowFile,
+    workflowFile?: WorkflowFileMetadata | null
+  ) {
+    const workflowInputs = preview.inputs ?? [];
+    const workflowSkills = preview.skills ?? [];
+    const workflowAgents = preview.agents ?? [];
+    const workflowArtifacts = preview.artifacts ?? [];
+    const workflowArtifactTypes = [
+      ...new Set(workflowArtifacts.map((artifact) => artifact.type))
+    ];
+
+    return (
+      <div
+        aria-label={t.templatePage.previewGraphLabel}
+        className="workflow-preview-graph"
+      >
+        <div className="workflow-preview-summary">
+          <div>
+            <strong>
+              {workflowFile
+                ? getWorkflowTemplateDisplayName(t, workflowFile)
+                : preview.name}
+            </strong>
+            <p>{t.templatePage.templateSummary(preview.nodes.length)}</p>
+          </div>
+        </div>
+        <div className="workflow-contract-grid">
+          <article className="workflow-contract-stat">
+            <span>{t.templatePage.inputsLabel}</span>
+            <strong>
+              {getWorkflowContractCountLabel(
+                workflowInputs.length,
+                "input",
+                "inputs"
+              )}
+            </strong>
+            <p>
+              {getWorkflowContractValues(
+                workflowInputs.map((input) => input.id),
+                t.templatePage.noOutputs
+              )}
+            </p>
+          </article>
+          <article className="workflow-contract-stat">
+            <span>{t.templatePage.skillsLabel}</span>
+            <strong>
+              {getWorkflowContractCountLabel(
+                workflowSkills.length,
+                "skill",
+                "skills"
+              )}
+            </strong>
+            <p>
+              {getWorkflowContractValues(
+                workflowSkills.map((skill) => skill.ref),
+                t.templatePage.noOutputs
+              )}
+            </p>
+          </article>
+          <article className="workflow-contract-stat">
+            <span>{t.templatePage.agentRolesLabel}</span>
+            <strong>
+              {getWorkflowContractCountLabel(
+                workflowAgents.length,
+                "role",
+                "roles"
+              )}
+            </strong>
+            <p>
+              {getWorkflowContractValues(
+                workflowAgents.map((agent) => agent.role),
+                t.templatePage.noOutputs
+              )}
+            </p>
+          </article>
+          <article className="workflow-contract-stat">
+            <span>{t.templatePage.artifactTypesLabel}</span>
+            <strong>
+              {getWorkflowContractCountLabel(
+                workflowArtifactTypes.length,
+                "type",
+                "types"
+              )}
+            </strong>
+            <p>
+              {getWorkflowContractValues(
+                workflowArtifactTypes,
+                t.templatePage.noOutputs
+              )}
+            </p>
+          </article>
+        </div>
+        <div className="workflow-graph-lane">
+          {preview.nodes.map((node, index) => {
+            const nodeInputs = node.inputs ?? [];
+            const nodeOutputs = node.outputs ?? [];
+            const nodeSkills = node.uses ?? [];
+            const nodeDependencies = node.dependsOn ?? [];
+            const exitCriteriaCount = node.exit?.criteria?.length ?? 0;
+            const reviewMode = node.exit?.review ?? "model";
+            const retryBudget = node.exit?.maxRetries ?? 0;
+
+            return (
+              <article className="workflow-graph-node" key={node.id}>
+                <div className="workflow-node-index">
+                  {String(index + 1).padStart(2, "0")}
+                </div>
+                <div className="workflow-node-copy">
+                  <h3>{node.id}</h3>
+                  <p>{node.description ?? node.type}</p>
+                  <div className="workflow-node-meta">
+                    <span>{node.executor}</span>
+                    <span>{t.templatePage.retryBudget(retryBudget)}</span>
+                    <span>
+                      {nodeOutputs.length > 0
+                        ? nodeOutputs.map(getWorkflowNodeOutputLabel).join(", ")
+                        : t.templatePage.noOutputs}
+                    </span>
+                  </div>
+                  <div className="workflow-node-contract">
+                    <span>
+                      {t.templatePage.usesLabel}:{" "}
+                      {getWorkflowContractValues(
+                        nodeSkills,
+                        t.templatePage.noOutputs
+                      )}
+                    </span>
+                    <span>
+                      {t.templatePage.nodeInputsLabel}:{" "}
+                      {getWorkflowContractValues(
+                        nodeInputs,
+                        t.templatePage.noOutputs
+                      )}
+                    </span>
+                    <span>
+                      {t.templatePage.exitCriteriaLabel}:{" "}
+                      {getWorkflowContractCountLabel(
+                        exitCriteriaCount,
+                        "criterion",
+                        "criteria"
+                      )}
+                    </span>
+                    <span>{t.templatePage.reviewMode(reviewMode)}</span>
+                    {node.humanReview?.required ? (
+                      <span>{t.templatePage.humanReviewRequired}</span>
+                    ) : null}
+                  </div>
+                  <p className="workflow-node-dependency">
+                    {nodeDependencies.length > 0
+                      ? t.templatePage.dependsOn(nodeDependencies.join(", "))
+                      : t.workspace.noDependency}
+                  </p>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   const workflowForm = (
     <form className="stack-form" onSubmit={handleImportWorkflow}>
@@ -1445,6 +1610,9 @@ export function App({
       {workflowImportMode === "file" ? (
         <p className="form-helper">{t.templatePage.fileSourceHelp}</p>
       ) : null}
+      {isNewWorkflowDialog && workflowImportMode === "default"
+        ? renderWorkflowPreviewGraph(selectedDefaultTemplate.workflow)
+        : null}
       <button type="submit">{t.setup.importRecipe}</button>
     </form>
   );
@@ -2164,30 +2332,85 @@ export function App({
                 </strong>
               </article>
             </div>
-            <div className="template-management-grid">
-              <section className="template-library-panel">
-                <div className="section-heading">
-                  <p className="studio-label">{t.templatePage.libraryEyebrow}</p>
-                  <h3>{t.templatePage.libraryTitle}</h3>
-                  <p>{t.templatePage.libraryDescription}</p>
-                </div>
-                <div className="template-card-list">
-                  {workflowFiles.length === 0 ? (
-                    <MascotEmptyState
-                      body={t.templatePage.emptyBody}
-                      title={t.templatePage.emptyTitle}
-                      variant="guide"
-                    />
-                  ) : (
-                    workflowFiles.map((workflowFile) => (
+            <section className="template-library-panel template-library-panel-thin">
+              <div className="section-heading">
+                <p className="studio-label">{t.templatePage.libraryEyebrow}</p>
+                <h3>{t.templatePage.libraryTitle}</h3>
+                <p>{t.templatePage.libraryDescription}</p>
+              </div>
+              <div className="template-card-list template-thin-list">
+                {workflowFiles.length === 0 ? (
+                  defaultWorkflowTemplates.map((template) => (
+                    <article
+                      className="template-card template-thin-row"
+                      key={template.key}
+                    >
+                      <div className="template-row-main">
+                        <div className="template-row-title">
+                          <h3>{template.workflow.name}</h3>
+                          <p>
+                            {
+                              t.templatePage.defaultTemplateDescriptions[
+                                template.key
+                              ]
+                            }
+                          </p>
+                        </div>
+                        <span className="template-node-count">
+                          {t.templatePage.templateSummary(
+                            template.workflow.nodes.length
+                          )}
+                        </span>
+                      </div>
+                      <div className="template-row-actions">
+                        <button
+                          className="button-secondary"
+                          onClick={() => {
+                            setSelectedDefaultTemplateKey(template.key);
+                            handleOpenWorkflowTemplateDialog("new");
+                          }}
+                          type="button"
+                        >
+                          {t.templatePage.previewEyebrow}
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  workflowFiles.map((workflowFile) => {
+                    const isEditing = editingWorkflowId === workflowFile.id;
+                    const displayName = getWorkflowTemplateDisplayName(
+                      t,
+                      workflowFile
+                    );
+                    const businessFunction =
+                      t.templatePage.businessFunctions[
+                        getWorkflowBusinessFunction(workflowFile)
+                      ];
+
+                    return (
                       <article
-                        className="template-card"
+                        className="template-card template-thin-row"
                         key={workflowFile.id}
                       >
-                        <div>
-                          <h3>{getWorkflowTemplateDisplayName(t, workflowFile)}</h3>
+                        <div className="template-row-main">
+                          <div className="template-row-title">
+                            <h3>{displayName}</h3>
+                            <p>
+                              {t.templatePage.businessFunctionLabel(
+                                businessFunction
+                              )}
+                            </p>
+                          </div>
+                          <span className="template-node-count">
+                            {t.templatePage.templateSummary(
+                              workflowFile.nodeCount
+                            )}
+                          </span>
+                        </div>
+                        {isEditing ? (
                           <form
-                            className="workflow-rename-form"
+                            className="workflow-rename-form workflow-rename-form-inline"
                             onSubmit={(event) =>
                               handleUpdateWorkflowFile(event, workflowFile.id)
                             }
@@ -2213,209 +2436,53 @@ export function App({
                             <p className="form-helper">
                               {t.templatePage.workflowRenameHelp}
                             </p>
-                            <button type="submit">
-                              {t.templatePage.saveWorkflowName}
-                            </button>
+                            <div className="template-row-actions">
+                              <button type="submit">
+                                {t.templatePage.saveWorkflowName}
+                              </button>
+                              <button
+                                className="button-secondary"
+                                onClick={() => {
+                                  setEditedWorkflowNames((currentNames) => ({
+                                    ...currentNames,
+                                    [workflowFile.id]: workflowFile.name
+                                  }));
+                                  setEditingWorkflowId("");
+                                }}
+                                type="button"
+                              >
+                                {t.templatePage.cancelWorkflowEdit}
+                              </button>
+                            </div>
                           </form>
-                          <p>
-                            {t.templatePage.businessFunctionLabel(
-                              t.templatePage.businessFunctions[
-                                getWorkflowBusinessFunction(workflowFile)
-                              ]
-                            )}
-                          </p>
-                          <p>
-                            {t.templatePage.templateSummary(workflowFile.nodeCount)}
-                          </p>
-                        </div>
-                        <div className="template-card-actions">
-                          <button
-                            aria-pressed={selectedWorkflowFile?.id === workflowFile.id}
-                            className="button-secondary"
-                            onClick={() => setSelectedPreviewWorkflowId(workflowFile.id)}
-                            type="button"
-                          >
-                            {t.templatePage.previewEyebrow}
-                          </button>
-                        </div>
+                        ) : (
+                          <div className="template-row-actions">
+                            <button
+                              aria-label={`${t.templatePage.editWorkflowAria} ${workflowFile.name}`}
+                              className="button-secondary"
+                              onClick={() => setEditingWorkflowId(workflowFile.id)}
+                              type="button"
+                            >
+                              {t.templatePage.editWorkflow}
+                            </button>
+                            <button
+                              aria-label={`${t.templatePage.previewWorkflow} ${workflowFile.name}`}
+                              className="button-secondary"
+                              onClick={() =>
+                                setSelectedPreviewWorkflowId(workflowFile.id)
+                              }
+                              type="button"
+                            >
+                              {t.templatePage.previewEyebrow}
+                            </button>
+                          </div>
+                        )}
                       </article>
-                    ))
-                  )}
-                </div>
-              </section>
-              <section className="template-preview-panel">
-                <div className="section-heading">
-                  <p className="studio-label">{t.templatePage.previewEyebrow}</p>
-                  <h3>{t.templatePage.previewTitle}</h3>
-                  <p>{t.templatePage.previewDescription}</p>
-                </div>
-                {selectedWorkflowPreview ? (
-                  <div
-                    aria-label={t.templatePage.previewGraphLabel}
-                    className="workflow-preview-graph"
-                  >
-                    <div className="workflow-preview-summary">
-                      <div>
-                        <strong>
-                          {selectedWorkflowFile
-                            ? getWorkflowTemplateDisplayName(
-                                t,
-                                selectedWorkflowFile
-                              )
-                            : selectedWorkflowPreview.name}
-                        </strong>
-                        <p>
-                          {t.templatePage.templateSummary(
-                            selectedWorkflowPreview.nodes.length
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="workflow-contract-grid">
-                      <article className="workflow-contract-stat">
-                        <span>{t.templatePage.inputsLabel}</span>
-                        <strong>
-                          {getWorkflowContractCountLabel(
-                            selectedWorkflowInputs.length,
-                            "input",
-                            "inputs"
-                          )}
-                        </strong>
-                        <p>
-                          {getWorkflowContractValues(
-                            selectedWorkflowInputs.map((input) => input.id),
-                            t.templatePage.noOutputs
-                          )}
-                        </p>
-                      </article>
-                      <article className="workflow-contract-stat">
-                        <span>{t.templatePage.skillsLabel}</span>
-                        <strong>
-                          {getWorkflowContractCountLabel(
-                            selectedWorkflowSkills.length,
-                            "skill",
-                            "skills"
-                          )}
-                        </strong>
-                        <p>
-                          {getWorkflowContractValues(
-                            selectedWorkflowSkills.map((skill) => skill.ref),
-                            t.templatePage.noOutputs
-                          )}
-                        </p>
-                      </article>
-                      <article className="workflow-contract-stat">
-                        <span>{t.templatePage.agentRolesLabel}</span>
-                        <strong>
-                          {getWorkflowContractCountLabel(
-                            selectedWorkflowAgents.length,
-                            "role",
-                            "roles"
-                          )}
-                        </strong>
-                        <p>
-                          {getWorkflowContractValues(
-                            selectedWorkflowAgents.map((agent) => agent.role),
-                            t.templatePage.noOutputs
-                          )}
-                        </p>
-                      </article>
-                      <article className="workflow-contract-stat">
-                        <span>{t.templatePage.artifactTypesLabel}</span>
-                        <strong>
-                          {getWorkflowContractCountLabel(
-                            selectedWorkflowArtifactTypes.length,
-                            "type",
-                            "types"
-                          )}
-                        </strong>
-                        <p>
-                          {getWorkflowContractValues(
-                            selectedWorkflowArtifactTypes,
-                            t.templatePage.noOutputs
-                          )}
-                        </p>
-                      </article>
-                    </div>
-                    <div className="workflow-graph-lane">
-                      {selectedWorkflowPreview.nodes.map((node, index) => {
-                        const nodeInputs = node.inputs ?? [];
-                        const nodeOutputs = node.outputs ?? [];
-                        const nodeSkills = node.uses ?? [];
-                        const nodeDependencies = node.dependsOn ?? [];
-                        const exitCriteriaCount = node.exit?.criteria?.length ?? 0;
-                        const reviewMode = node.exit?.review ?? "model";
-                        const retryBudget = node.exit?.maxRetries ?? 0;
-
-                        return (
-                          <article className="workflow-graph-node" key={node.id}>
-                            <div className="workflow-node-index">
-                              {String(index + 1).padStart(2, "0")}
-                            </div>
-                            <div className="workflow-node-copy">
-                              <h3>{node.id}</h3>
-                              <p>{node.description ?? node.type}</p>
-                              <div className="workflow-node-meta">
-                                <span>{node.executor}</span>
-                                <span>{t.templatePage.retryBudget(retryBudget)}</span>
-                                <span>
-                                  {nodeOutputs.length > 0
-                                    ? nodeOutputs
-                                        .map(getWorkflowNodeOutputLabel)
-                                        .join(", ")
-                                    : t.templatePage.noOutputs}
-                                </span>
-                              </div>
-                              <div className="workflow-node-contract">
-                                <span>
-                                  {t.templatePage.usesLabel}:{" "}
-                                  {getWorkflowContractValues(
-                                    nodeSkills,
-                                    t.templatePage.noOutputs
-                                  )}
-                                </span>
-                                <span>
-                                  {t.templatePage.nodeInputsLabel}:{" "}
-                                  {getWorkflowContractValues(
-                                    nodeInputs,
-                                    t.templatePage.noOutputs
-                                  )}
-                                </span>
-                                <span>
-                                  {t.templatePage.exitCriteriaLabel}:{" "}
-                                  {getWorkflowContractCountLabel(
-                                    exitCriteriaCount,
-                                    "criterion",
-                                    "criteria"
-                                  )}
-                                </span>
-                                <span>{t.templatePage.reviewMode(reviewMode)}</span>
-                                {node.humanReview?.required ? (
-                                  <span>{t.templatePage.humanReviewRequired}</span>
-                                ) : null}
-                              </div>
-                              <p className="workflow-node-dependency">
-                                {nodeDependencies.length > 0
-                                  ? t.templatePage.dependsOn(
-                                      nodeDependencies.join(", ")
-                                    )
-                                  : t.workspace.noDependency}
-                              </p>
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <MascotEmptyState
-                    body={t.templatePage.noPreviewBody}
-                    title={t.templatePage.noPreviewTitle}
-                    variant="thinking"
-                  />
+                    );
+                  })
                 )}
-              </section>
-            </div>
+              </div>
+            </section>
           </section>
         )}
       </header>
@@ -2544,6 +2611,48 @@ export function App({
               status={workflowImportStatus}
               t={t}
             />
+          </section>
+        </div>
+      ) : null}
+
+      {selectedWorkflowPreview ? (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedPreviewWorkflowId("");
+            }
+          }}
+        >
+          <section
+            aria-labelledby="workflow-preview-modal-heading"
+            aria-modal="true"
+            className="requirement-modal workflow-preview-modal"
+            role="dialog"
+          >
+            <div className="modal-heading">
+              <div className="section-heading">
+                <p className="studio-label">{t.templatePage.previewEyebrow}</p>
+                <h2 id="workflow-preview-modal-heading">
+                  {selectedWorkflowFile
+                    ? getWorkflowTemplateDisplayName(t, selectedWorkflowFile)
+                    : selectedWorkflowPreview.name}
+                </h2>
+                <p>{t.templatePage.previewDescription}</p>
+              </div>
+              <button
+                aria-label={`${t.workbench.close} ${t.templatePage.previewTitle}`}
+                className="button-secondary modal-close"
+                onClick={() => setSelectedPreviewWorkflowId("")}
+                type="button"
+              >
+                {t.workbench.close}
+              </button>
+            </div>
+            {renderWorkflowPreviewGraph(
+              selectedWorkflowPreview,
+              selectedWorkflowFile
+            )}
           </section>
         </div>
       ) : null}
