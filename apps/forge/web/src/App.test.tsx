@@ -369,6 +369,54 @@ describe("App workbench layout", () => {
     expect(pageMarkup).not.toContain("No requirement created yet");
   });
 
+  it("shows a planning action for open Requirements without generated Tasks", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const projects = [
+      {
+        artifactStorageMode: "local-only" as const,
+        createdAt: timestamp,
+        dbStrategy: "sqlite" as const,
+        id: "proj_test",
+        name: "Project",
+        updatedAt: timestamp
+      }
+    ];
+    const requirements = [
+      {
+        body: "Write a research report about LLM Wiki.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage: null,
+        id: "req_test",
+        projectId: "proj_test",
+        status: "open" as const,
+        title: "LLM Wiki research report",
+        updatedAt: timestamp,
+        workflowFileId: "wf_1"
+      }
+    ];
+
+    const markup = renderToStaticMarkup(
+      <App
+        initialExecutionSettings={{
+          agentProxyConfigured: false,
+          agentProxyUrl: "",
+          modelBaseUrl: "https://api.openai.com/v1",
+          modelConfigured: true,
+          modelName: "gpt-5",
+          modelProvider: "openai",
+          updatedAt: timestamp
+        }}
+        initialPage="requirements"
+        initialProjects={projects}
+        initialRequirements={requirements}
+      />
+    );
+
+    expect(markup).toContain("Generate Tasks");
+    expect(markup).toContain("LLM Wiki research report");
+  });
+
   it("resolves the Requirements page route", () => {
     expect(resolvePageFromPath("/requirements")).toBe("requirements");
     expect(getPathForPage("requirements")).toBe("/requirements");

@@ -87,17 +87,14 @@ Start the Forge development server:
 pnpm --filter @forge/forge dev
 ```
 
-The Vite development URL is:
+Forge serves the Web console and API from one port:
 
 ```text
-http://localhost:5173
+http://localhost:3001
 ```
 
-During development, `/api/*` requests are proxied to the local Forge API server:
-
-```text
-http://localhost:5173/api/health -> http://localhost:3001/api/health
-```
+During development, Web assets are rebuilt in watch mode and served by the
+Forge server. No separate Vite browser port is used.
 
 ## Local Data
 

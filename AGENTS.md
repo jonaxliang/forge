@@ -63,10 +63,11 @@ pnpm start
 pnpm --filter @forge/forge dev
 ```
 
-When the user asks to start or restart Forge, prefer the integrated single-port
-server via `pnpm start` unless they explicitly ask for hot-reload development
-mode. `pnpm --filter @forge/forge dev` starts both Vite on port 5173 and the
-Forge server on port 3001, so do not use it for a plain restart request.
+Forge should always expose a single browser/API port. When the user asks to
+start or restart Forge, use the integrated server via `pnpm start` for normal
+use or `pnpm --filter @forge/forge dev` for development watch mode. In both
+cases the browser URL is `http://localhost:3001`; do not direct users to a
+separate Vite port.
 
 ## Domain Language
 

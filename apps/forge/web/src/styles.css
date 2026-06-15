@@ -1731,6 +1731,19 @@ h3 {
   flex: 0 0 auto;
 }
 
+.compact-record-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.compact-record .record-header {
+  align-items: center;
+}
+
 .task-column-header {
   align-items: center;
 }
@@ -2156,6 +2169,10 @@ h3 {
   }
 
   .record-header button {
+    width: 100%;
+  }
+
+  .compact-record-actions {
     width: 100%;
   }
 

@@ -473,6 +473,23 @@ export async function createRequirement(
   return response.json() as Promise<CreateRequirementResponse>;
 }
 
+export async function planRequirementTaskDrafts(
+  id: string,
+  baseUrl = ""
+): Promise<CreateRequirementResponse> {
+  const response = await fetch(apiUrl(baseUrl, `/requirements/${id}/task-drafts`), {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Requirement planning failed");
+  }
+
+  return response.json() as Promise<CreateRequirementResponse>;
+}
+
 export async function deleteRequirement(
   id: string,
   baseUrl = ""
