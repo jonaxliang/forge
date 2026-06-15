@@ -661,7 +661,8 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain("New Workflow");
     expect(markup).toContain("Import Workflow");
-    expect(markup).toContain("No Workflow templates yet");
+    expect(markup).toContain("Software Change Requirement");
+    expect(markup).toContain("Preview");
     expect(markup).not.toContain("workflow-preview-graph");
     expect(markup).not.toContain("intake");
   });
