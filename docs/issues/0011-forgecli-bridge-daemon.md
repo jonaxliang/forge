@@ -10,7 +10,7 @@ AFK
 
 ## Acceptance criteria
 
-- [ ] `apps/cli` 生成 `forgecli` binary。
+- [ ] `apps/forgecli` 生成 `forgecli` binary。
 - [ ] 支持 `forgecli bridge start`。
 - [ ] 支持 `forgecli bridge stop`。
 - [ ] 支持 `forgecli bridge status`。

@@ -59,13 +59,18 @@ pnpm test
 pnpm typecheck
 pnpm build
 pnpm lint
-pnpm --filter @forge/server dev
-pnpm --filter @forge/web dev
+pnpm start
+pnpm --filter @forge/forge dev
 ```
+
+When the user asks to start or restart Forge, prefer the integrated single-port
+server via `pnpm start` unless they explicitly ask for hot-reload development
+mode. `pnpm --filter @forge/forge dev` starts both Vite on port 5173 and the
+Forge server on port 3001, so do not use it for a plain restart request.
 
 ## Domain Language
 
-Use the vocabulary in `CONTEXT.md` and do not replace it with near-synonyms.
+Use the vocabulary in `docs/forge-prd.md` and do not replace it with near-synonyms.
 
 - Forge is the AI work orchestration control plane. Do not describe it as an IDE, coding environment, or agent runtime.
 - Harness is the execution plane that connects Forge to local or remote agents.

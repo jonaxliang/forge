@@ -28,13 +28,10 @@ Testing: Vitest + Playwright
 ## Monorepo 结构
 
 ```text
-apps/web
-  Forge Web UI，包含 Task Board、Control Room、Artifact 管理、Agent 管理和 `.wf` 导入预览。
+apps/forge
+  Forge 主体，包含 Hono API Server 和 React + Vite Web 控制台源码。Server 负责 HTTP API、SSE、workflow orchestration、DB persistence、bridge job queue，并在生产态托管 Web 控制台。
 
-apps/server
-  Hono API Server，负责 HTTP API、SSE、workflow orchestration、DB persistence、bridge job queue。
-
-apps/cli
+apps/forgecli
   `forgecli` 命令行工具，负责启动和管理 Local Agent Bridge daemon，并提供本地诊断命令。
 
 packages/core
@@ -197,13 +194,11 @@ MVP 必须支持 macOS 和 Linux，Windows 尽量兼容但不阻塞首版。
 packages/core:
   Vitest 覆盖 .wf parser、DAG、状态机、retry、exit criteria 类型。
 
-apps/server:
+apps/forge:
   Vitest + Hono test client 覆盖 API、workflow orchestration、SSE event 生成、bridge job queue。
+  Vitest + Testing Library 覆盖关键 Web 组件行为。
 
-apps/web:
-  Vitest + Testing Library 覆盖关键组件行为。
-
-apps/cli:
+apps/forgecli:
   Vitest + execa 覆盖 forgecli 参数解析、配置写入、bridge 状态命令。
 
 E2E:
