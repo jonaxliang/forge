@@ -1,16 +1,17 @@
 import {
-  approveTaskDraft,
   createProject,
   createRequirement,
+  createRequirementDecompositionResult,
   deleteRequirement,
+  generateTasksFromDecompositionResult,
   getExecutionSettings,
   importWorkflowFile,
+  listDecompositionResults,
   listRequirements,
   listProjects,
   listTaskWorkflowRuns,
   listTasks,
   listWorkflowFiles,
-  planRequirementTaskDrafts,
   startTaskWorkflowRun,
   testModelApi,
   updateExecutionSettings,
@@ -18,6 +19,7 @@ import {
   updateProject,
   updateRequirement,
   type ArtifactStorageMode,
+  type DecompositionResult,
   type DbStrategy,
   type ExecutionSettings,
   type ModelProviderKind,
@@ -32,6 +34,7 @@ import {
 import { StatusBadge } from "@forge/ui";
 import {
   type ChangeEvent,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
   useEffect,
@@ -69,9 +72,12 @@ type ActiveWorkbenchAction = "project" | "requirement" | null;
 type WorkflowTemplateDialog = "new" | "import" | null;
 type WorkflowImportMode = "default" | "source" | "file";
 type SettingsSection = "basic" | "model";
+type ModelSettingsSection = "model" | "local-bridge";
 type Messages = ReturnType<typeof getMessages>;
 type AppProps = {
   initialExecutionSettings?: ExecutionSettings | null;
+  initialDecompositionResults?: DecompositionResult[];
+  initialModelSettingsSection?: ModelSettingsSection;
   initialPage?: ActivePage;
   initialProjects?: Project[];
   initialRequirements?: Requirement[];
@@ -195,11 +201,14 @@ function getNodeRunTone(status: string): StatusTone {
 }
 
 function getTaskStatusTone(status: Task["status"]): StatusTone {
-  if (status === "done") {
+  if (status === "completed") {
     return "success";
   }
-  if (status === "in_progress") {
+  if (status === "running" || status === "pending_acceptance") {
     return "info";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "danger";
   }
   return "neutral";
 }
@@ -363,20 +372,57 @@ function MascotEmptyState({
 
 function MascotLaneEmpty({
   children,
+  quiet = false,
   variant = "guide"
 }: {
   children: ReactNode;
+  quiet?: boolean;
   variant?: MascotVariant;
 }) {
   return (
-    <div className="lane-empty lane-empty-with-mascot">
-      <MascotCue className="mascot-cue-lane" variant={variant} />
+    <div
+      className={`lane-empty ${
+        quiet ? "lane-empty-quiet" : "lane-empty-with-mascot"
+      }`}
+    >
+      {quiet ? null : <MascotCue className="mascot-cue-lane" variant={variant} />}
       <span>{children}</span>
     </div>
   );
 }
 
 const defaultWorkflowSource = defaultWorkflowTemplates[0].source;
+const defaultSelectableWorkflowTemplates = defaultWorkflowTemplates.filter(
+  (template) => template.workflow.scope === "task"
+);
+const defaultSelectableWorkflowTemplate =
+  defaultSelectableWorkflowTemplates[0] ?? defaultWorkflowTemplates[0];
+const baseTemplateDisplayNameBySourceName: Record<string, string> = {
+  "autonomous research plan": "调研分析模板",
+  "code implementation": "代码编写模板",
+  "creative writing requirement": "创意写作模板",
+  "creative writing task": "创意写作模板",
+  "human approval": "评审审批模板",
+  "requirement split": "需求拆解模板",
+  "research & writing requirement": "调研写作模板",
+  "research & writing task": "调研写作模板",
+  "research analysis": "调研分析模板",
+  "software change requirement": "需求拆解模板",
+  "software change task": "代码编写模板",
+  "travel guide coding test": "旅行指南编写测试模板",
+  "writing review": "写作编辑模板",
+  "代码编写模板": "代码编写模板",
+  "创意写作拆解模板": "创意写作模板",
+  "创意写作模板": "创意写作模板",
+  "调研分析模板": "调研分析模板",
+  "调研写作拆解模板": "调研写作模板",
+  "调研写作模板": "调研写作模板",
+  "评审审批模板": "评审审批模板",
+  "写作编辑模板": "写作编辑模板",
+  "旅行指南编写测试模板": "旅行指南编写测试模板",
+  "自主测试任务完成": "旅行指南编写测试模板",
+  "需求拆解模板": "需求拆解模板"
+};
 
 function getWorkflowOutputLabel(output: WorkflowNodeOutput | string) {
   if (typeof output === "string") {
@@ -404,6 +450,190 @@ function getWorkflowContractValues(values: string[], fallback: string) {
   return values.length > 0 ? values.join(", ") : fallback;
 }
 
+type WorkflowPreviewNode = WorkflowFile["nodes"][number];
+type WorkflowDagCardKind = "start" | "node" | "end";
+type WorkflowDagCard = {
+  childCount: number;
+  dependencyCount: number;
+  id: string;
+  isEntry: boolean;
+  isTerminal: boolean;
+  kind: WorkflowDagCardKind;
+  node?: WorkflowPreviewNode;
+  x: number;
+  y: number;
+};
+type WorkflowDagEdge = {
+  from: string;
+  to: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+};
+type WorkflowDagLayout = {
+  cards: WorkflowDagCard[];
+  edges: WorkflowDagEdge[];
+  height: number;
+  width: number;
+};
+
+const workflowDagCardWidth = 230;
+const workflowDagCardHeight = 320;
+const workflowDagColumnGap = 56;
+const workflowDagRowGap = 14;
+const workflowDagPadding = 18;
+
+function createWorkflowDagLayout(workflow: WorkflowFile): WorkflowDagLayout {
+  const nodesById = new Map(workflow.nodes.map((node) => [node.id, node]));
+  const childrenByNodeId = new Map<string, string[]>(
+    workflow.nodes.map((node) => [node.id, []])
+  );
+
+  for (const node of workflow.nodes) {
+    for (const dependency of node.dependsOn ?? []) {
+      childrenByNodeId.get(dependency)?.push(node.id);
+    }
+  }
+
+  const levelByNodeId = new Map<string, number>();
+  const resolving = new Set<string>();
+
+  function getNodeLevel(node: WorkflowPreviewNode): number {
+    const currentLevel = levelByNodeId.get(node.id);
+
+    if (currentLevel !== undefined) {
+      return currentLevel;
+    }
+
+    if (resolving.has(node.id)) {
+      return 0;
+    }
+
+    resolving.add(node.id);
+
+    const dependencyLevels = (node.dependsOn ?? [])
+      .map((dependency) => nodesById.get(dependency))
+      .filter((dependencyNode): dependencyNode is WorkflowPreviewNode =>
+        Boolean(dependencyNode)
+      )
+      .map((dependencyNode) => getNodeLevel(dependencyNode) + 1);
+    const nextLevel =
+      dependencyLevels.length > 0 ? Math.max(...dependencyLevels) : 0;
+
+    resolving.delete(node.id);
+    levelByNodeId.set(node.id, nextLevel);
+
+    return nextLevel;
+  }
+
+  for (const node of workflow.nodes) {
+    getNodeLevel(node);
+  }
+
+  const maxWorkflowLevel = Math.max(...levelByNodeId.values(), 0);
+  const workflowLayers = Array.from(
+    { length: maxWorkflowLevel + 1 },
+    () => [] as WorkflowPreviewNode[]
+  );
+
+  for (const node of workflow.nodes) {
+    workflowLayers[getNodeLevel(node)]?.push(node);
+  }
+
+  const layoutLayers: Array<
+    Array<{ id: string; kind: WorkflowDagCardKind; node?: WorkflowPreviewNode }>
+  > = [
+    [{ id: "__start", kind: "start" }],
+    ...workflowLayers.map((layer) =>
+      layer.map((node) => ({ id: node.id, kind: "node" as const, node }))
+    ),
+    [{ id: "__end", kind: "end" }]
+  ];
+  const maxRows = Math.max(...layoutLayers.map((layer) => layer.length), 1);
+  const contentHeight =
+    maxRows * workflowDagCardHeight + (maxRows - 1) * workflowDagRowGap;
+  const height = workflowDagPadding * 2 + contentHeight;
+  const width =
+    workflowDagPadding * 2 +
+    layoutLayers.length * workflowDagCardWidth +
+    (layoutLayers.length - 1) * workflowDagColumnGap;
+  const cards: WorkflowDagCard[] = [];
+
+  layoutLayers.forEach((layer, columnIndex) => {
+    const layerHeight =
+      layer.length * workflowDagCardHeight +
+      Math.max(layer.length - 1, 0) * workflowDagRowGap;
+    const startY = workflowDagPadding + (contentHeight - layerHeight) / 2;
+
+    layer.forEach((item, rowIndex) => {
+      const dependencyCount =
+        item.kind === "node" ? item.node?.dependsOn?.length ?? 0 : 0;
+      const childCount =
+        item.kind === "node"
+          ? childrenByNodeId.get(item.id)?.length ?? 0
+          : item.kind === "start"
+            ? workflow.nodes.filter(
+                (node) => (node.dependsOn ?? []).length === 0
+              ).length
+            : 0;
+
+      cards.push({
+        childCount,
+        dependencyCount,
+        id: item.id,
+        isEntry: item.kind === "node" && dependencyCount === 0,
+        isTerminal: item.kind === "node" && childCount === 0,
+        kind: item.kind,
+        node: item.node,
+        x:
+          workflowDagPadding +
+          columnIndex * (workflowDagCardWidth + workflowDagColumnGap),
+        y: startY + rowIndex * (workflowDagCardHeight + workflowDagRowGap)
+      });
+    });
+  });
+
+  const cardsById = new Map(cards.map((card) => [card.id, card]));
+  const edges: WorkflowDagEdge[] = [];
+
+  function addEdge(from: string, to: string) {
+    const fromCard = cardsById.get(from);
+    const toCard = cardsById.get(to);
+
+    if (!fromCard || !toCard) {
+      return;
+    }
+
+    edges.push({
+      from,
+      fromX: fromCard.x + workflowDagCardWidth,
+      fromY: fromCard.y + workflowDagCardHeight / 2,
+      to,
+      toX: toCard.x,
+      toY: toCard.y + workflowDagCardHeight / 2
+    });
+  }
+
+  for (const node of workflow.nodes) {
+    const dependencies = node.dependsOn ?? [];
+
+    if (dependencies.length === 0) {
+      addEdge("__start", node.id);
+    } else {
+      for (const dependency of dependencies) {
+        addEdge(dependency, node.id);
+      }
+    }
+
+    if ((childrenByNodeId.get(node.id)?.length ?? 0) === 0) {
+      addEdge(node.id, "__end");
+    }
+  }
+
+  return { cards, edges, height, width };
+}
+
 function parseWorkflowDefinition(definition: string): WorkflowFile | null {
   try {
     const parsed = JSON.parse(definition) as WorkflowFile;
@@ -420,6 +650,69 @@ function parseWorkflowDefinition(definition: string): WorkflowFile | null {
   } catch {
     return null;
   }
+}
+
+function normalizeBaseTemplateName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+\d+$/, "");
+}
+
+function getBaseTemplateDisplayName(workflowFile: WorkflowFileMetadata) {
+  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
+  const sourceNames = [workflowFile.name, parsedWorkflow?.name ?? ""];
+
+  for (const sourceName of sourceNames) {
+    const displayName =
+      baseTemplateDisplayNameBySourceName[normalizeBaseTemplateName(sourceName)];
+
+    if (displayName) {
+      return displayName;
+    }
+  }
+
+  return "";
+}
+
+function isTaskWorkflowTemplate(workflowFile: WorkflowFileMetadata) {
+  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
+
+  return (
+    workflowFile.scope === "task" &&
+    (parsedWorkflow?.scope ?? workflowFile.scope) === "task"
+  );
+}
+
+function getVisibleWorkflowTemplates(workflowFiles: WorkflowFileMetadata[]) {
+  const workflowFileByDisplayKey = new Map<string, WorkflowFileMetadata>();
+
+  for (const workflowFile of workflowFiles) {
+    if (!isTaskWorkflowTemplate(workflowFile)) {
+      continue;
+    }
+
+    const displayName = getBaseTemplateDisplayName(workflowFile);
+    const displayKey = displayName || `workflow:${workflowFile.id}`;
+    const currentWorkflowFile = workflowFileByDisplayKey.get(displayKey);
+
+    if (
+      !currentWorkflowFile ||
+      workflowFile.nodeCount > currentWorkflowFile.nodeCount
+    ) {
+      workflowFileByDisplayKey.set(displayKey, workflowFile);
+    }
+  }
+
+  return [...workflowFileByDisplayKey.values()];
+}
+
+function getWorkspaceWorkflowTemplates(workflowFiles: WorkflowFileMetadata[]) {
+  return getVisibleWorkflowTemplates(workflowFiles).filter(
+    (workflowFile) =>
+      workflowFile.templateType !== "builtin" &&
+      !getBaseTemplateDisplayName(workflowFile)
+  );
 }
 
 type WorkflowBusinessFunction = keyof Messages["templatePage"]["businessFunctions"];
@@ -478,13 +771,27 @@ function getWorkflowTemplateDisplayName(
   t: Messages,
   workflowFile: WorkflowFileMetadata
 ) {
-  return t.templatePage.businessTemplateName(
-    t.templatePage.businessFunctions[getWorkflowBusinessFunction(workflowFile)]
+  const baseTemplateDisplayName = getBaseTemplateDisplayName(workflowFile);
+
+  if (baseTemplateDisplayName) {
+    return baseTemplateDisplayName;
+  }
+
+  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
+  const displayName = workflowFile.name.trim() || parsedWorkflow?.name.trim();
+
+  return (
+    displayName ||
+    t.templatePage.businessTemplateName(
+      t.templatePage.businessFunctions[getWorkflowBusinessFunction(workflowFile)]
+    )
   );
 }
 
 export function App({
   initialExecutionSettings = null,
+  initialDecompositionResults = [],
+  initialModelSettingsSection = "model",
   initialPage,
   initialProjects = [],
   initialRequirements = [],
@@ -502,6 +809,8 @@ export function App({
   );
   const [activeSettingsSection, setActiveSettingsSection] =
     useState<SettingsSection>(initialSettingsSection);
+  const [activeModelSettingsSection, setActiveModelSettingsSection] =
+    useState<ModelSettingsSection>(initialModelSettingsSection);
   const [activeWorkbenchAction, setActiveWorkbenchAction] =
     useState<ActiveWorkbenchAction>(initialWorkbenchAction);
   const [activeWorkflowTemplateDialog, setActiveWorkflowTemplateDialog] =
@@ -545,7 +854,7 @@ export function App({
       initialWorkflowTemplateDialog === "import" ? "source" : "default"
     );
   const [selectedDefaultTemplateKey, setSelectedDefaultTemplateKey] =
-    useState<string>(defaultWorkflowTemplates[0].key);
+    useState<string>(defaultSelectableWorkflowTemplate.key);
   const [selectedPreviewWorkflowId, setSelectedPreviewWorkflowId] = useState(
     initialPreviewWorkflowId
   );
@@ -574,6 +883,9 @@ export function App({
     });
   const [requirements, setRequirements] =
     useState<Requirement[]>(initialRequirements);
+  const [decompositionResults, setDecompositionResults] = useState<
+    DecompositionResult[]
+  >(initialDecompositionResults);
   const [editedRequirementTitles, setEditedRequirementTitles] = useState<
     Record<string, string>
   >(() =>
@@ -629,13 +941,21 @@ export function App({
     Promise.all([
       listWorkflowFiles(),
       listRequirements(),
+      listDecompositionResults(),
       listTasks(),
       getExecutionSettings()
     ])
-      .then(([nextWorkflowFiles, nextRequirements, nextTasks, nextExecutionSettings]) => {
+      .then(([
+        nextWorkflowFiles,
+        nextRequirements,
+        nextDecompositionResults,
+        nextTasks,
+        nextExecutionSettings
+      ]) => {
         if (!cancelled) {
           setWorkflowFiles(nextWorkflowFiles);
           setRequirements(nextRequirements);
+          setDecompositionResults(nextDecompositionResults);
           setEditedRequirementTitles(
             Object.fromEntries(
               nextRequirements.map((requirement) => [
@@ -651,10 +971,14 @@ export function App({
           setModelName(nextExecutionSettings.modelName);
           setAgentProxyUrl(nextExecutionSettings.agentProxyUrl);
           setSelectedRequirementWorkflowId(nextWorkflowFiles[0]?.id ?? "");
-          setSelectedTaskWorkflowId(nextWorkflowFiles[0]?.id ?? "");
+          setSelectedTaskWorkflowId(
+            nextWorkflowFiles.find(isTaskWorkflowTemplate)?.id ?? ""
+          );
           setSelectedPreviewWorkflowId((currentWorkflowFileId) =>
             nextWorkflowFiles.some(
-              (workflowFile) => workflowFile.id === currentWorkflowFileId
+              (workflowFile) =>
+                workflowFile.id === currentWorkflowFileId &&
+                isTaskWorkflowTemplate(workflowFile)
             )
               ? currentWorkflowFileId
               : ""
@@ -855,16 +1179,20 @@ export function App({
     });
 
     const selectedDefaultTemplate =
-      defaultWorkflowTemplates.find(
+      defaultSelectableWorkflowTemplates.find(
         (template) => template.key === selectedDefaultTemplateKey
-      ) ?? defaultWorkflowTemplates[0];
+      ) ?? defaultSelectableWorkflowTemplate;
     const source =
       workflowImportMode === "default"
         ? selectedDefaultTemplate.source
         : workflowSource;
 
     try {
-      const result = await importWorkflowFile(source);
+      const result = await importWorkflowFile(
+        source,
+        "",
+        workflowImportMode === "default" ? { templateType: "builtin" } : {}
+      );
 
       setWorkflowPreview(result.workflow);
       setWorkflowFiles((currentWorkflowFiles) => [
@@ -915,7 +1243,9 @@ export function App({
       let workflowFileId = selectedRequirementWorkflowId;
 
       if (!workflowFileId) {
-        const result = await importWorkflowFile(defaultWorkflowSource);
+        const result = await importWorkflowFile(defaultWorkflowSource, "", {
+          templateType: "builtin"
+        });
 
         setWorkflowPreview(result.workflow);
         setWorkflowFiles((currentWorkflowFiles) => [
@@ -945,27 +1275,10 @@ export function App({
         [result.requirement.id]: result.requirement.title
       }));
 
-      const approvedTasks = await Promise.all(
-        result.taskDrafts.map((taskDraft) => approveTaskDraft(taskDraft.id))
-      );
-
-      setTasks((currentTasks) => [...currentTasks, ...approvedTasks]);
-      setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
-        ...currentWorkflowRuns,
-        ...Object.fromEntries(approvedTasks.map((task) => [task.id, []]))
-      }));
       setRequirementTitle("");
       setRequirementBody("");
       setActiveWorkbenchAction(null);
-      setRequirementStatus(
-        result.planning?.reason === "model_not_configured"
-          ? { kind: "status", key: "modelNotConfigured" }
-          : {
-              kind: "count",
-              key: "generatedTasks",
-              count: approvedTasks.length
-            }
-      );
+      setRequirementStatus({ kind: "status", key: "createdRequirement" });
     } catch (error) {
       setRequirementStatus(
         error instanceof Error
@@ -1019,11 +1332,11 @@ export function App({
     }
   }
 
-  async function handlePlanRequirementTaskDrafts(requirementId: string) {
+  async function handleCreateDecompositionResult(requirementId: string) {
     setRequirementStatus({ kind: "status", key: "runningRequirementWorkflow" });
 
     try {
-      const result = await planRequirementTaskDrafts(requirementId);
+      const result = await createRequirementDecompositionResult(requirementId);
       setRequirements((currentRequirements) =>
         currentRequirements.map((requirement) =>
           requirement.id === result.requirement.id
@@ -1031,25 +1344,52 @@ export function App({
             : requirement
         )
       );
+      if (result.decompositionResult) {
+        setDecompositionResults((currentResults) => [
+          ...currentResults.filter(
+            (decompositionResult) =>
+              decompositionResult.requirementId !== result.requirement.id
+          ),
+          result.decompositionResult!
+        ]);
+      }
+      setRequirementStatus({ kind: "status", key: "decompositionReady" });
+    } catch (error) {
+      setRequirementStatus(
+        error instanceof Error
+          ? { kind: "error", message: error.message }
+          : { kind: "status", key: "requirementCreationFailed" }
+      );
+    }
+  }
 
-      const approvedTasks = await Promise.all(
-        result.taskDrafts.map((taskDraft) => approveTaskDraft(taskDraft.id))
+  async function handleGenerateTasksFromDecompositionResult(
+    decompositionResultId: string
+  ) {
+    setRequirementStatus({ kind: "status", key: "generatingTasks" });
+
+    try {
+      const result = await generateTasksFromDecompositionResult(
+        decompositionResultId
       );
 
-      setTasks((currentTasks) => [...currentTasks, ...approvedTasks]);
+      setRequirements((currentRequirements) =>
+        currentRequirements.map((requirement) =>
+          requirement.id === result.requirement.id
+            ? result.requirement
+            : requirement
+        )
+      );
+      setTasks((currentTasks) => [...currentTasks, ...result.tasks]);
       setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
         ...currentWorkflowRuns,
-        ...Object.fromEntries(approvedTasks.map((task) => [task.id, []]))
+        ...Object.fromEntries(result.tasks.map((task) => [task.id, []]))
       }));
-      setRequirementStatus(
-        result.planning?.reason === "model_not_configured"
-          ? { kind: "status", key: "modelNotConfigured" }
-          : {
-              kind: "count",
-              key: "generatedTasks",
-              count: approvedTasks.length
-            }
-      );
+      setRequirementStatus({
+        kind: "count",
+        key: "generatedTasks",
+        count: result.tasks.length
+      });
     } catch (error) {
       setRequirementStatus(
         error instanceof Error
@@ -1134,8 +1474,15 @@ export function App({
     }
   }
 
-  const taskWorkflowFiles = workflowFiles;
-  const taskStatuses = ["todo", "in_progress", "done"] as const;
+  const taskWorkflowFiles = workflowFiles.filter(isTaskWorkflowTemplate);
+  const taskStatuses = [
+    "init",
+    "running",
+    "failed",
+    "pending_acceptance",
+    "completed",
+    "cancelled"
+  ] as const;
 
   async function handleStartTaskWorkflowRun(taskId: string) {
     if (!selectedTaskWorkflowId) {
@@ -1247,6 +1594,12 @@ export function App({
         (requirement) => requirement.projectId === selectedProjectId
       )
     : requirements;
+  const decompositionResultByRequirementId = new Map(
+    decompositionResults.map((decompositionResult) => [
+      decompositionResult.requirementId,
+      decompositionResult
+    ])
+  );
   const projectTasks = selectedProjectId
     ? tasks.filter(
         (task) => task.projectId === selectedProjectId
@@ -1265,17 +1618,15 @@ export function App({
       workflowImportStatus,
       settingsStatus,
       projectStatus
-    ].find((status) => !isIdleStatus(status)) ?? {
-      kind: "status",
-      key: "ready"
-    };
+    ].find((status) => !isIdleStatus(status));
+  const workspaceWorkflowTemplates = getWorkspaceWorkflowTemplates(workflowFiles);
   const progressSteps = [
-    [t.progress.recipes, workflowFiles.length],
+    [t.progress.recipes, workspaceWorkflowTemplates.length],
     [t.progress.ideas, projectRequirements.length],
-    [t.progress.tasks, projectTasks.length],
-    [t.progress.runs, workflowRunCount]
+    [t.progress.tasks, projectTasks.length]
   ] as const;
-  const topWorkflowTemplates = workflowFiles.slice(0, 3);
+  const visibleWorkflowTemplates = getVisibleWorkflowTemplates(workflowFiles);
+  const topWorkflowTemplates = workspaceWorkflowTemplates.slice(0, 3);
   const hasProjects = projects.length > 0;
   const hasGeneratedWork =
     projectRequirements.length > 0 ||
@@ -1337,12 +1688,14 @@ export function App({
     </form>
   );
   const selectedDefaultTemplate =
-    defaultWorkflowTemplates.find(
+    defaultSelectableWorkflowTemplates.find(
       (template) => template.key === selectedDefaultTemplateKey
-    ) ?? defaultWorkflowTemplates[0];
+    ) ?? defaultSelectableWorkflowTemplate;
   const selectedWorkflowFile =
     workflowFiles.find(
-      (workflowFile) => workflowFile.id === selectedPreviewWorkflowId
+      (workflowFile) =>
+        workflowFile.id === selectedPreviewWorkflowId &&
+        isTaskWorkflowTemplate(workflowFile)
     ) ?? null;
   const parsedSelectedWorkflow = selectedWorkflowFile
     ? parseWorkflowDefinition(selectedWorkflowFile.definition)
@@ -1369,6 +1722,7 @@ export function App({
     const workflowArtifactTypes = [
       ...new Set(workflowArtifacts.map((artifact) => artifact.type))
     ];
+    const workflowDagLayout = createWorkflowDagLayout(preview);
 
     return (
       <div
@@ -1451,70 +1805,183 @@ export function App({
             </p>
           </article>
         </div>
-        <div className="workflow-graph-lane">
-          {preview.nodes.map((node, index) => {
-            const nodeInputs = node.inputs ?? [];
-            const nodeOutputs = node.outputs ?? [];
-            const nodeSkills = node.uses ?? [];
-            const nodeDependencies = node.dependsOn ?? [];
-            const exitCriteriaCount = node.exit?.criteria?.length ?? 0;
-            const reviewMode = node.exit?.review ?? "model";
-            const retryBudget = node.exit?.maxRetries ?? 0;
+        <div className="workflow-dag-map">
+          <div
+            className="workflow-dag-canvas"
+            style={
+              {
+                "--workflow-dag-height": `${workflowDagLayout.height}px`,
+                "--workflow-dag-width": `${workflowDagLayout.width}px`
+              } as CSSProperties
+            }
+          >
+            <svg
+              aria-hidden="true"
+              className="workflow-dag-edges"
+              height={workflowDagLayout.height}
+              viewBox={`0 0 ${workflowDagLayout.width} ${workflowDagLayout.height}`}
+              width={workflowDagLayout.width}
+            >
+              <defs>
+                <marker
+                  id="workflow-dag-arrow"
+                  markerHeight="8"
+                  markerWidth="8"
+                  orient="auto"
+                  refX="7"
+                  refY="4"
+                  viewBox="0 0 8 8"
+                >
+                  <path d="M0 0L8 4L0 8Z"></path>
+                </marker>
+              </defs>
+              {workflowDagLayout.edges.map((edge) => {
+                const controlOffset = Math.max(
+                  36,
+                  Math.min(84, (edge.toX - edge.fromX) / 2)
+                );
+                const fromLabel =
+                  edge.from === "__start"
+                    ? t.templatePage.startPointLabel
+                    : edge.from;
+                const toLabel =
+                  edge.to === "__end"
+                    ? t.templatePage.endPointLabel
+                    : edge.to;
+                const path =
+                  `M ${edge.fromX} ${edge.fromY} ` +
+                  `C ${edge.fromX + controlOffset} ${edge.fromY}, ` +
+                  `${edge.toX - controlOffset} ${edge.toY}, ` +
+                  `${edge.toX} ${edge.toY}`;
 
-            return (
-              <article className="workflow-graph-node" key={node.id}>
-                <div className="workflow-node-index">
-                  {String(index + 1).padStart(2, "0")}
-                </div>
-                <div className="workflow-node-copy">
-                  <h3>{node.id}</h3>
-                  <p>{node.description ?? node.type}</p>
-                  <div className="workflow-node-meta">
-                    <span>{node.executor}</span>
-                    <span>{t.templatePage.retryBudget(retryBudget)}</span>
-                    <span>
-                      {nodeOutputs.length > 0
-                        ? nodeOutputs.map(getWorkflowNodeOutputLabel).join(", ")
-                        : t.templatePage.noOutputs}
-                    </span>
+                return (
+                  <path
+                    aria-label={`${fromLabel} to ${toLabel}`}
+                    d={path}
+                    key={`${edge.from}-${edge.to}`}
+                    markerEnd="url(#workflow-dag-arrow)"
+                  />
+                );
+              })}
+            </svg>
+            {workflowDagLayout.cards.map((card) => {
+              const node = card.node;
+              const nodeInputs = node?.inputs ?? [];
+              const nodeOutputs = node?.outputs ?? [];
+              const nodeSkills = node?.uses ?? [];
+              const nodeDependencies = node?.dependsOn ?? [];
+              const exitCriteriaCount = node?.exit?.criteria?.length ?? 0;
+              const reviewMode = node?.exit?.review ?? "model";
+              const retryBudget = node?.exit?.maxRetries ?? 0;
+              const cardStyle = {
+                left: `${card.x}px`,
+                top: `${card.y}px`
+              };
+
+              if (card.kind !== "node") {
+                const isStart = card.kind === "start";
+
+                return (
+                  <article
+                    className={`workflow-dag-card workflow-dag-card-${card.kind}`}
+                    key={card.id}
+                    style={cardStyle}
+                  >
+                    <div className="workflow-node-index">
+                      {isStart ? "S" : "E"}
+                    </div>
+                    <div className="workflow-node-copy">
+                      <h3>
+                        {isStart
+                          ? t.templatePage.startPointLabel
+                          : t.templatePage.endPointLabel}
+                      </h3>
+                      <p>
+                        {isStart
+                          ? t.templatePage.startPointDescription(card.childCount)
+                          : t.templatePage.endPointDescription(
+                              workflowDagLayout.cards.filter(
+                                (item) => item.kind === "node" && item.isTerminal
+                              ).length
+                            )}
+                      </p>
+                    </div>
+                  </article>
+                );
+              }
+
+              return (
+                <article
+                  className="workflow-dag-card workflow-dag-card-node"
+                  key={card.id}
+                  style={cardStyle}
+                >
+                  <div className="workflow-node-index">
+                    {String(
+                      preview.nodes.findIndex((item) => item.id === node?.id) +
+                        1
+                    ).padStart(2, "0")}
                   </div>
-                  <div className="workflow-node-contract">
-                    <span>
-                      {t.templatePage.usesLabel}:{" "}
-                      {getWorkflowContractValues(
-                        nodeSkills,
-                        t.templatePage.noOutputs
-                      )}
-                    </span>
-                    <span>
-                      {t.templatePage.nodeInputsLabel}:{" "}
-                      {getWorkflowContractValues(
-                        nodeInputs,
-                        t.templatePage.noOutputs
-                      )}
-                    </span>
-                    <span>
-                      {t.templatePage.exitCriteriaLabel}:{" "}
-                      {getWorkflowContractCountLabel(
-                        exitCriteriaCount,
-                        "criterion",
-                        "criteria"
-                      )}
-                    </span>
-                    <span>{t.templatePage.reviewMode(reviewMode)}</span>
-                    {node.humanReview?.required ? (
-                      <span>{t.templatePage.humanReviewRequired}</span>
-                    ) : null}
+                  <div className="workflow-node-copy">
+                    <div className="workflow-node-title-row">
+                      <h3>{node?.id}</h3>
+                      <div className="workflow-node-badges">
+                        {card.isEntry ? (
+                          <span>{t.templatePage.startNodeBadge}</span>
+                        ) : null}
+                        {card.isTerminal ? (
+                          <span>{t.templatePage.endNodeBadge}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <p>{node?.description ?? node?.type}</p>
+                    <div className="workflow-node-meta">
+                      <span>{node?.executor}</span>
+                      <span>{t.templatePage.retryBudget(retryBudget)}</span>
+                      <span>
+                        {nodeOutputs.length > 0
+                          ? nodeOutputs.map(getWorkflowNodeOutputLabel).join(", ")
+                          : t.templatePage.noOutputs}
+                      </span>
+                    </div>
+                    <div className="workflow-node-contract">
+                      <span>
+                        {t.templatePage.usesLabel}:{" "}
+                        {getWorkflowContractValues(
+                          nodeSkills,
+                          t.templatePage.noOutputs
+                        )}
+                      </span>
+                      <span>
+                        {t.templatePage.nodeInputsLabel}:{" "}
+                        {getWorkflowContractValues(
+                          nodeInputs,
+                          t.templatePage.noOutputs
+                        )}
+                      </span>
+                      <span>
+                        {t.templatePage.exitCriteriaLabel}:{" "}
+                        {getWorkflowContractCountLabel(
+                          exitCriteriaCount,
+                          "criterion",
+                          "criteria"
+                        )}
+                      </span>
+                      <span>{t.templatePage.reviewMode(reviewMode)}</span>
+                      {node?.humanReview?.required ? (
+                        <span>{t.templatePage.humanReviewRequired}</span>
+                      ) : null}
+                    </div>
+                    <p className="workflow-node-dependency">
+                      {nodeDependencies.length > 0
+                        ? t.templatePage.dependsOn(nodeDependencies.join(", "))
+                        : t.workspace.noDependency}
+                    </p>
                   </div>
-                  <p className="workflow-node-dependency">
-                    {nodeDependencies.length > 0
-                      ? t.templatePage.dependsOn(nodeDependencies.join(", "))
-                      : t.workspace.noDependency}
-                  </p>
-                </div>
-              </article>
-            );
-          })}
+                </article>
+              );
+            })}
+          </div>
         </div>
       </div>
     );
@@ -1554,7 +2021,7 @@ export function App({
             <p>{t.templatePage.defaultTemplatesDescription}</p>
           </div>
           <div className="default-template-grid">
-            {defaultWorkflowTemplates.map((template) => (
+            {defaultSelectableWorkflowTemplates.map((template) => (
               <button
                 aria-pressed={selectedDefaultTemplateKey === template.key}
                 className="default-template-card"
@@ -1648,7 +2115,7 @@ export function App({
         </p>
         <button className="cat-action-button" type="submit">
           <CatActionIcon />
-          <span>{t.hero.generateTaskDrafts}</span>
+          <span>{t.hero.createRequirement}</span>
         </button>
       </div>
     </form>
@@ -1665,7 +2132,14 @@ export function App({
         {projectRequirements.map((requirement) => {
           const isEditingRequirement = editingRequirementId === requirement.id;
           const canPlanRequirement =
-            requirement.status === "open" &&
+            ["init", "decomposition_failed"].includes(requirement.status) &&
+            !projectTasks.some((task) => task.requirementId === requirement.id);
+          const decompositionResult = decompositionResultByRequirementId.get(
+            requirement.id
+          );
+          const canGenerateTasks =
+            requirement.status === "ready_to_generate_tasks" &&
+            decompositionResult !== undefined &&
             !projectTasks.some((task) => task.requirementId === requirement.id);
 
           return (
@@ -1707,11 +2181,24 @@ export function App({
                       <button
                         className="button-secondary"
                         onClick={() =>
-                          handlePlanRequirementTaskDrafts(requirement.id)
+                          handleCreateDecompositionResult(requirement.id)
                         }
                         type="button"
                       >
                         {t.workspace.planRequirement}
+                      </button>
+                    ) : null}
+                    {canGenerateTasks ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() =>
+                          handleGenerateTasksFromDecompositionResult(
+                            decompositionResult.id
+                          )
+                        }
+                        type="button"
+                      >
+                        {t.workspace.generateTasks}
                       </button>
                     ) : null}
                     <button type="submit">{t.workspace.saveRequirementName}</button>
@@ -1754,11 +2241,24 @@ export function App({
                       <button
                         className="button-secondary"
                         onClick={() =>
-                          handlePlanRequirementTaskDrafts(requirement.id)
+                          handleCreateDecompositionResult(requirement.id)
                         }
                         type="button"
                       >
                         {t.workspace.planRequirement}
+                      </button>
+                    ) : null}
+                    {canGenerateTasks ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() =>
+                          handleGenerateTasksFromDecompositionResult(
+                            decompositionResult.id
+                          )
+                        }
+                        type="button"
+                      >
+                        {t.workspace.generateTasks}
                       </button>
                     ) : null}
                     <button
@@ -1800,7 +2300,7 @@ export function App({
     <main className="studio-shell">
       <header className="studio-hero">
         <nav className="studio-nav" aria-label={t.nav.statusLabel}>
-          <div className="brand-lockup">
+          <a className="brand-lockup" aria-label={t.nav.controlRoom} href="/">
             <img
               alt={t.nav.brandAlt}
               className="brand-logo"
@@ -1812,7 +2312,7 @@ export function App({
               <h1>{t.nav.appLabel}</h1>
               <p className="brand-tagline">{t.hero.title}</p>
             </div>
-          </div>
+          </a>
           <div className="nav-actions">
             <div className="project-switcher" aria-label={t.workbench.currentProject}>
               <span className="project-switcher-label">
@@ -2028,7 +2528,6 @@ export function App({
                     aria-labelledby="settings-basic-heading"
                   >
                     <div className="section-heading">
-                      <p className="studio-label">{t.settings.eyebrow}</p>
                       <h3 id="settings-basic-heading">
                         {t.settings.basicSectionTitle}
                       </h3>
@@ -2124,9 +2623,38 @@ export function App({
                         </h3>
                         <p>{t.settings.modelSectionDescription}</p>
                       </div>
+                      <nav
+                        aria-label={t.settings.modelNavigationLabel}
+                        className="settings-secondary-nav"
+                      >
+                        <button
+                          aria-controls="settings-model-api"
+                          aria-pressed={activeModelSettingsSection === "model"}
+                          className="settings-secondary-nav-item"
+                          onClick={() => setActiveModelSettingsSection("model")}
+                          type="button"
+                        >
+                          {t.settings.modelSectionTitle}
+                        </button>
+                        <button
+                          aria-controls="settings-local-bridge"
+                          aria-pressed={
+                            activeModelSettingsSection === "local-bridge"
+                          }
+                          className="settings-secondary-nav-item"
+                          onClick={() =>
+                            setActiveModelSettingsSection("local-bridge")
+                          }
+                          type="button"
+                        >
+                          {t.settings.localBridgeSectionTitle}
+                        </button>
+                      </nav>
                       <div className="settings-block-stack">
+                        {activeModelSettingsSection === "model" ? (
                         <form
                           className="settings-subsection settings-capability-panel settings-model-api-panel"
+                          id="settings-model-api"
                           onSubmit={handleSaveModelSettings}
                         >
                           <div className="section-heading">
@@ -2236,8 +2764,11 @@ export function App({
                             </div>
                           </div>
                         </form>
+                        ) : null}
+                        {activeModelSettingsSection === "local-bridge" ? (
                         <form
                           className="settings-subsection settings-capability-panel settings-agent-proxy-panel"
+                          id="settings-local-bridge"
                           onSubmit={handleSaveAgentProxySettings}
                         >
                           <div className="section-heading">
@@ -2278,6 +2809,7 @@ export function App({
                             </button>
                           </div>
                         </form>
+                        ) : null}
                       </div>
                     </section>
                     <StatusMascotMessage
@@ -2320,12 +2852,12 @@ export function App({
             <div className="template-overview-grid">
               <article className="template-stat">
                 <span>{t.templatePage.totalTemplates}</span>
-                <strong>{workflowFiles.length}</strong>
+                <strong>{visibleWorkflowTemplates.length}</strong>
               </article>
               <article className="template-stat">
                 <span>{t.templatePage.totalWorkflowNodes}</span>
                 <strong>
-                  {workflowFiles.reduce(
+                  {visibleWorkflowTemplates.reduce(
                     (total, workflowFile) => total + workflowFile.nodeCount,
                     0
                   )}
@@ -2339,8 +2871,8 @@ export function App({
                 <p>{t.templatePage.libraryDescription}</p>
               </div>
               <div className="template-card-list template-thin-list">
-                {workflowFiles.length === 0 ? (
-                  defaultWorkflowTemplates.map((template) => (
+                {visibleWorkflowTemplates.length === 0 ? (
+                  defaultSelectableWorkflowTemplates.map((template) => (
                     <article
                       className="template-card template-thin-row"
                       key={template.key}
@@ -2377,17 +2909,12 @@ export function App({
                     </article>
                   ))
                 ) : (
-                  workflowFiles.map((workflowFile) => {
+                  visibleWorkflowTemplates.map((workflowFile) => {
                     const isEditing = editingWorkflowId === workflowFile.id;
                     const displayName = getWorkflowTemplateDisplayName(
                       t,
                       workflowFile
                     );
-                    const businessFunction =
-                      t.templatePage.businessFunctions[
-                        getWorkflowBusinessFunction(workflowFile)
-                      ];
-
                     return (
                       <article
                         className="template-card template-thin-row"
@@ -2396,11 +2923,6 @@ export function App({
                         <div className="template-row-main">
                           <div className="template-row-title">
                             <h3>{displayName}</h3>
-                            <p>
-                              {t.templatePage.businessFunctionLabel(
-                                businessFunction
-                              )}
-                            </p>
                           </div>
                           <span className="template-node-count">
                             {t.templatePage.templateSummary(
@@ -2659,14 +3181,21 @@ export function App({
 
       {activePage === "control-room" && showControlRoomPanels ? (
         <>
-      <section className="progress-ribbon" aria-label={t.progress.ariaLabel}>
+      <section
+        className={`progress-ribbon ${
+          latestStatusMessage ? "progress-ribbon-with-status" : ""
+        }`.trim()}
+        aria-label={t.progress.ariaLabel}
+      >
         {progressSteps.map(([label, value]) => (
           <div className="progress-item" key={label}>
             <span>{label}</span>
             <strong>{value}</strong>
           </div>
         ))}
-        <StatusMascotMessage status={latestStatusMessage} t={t} />
+        {latestStatusMessage ? (
+          <StatusMascotMessage status={latestStatusMessage} t={t} />
+        ) : null}
       </section>
 
       <div className="studio-workspace">
@@ -2709,20 +3238,54 @@ export function App({
                         </p>
                       </div>
                       <div className="compact-record-actions">
-                        {requirement.status === "open" &&
-                        !projectTasks.some(
-                          (task) => task.requirementId === requirement.id
-                        ) ? (
-                          <button
-                            className="button-secondary"
-                            onClick={() =>
-                              handlePlanRequirementTaskDrafts(requirement.id)
-                            }
-                            type="button"
-                          >
-                            {t.workspace.planRequirement}
-                          </button>
-                        ) : null}
+                        {(() => {
+                          const decompositionResult =
+                            decompositionResultByRequirementId.get(requirement.id);
+                          const hasTasks = projectTasks.some(
+                            (task) => task.requirementId === requirement.id
+                          );
+
+                          if (
+                            ["init", "decomposition_failed"].includes(
+                              requirement.status
+                            ) &&
+                            !hasTasks
+                          ) {
+                            return (
+                              <button
+                                className="button-secondary"
+                                onClick={() =>
+                                  handleCreateDecompositionResult(requirement.id)
+                                }
+                                type="button"
+                              >
+                                {t.workspace.planRequirement}
+                              </button>
+                            );
+                          }
+
+                          if (
+                            requirement.status === "ready_to_generate_tasks" &&
+                            decompositionResult &&
+                            !hasTasks
+                          ) {
+                            return (
+                              <button
+                                className="button-secondary"
+                                onClick={() =>
+                                  handleGenerateTasksFromDecompositionResult(
+                                    decompositionResult.id
+                                  )
+                                }
+                                type="button"
+                              >
+                                {t.workspace.generateTasks}
+                              </button>
+                            );
+                          }
+
+                          return null;
+                        })()}
                         <button
                           className="button-danger"
                           onClick={() => handleDeleteRequirement(requirement.id)}
@@ -2764,7 +3327,7 @@ export function App({
                     </div>
                     <div className="task-list">
                       {columnTasks.length === 0 ? (
-                        <MascotLaneEmpty variant="guide">
+                        <MascotLaneEmpty quiet variant="guide">
                           {t.workspace.noTasks}
                         </MascotLaneEmpty>
                       ) : (
@@ -2898,11 +3461,13 @@ export function App({
               <p className="studio-label">{t.workspace.recipeMapEyebrow}</p>
               <h2>{t.workspace.recipeMapHeading}</h2>
             </div>
-            {workflowFiles.length > 0 ? (
-              <div className="workspace-template-list">
-                <div className="workspace-template-summary">
-                  <strong>{t.workspace.templateCount(workflowFiles.length)}</strong>
-                </div>
+            <div className="workspace-template-list">
+              <div className="workspace-template-summary">
+                <strong>
+                  {t.workspace.templateCount(workspaceWorkflowTemplates.length)}
+                </strong>
+              </div>
+              {topWorkflowTemplates.length > 0 ? (
                 <div className="compact-list">
                   {topWorkflowTemplates.map((workflowFile) => (
                     <article className="compact-record" key={workflowFile.id}>
@@ -2917,29 +3482,15 @@ export function App({
                     </article>
                   ))}
                 </div>
-                <button
-                  className="button-secondary"
-                  onClick={() => handleNavigatePage("workflow-templates")}
-                  type="button"
-                >
-                  {t.workspace.moreTemplates}
-                </button>
-              </div>
-            ) : (
-              <MascotEmptyState
-                body={t.templatePage.emptyBody}
-                title={t.workspace.noRecipePreviewTitle}
-                variant="guide"
+              ) : null}
+              <button
+                className="button-secondary"
+                onClick={() => handleNavigatePage("workflow-templates")}
+                type="button"
               >
-                <button
-                  className="button-secondary"
-                  onClick={() => handleNavigatePage("workflow-templates")}
-                  type="button"
-                >
-                  {t.workspace.moreTemplates}
-                </button>
-              </MascotEmptyState>
-            )}
+                {t.workspace.moreTemplates}
+              </button>
+            </div>
           </section>
         </section>
       </div>

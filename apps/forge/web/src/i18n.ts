@@ -22,7 +22,7 @@ type Messages = {
     bodyPlaceholder: string;
     recipeLabel: string;
     importRecipeFirst: string;
-    generateTaskDrafts: string;
+    createRequirement: string;
   };
   setup: {
     ariaLabel: string;
@@ -43,8 +43,10 @@ type Messages = {
     eyebrow: string;
     description: string;
     navigationLabel: string;
+    modelNavigationLabel: string;
     basicSectionTitle: string;
     basicSectionDescription: string;
+    localBridgeSectionTitle: string;
     modelSectionTitle: string;
     modelSectionDescription: string;
     modelApiPlaneLabel: string;
@@ -104,7 +106,6 @@ type Messages = {
     defaultTemplatesTitle: string;
     defaultTemplatesDescription: string;
     defaultTemplateDescriptions: Record<DefaultWorkflowTemplateKey, string>;
-    businessFunctionLabel: (businessFunction: string) => string;
     businessTemplateName: (businessFunction: string) => string;
     businessFunctions: {
       codeImplementation: string;
@@ -137,6 +138,12 @@ type Messages = {
     workflowRenameHelp: string;
     dependsOn: (dependencies: string) => string;
     retryBudget: (count: number) => string;
+    startPointLabel: string;
+    startPointDescription: (count: number) => string;
+    endPointLabel: string;
+    endPointDescription: (count: number) => string;
+    startNodeBadge: string;
+    endNodeBadge: string;
     inputsLabel: string;
     skillsLabel: string;
     agentRolesLabel: string;
@@ -220,6 +227,7 @@ type Messages = {
     viewAllRequirements: string;
     noRequirements: string;
     planRequirement: string;
+    generateTasks: string;
     editRequirement: string;
     requirementNameLabel: string;
     renameRequirement: string;
@@ -228,7 +236,15 @@ type Messages = {
     requirementRenameHelp: string;
     deleteRequirement: string;
     requirementDeleteHelp: string;
-    requirementStatus: Record<"open" | "running" | "completed" | "failed", string>;
+    requirementStatus: Record<
+      | "init"
+      | "decomposing"
+      | "decomposition_failed"
+      | "ready_to_generate_tasks"
+      | "tasks_generated"
+      | "completed",
+      string
+    >;
   };
   options: {
     localOnly: string;
@@ -238,9 +254,12 @@ type Messages = {
     mysql: string;
   };
   taskStatus: {
-    done: string;
-    in_progress: string;
-    todo: string;
+    cancelled: string;
+    completed: string;
+    failed: string;
+    init: string;
+    pending_acceptance: string;
+    running: string;
   };
   status: {
     projectIdle: string;
@@ -256,6 +275,9 @@ type Messages = {
     workflowImportFailed: string;
     runningRequirementWorkflow: string;
     requirementCreationFailed: string;
+    createdRequirement: string;
+    decompositionReady: string;
+    generatingTasks: string;
     modelNotConfigured: string;
     savingRequirement: string;
     renamedRequirement: string;
@@ -326,19 +348,19 @@ const messages: Record<Locale, Messages> = {
         "Explain the goal, audience, constraints, files, tone, or acceptance criteria.",
       recipeLabel: "Recipe",
       importRecipeFirst: "Import a recipe first",
-      generateTaskDrafts: "Submit Requirement"
+      createRequirement: "Create Requirement"
     },
     setup: {
       ariaLabel: "Studio setup",
       recipeEyebrow: "Recipe",
       recipeHeading: "Teach Forge the workflow",
-      workflowSourceLabel: "Workflow File source",
+      workflowSourceLabel: "Workflow template source",
       importRecipe: "Import Recipe",
       workspaceEyebrow: "Workspace",
       workspaceHeading: "Save outputs where you want them",
       projectNameLabel: "Project name",
       projectNamePlaceholder: "Writing and code desk",
-      artifactsLabel: "Artifacts",
+      artifactsLabel: "Artifact",
       databaseLabel: "Database",
       createProject: "Create Project"
     },
@@ -348,9 +370,11 @@ const messages: Record<Locale, Messages> = {
       description:
         "Tune home defaults and connect Forge to model planning and local Agent execution.",
       navigationLabel: "Settings sections",
+      modelNavigationLabel: "Model settings sections",
       basicSectionTitle: "Basic settings",
       basicSectionDescription:
         "Set the workspace language and defaults used when creating Projects.",
+      localBridgeSectionTitle: "Local bridge",
       modelSectionTitle: "Model settings",
       modelSectionDescription:
         "Configure the model planner and the local Agent execution entrypoint.",
@@ -361,15 +385,15 @@ const messages: Record<Locale, Messages> = {
         "Used when Forge plans Requirements into Tasks.",
       agentSectionTitle: "Agent execution",
       agentSectionDescription:
-        "Used when Forge starts Task Workflow Runs through the local Harness.",
+        "Used when Forge starts Task Workflows through the local bridge.",
       agentProxyPlaneLabel: "Execution bridge",
-      agentProxyScopeLabel: "Task Workflow Run dispatch",
-      agentProxyBlockTitle: "Local Agent proxy",
+      agentProxyScopeLabel: "Task Workflow dispatch",
+      agentProxyBlockTitle: "Local bridge",
       agentProxySetupTitle: "CLI initialization path",
       agentProxySetupDescription:
         "Expected setup is: install forgecli, run forgecli bridge bind --server <Forge Server URL>, then run forgecli bridge start.",
       agentProxyCliUnavailable:
-        "CLI setup is not available in this build. Paste an existing local Harness proxy URL only if you already run one.",
+        "CLI setup is not available in this build. Paste an existing local bridge URL only if you already run one.",
       languageLabel: "Language",
       projectNameLabel: "Project name",
       projectNameHelp:
@@ -379,38 +403,38 @@ const messages: Record<Locale, Messages> = {
       defaultArtifactsLabel: "Default artifact storage",
       defaultDatabaseLabel: "Default database",
       executionEyebrow: "Execution capability",
-      executionTitle: "Model and local Agent proxy",
+      executionTitle: "Model and local Local bridge",
       executionDescription:
-        "Requirement submission needs a configured model provider to plan Tasks. Workflow Runs need a local Agent proxy URL.",
+        "Requirement submission needs a configured model provider to plan Tasks. Task Workflows need a local Local bridge URL.",
       modelProviderLabel: "Model provider",
       modelBaseUrlLabel: "Model base URL",
       modelNameLabel: "Model name",
       modelApiKeyLabel: "API key",
       modelApiKeyConfigured: "Configured. Enter a new key to replace it.",
       modelApiKeyPlaceholder: "Paste API key",
-      agentProxyUrlLabel: "Local Agent proxy URL",
+      agentProxyUrlLabel: "Local bridge URL",
       modelConfigured: "Model configured",
       modelMissing: "Model not configured",
       saveModelApi: "Save model API",
       testModelApi: "Test API key",
-      saveAgentProxy: "Save local Agent proxy",
-      agentProxyConfigured: "Agent proxy configured",
-      agentProxyMissing: "Agent proxy not configured",
+      saveAgentProxy: "Save local bridge",
+      agentProxyConfigured: "Local bridge configured",
+      agentProxyMissing: "Local bridge not configured",
       executionHelp:
         "API keys are stored by the Forge server and are never returned to the browser after saving.",
       saveExecutionSettings: "Save execution settings"
     },
     templatePage: {
       eyebrow: "Workflow templates",
-      title: "Workflow template management",
+      title: "Workflow templates management",
       description:
         "Import, inspect, and organize .wf templates separately from workspace settings.",
       newWorkflow: "New Workflow",
       importWorkflow: "Import Workflow",
       totalTemplates: "Total templates",
-      totalWorkflowNodes: "Workflow Nodes",
+      totalWorkflowNodes: "Nodes",
       importEyebrow: "Import",
-      importTitle: "Add a Workflow File",
+      importTitle: "Add a Workflow templates",
       importDescription:
         "Paste a .wf source file. Workflow templates describe task-level work.",
       importModeLabel: "Workflow import modes",
@@ -419,7 +443,7 @@ const messages: Record<Locale, Messages> = {
       importModeFile: "Upload .wf",
       defaultTemplatesTitle: "Default templates",
       defaultTemplatesDescription:
-        "Start from Forge-maintained templates for common Requirement and Task workflows.",
+        "Start from Forge-maintained templates for common Task workflows.",
       defaultTemplateDescriptions: {
         "creative-writing-requirement":
           "Shape creative goals, audience boundaries, outline, and candidate Tasks.",
@@ -434,8 +458,6 @@ const messages: Record<Locale, Messages> = {
         "software-change-task":
           "Plan, implement, verify, review, and hand off a task template with 5 nodes."
       },
-      businessFunctionLabel: (businessFunction) =>
-        `Business function: ${businessFunction}`,
       businessTemplateName: (businessFunction) => `${businessFunction} template`,
       businessFunctions: {
         codeImplementation: "Code implementation",
@@ -445,22 +467,22 @@ const messages: Record<Locale, Messages> = {
         taskExecution: "Task execution",
         writingEditing: "Writing and editing"
       },
-      fileSourceLabel: "Workflow File upload",
+      fileSourceLabel: "Workflow templates upload",
       fileSourceHelp:
         "The uploaded file is loaded into the source editor before import.",
       libraryEyebrow: "Library",
       libraryTitle: "Available templates",
       libraryDescription:
-        "Use this list to confirm business function and node count before selecting a template.",
+        "Use this list to confirm node count before selecting a template.",
       emptyTitle: "No Workflow templates yet",
       emptyBody: "Import a .wf file to make it available in this Project.",
       previewEyebrow: "Preview",
       previewTitle: "Last imported template nodes",
       previewDescription:
         "Review node order, executor binding, retry budget, and dependencies.",
-      previewGraphLabel: "Workflow template node preview",
+      previewGraphLabel: "Workflow templates node preview",
       noPreviewTitle: "No template preview",
-      noPreviewBody: "Import a Workflow File to inspect its nodes here.",
+      noPreviewBody: "Import a Workflow templates to inspect its nodes here.",
       workflowNameLabel: "Workflow name",
       editWorkflow: "Edit",
       editWorkflowAria: "Edit Workflow",
@@ -472,6 +494,14 @@ const messages: Record<Locale, Messages> = {
         "Workflow names are automatically numbered when a duplicate exists.",
       dependsOn: (dependencies) => `Depends on ${dependencies}`,
       retryBudget: (count) => `${count} retries`,
+      startPointLabel: "Start",
+      startPointDescription: (count) =>
+        `${count} ${count === 1 ? "entry node" : "entry nodes"}`,
+      endPointLabel: "End",
+      endPointDescription: (count) =>
+        `${count} ${count === 1 ? "terminal node" : "terminal nodes"}`,
+      startNodeBadge: "Start node",
+      endNodeBadge: "End node",
       inputsLabel: "Inputs",
       skillsLabel: "Skills",
       agentRolesLabel: "Agent Roles",
@@ -488,7 +518,7 @@ const messages: Record<Locale, Messages> = {
       eyebrow: "Workbench",
       firstProjectTitle: "Create your first Project",
       firstProjectBody:
-        "A Project keeps Requirements, Workflow Files, Tasks, and Artifacts in one traceable place.",
+        "A Project keeps Requirements, Workflow templates, Tasks, and Artifact in one traceable place.",
       workflowSetupTitle: "New Requirement",
       workflowSetupBody:
         "Describe the goal first. Forge will use the default Requirement workflow unless you configure templates in Settings.",
@@ -503,22 +533,22 @@ const messages: Record<Locale, Messages> = {
       projectsCount: "Projects",
       nextActions: "Next actions",
       quickActionsHeading: "Choose what to do next.",
-      workflowSetupHeading: "Set up the first Workflow File.",
+      workflowSetupHeading: "Set up the first Workflow templates.",
       newRequirement: "New Requirement",
       newRequirementHelp: "Describe a goal and let Forge create Tasks.",
       close: "Close",
       closeRequirement: "Close Requirement dialog",
-      importWorkflow: "Import Workflow File",
+      importWorkflow: "Import Workflow templates",
       importWorkflowHelp: "Add a .wf template for Requirement or Task execution.",
       newProject: "New Project",
       newProjectHelp: "Create another Project with its own storage defaults.",
       pathLabel: "First run path",
       pathProject: "Create a Project",
-      pathProjectHelp: "Define where Forge stores Artifacts and project data.",
+      pathProjectHelp: "Define where Forge stores Artifact and project data.",
       pathRequirement: "Submit a Requirement",
       pathRequirementHelp: "Describe the outcome Forge should turn into work.",
       pathReview: "Run Tasks",
-      pathReviewHelp: "Start Workflow Runs for the generated Tasks.",
+      pathReviewHelp: "Start Task Workflows for the generated Tasks.",
       defaultWorkflowHelp:
         "Uses the default Requirement workflow. Custom templates live in Workflow templates.",
       modelRequiredHelp:
@@ -544,16 +574,16 @@ const messages: Record<Locale, Messages> = {
       importTaskRecipeFirst: "Import a task recipe first",
       startRun: "Start Run",
       noRunsForTask: "No runs started for this Task.",
-      workflowRun: "Workflow Run",
+      workflowRun: "Task Workflow",
       recipeAndHistoryLabel: "Templates and history",
       recipeMapEyebrow: "Workflow templates",
       recipeMapHeading: "Template list",
       templateCount: (count) => `${count} ${count === 1 ? "template" : "templates"}`,
       moreTemplates: "More templates",
-      recipeSummary: (count) => `${count} Workflow Nodes`,
+      recipeSummary: (count) => `${count} Nodes`,
       noDependency: "No dependency",
       noRecipePreviewTitle: "No recipe preview",
-      noRecipePreviewBody: "Import a Workflow File to show its nodes here.",
+      noRecipePreviewBody: "Import a Workflow templates to show its nodes here.",
       requirementsEyebrow: "Requirements",
       requirementsHeading: "Submitted Requirements.",
       requirementsLabel: "Requirements",
@@ -562,7 +592,8 @@ const messages: Record<Locale, Messages> = {
         "Rename or remove active Requirements in the current Project.",
       viewAllRequirements: "View all Requirements",
       noRequirements: "No Requirements submitted yet.",
-      planRequirement: "Generate Tasks",
+      planRequirement: "Decompose Requirement",
+      generateTasks: "Generate Tasks",
       editRequirement: "Edit",
       requirementNameLabel: "Requirement name",
       renameRequirement: "Rename",
@@ -574,9 +605,11 @@ const messages: Record<Locale, Messages> = {
       requirementDeleteHelp: "Soft deletes this Requirement and hides linked Tasks.",
       requirementStatus: {
         completed: "Completed",
-        failed: "Failed",
-        open: "Open",
-        running: "Running"
+        decomposing: "Decomposing",
+        decomposition_failed: "Decomposition failed",
+        init: "Initialized",
+        ready_to_generate_tasks: "Ready to generate Tasks",
+        tasks_generated: "Tasks generated"
       }
     },
     options: {
@@ -587,9 +620,12 @@ const messages: Record<Locale, Messages> = {
       mysql: "MySQL"
     },
     taskStatus: {
-      done: "Done",
-      in_progress: "In progress",
-      todo: "To do"
+      cancelled: "Cancelled",
+      completed: "Completed",
+      failed: "Failed",
+      init: "Initialized",
+      pending_acceptance: "Pending acceptance",
+      running: "Running"
     },
     status: {
       projectIdle: "No project created yet",
@@ -605,6 +641,9 @@ const messages: Record<Locale, Messages> = {
       workflowImportFailed: "Workflow import failed",
       runningRequirementWorkflow: "Creating Tasks",
       requirementCreationFailed: "Requirement creation failed",
+      createdRequirement: "Requirement created",
+      decompositionReady: "Decomposition result ready",
+      generatingTasks: "Generating Tasks",
       modelNotConfigured:
         "Requirement saved. Configure a model in Settings before Forge can create Tasks.",
       savingRequirement: "Saving Requirement",
@@ -622,20 +661,20 @@ const messages: Record<Locale, Messages> = {
       modelApiTestFailed: "Model API test failed",
       savingModelSettings: "Saving model API",
       modelSettingsSaved: "Model API saved",
-      savingAgentProxySettings: "Saving local Agent proxy",
-      agentProxySettingsSaved: "Local Agent proxy saved",
+      savingAgentProxySettings: "Saving local Local bridge",
+      agentProxySettingsSaved: "Local bridge saved",
       savingSettings: "Saving settings",
       settingsSaved: "Settings saved",
       settingsSaveFailed: "Settings save failed",
       importTaskWorkflowFirst: "Import a task .wf first",
-      startingWorkflowRun: "Starting Workflow Run",
-      workflowRunFailed: "Workflow Run failed",
+      startingWorkflowRun: "Starting Task Workflow",
+      workflowRunFailed: "Task Workflow failed",
       ready: "Ready"
     },
     namedStatus: {
       createdProject: (name) => `Created ${name}`,
       importedWorkflow: (name) => `Imported ${name}`,
-      workflowRunStatus: (status) => `Workflow Run ${status}`
+      workflowRunStatus: (status) => `Task Workflow ${status}`
     },
     countStatus: {
       generatedTasks: (count) => `Created ${count} Tasks`
@@ -647,7 +686,7 @@ const messages: Record<Locale, Messages> = {
       controlRoom: "首页",
       requirements: "需求",
       settings: "设置",
-      workflowTemplates: "Workflow 模板",
+      workflowTemplates: "工作流模板",
       statusLabel: "Forge 状态",
       brandAlt: "Forge 品牌标识"
     },
@@ -661,111 +700,111 @@ const messages: Record<Locale, Messages> = {
       bodyPlaceholder: "说明目标、受众、约束、文件、语气或验收标准。",
       recipeLabel: "配方",
       importRecipeFirst: "请先导入配方",
-      generateTaskDrafts: "提出你的需求"
+      createRequirement: "创建需求"
     },
     setup: {
       ariaLabel: "工作室设置",
       recipeEyebrow: "配方",
       recipeHeading: "让 Forge 理解工作流",
-      workflowSourceLabel: "Workflow File 源码",
+      workflowSourceLabel: "模板源码",
       importRecipe: "导入配方",
       workspaceEyebrow: "工作区",
       workspaceHeading: "按你的方式保存输出",
-      projectNameLabel: "Project 名称",
+      projectNameLabel: "项目名称",
       projectNamePlaceholder: "写作和代码工作台",
-      artifactsLabel: "Artifacts",
+      artifactsLabel: "产物",
       databaseLabel: "数据库",
-      createProject: "创建 Project"
+      createProject: "创建项目"
     },
     settings: {
       title: "设置",
       eyebrow: "工作区偏好",
       description:
-        "调整首页默认项，并连接模型规划能力和本地 Agent 执行能力。",
+        "调整首页默认项，并配置模型和本地桥接。",
       navigationLabel: "设置分组",
+      modelNavigationLabel: "模型设置分组",
       basicSectionTitle: "基本设置",
-      basicSectionDescription: "设置工作区语言，以及创建 Project 时使用的默认项。",
-      modelSectionTitle: "模型设置",
-      modelSectionDescription: "配置 Requirement 规划模型，以及本地 Agent 执行入口。",
-      modelApiPlaneLabel: "规划平面",
-      modelApiScopeLabel: "Requirement 到 Task 的规划",
+      basicSectionDescription: "设置工作区语言，以及创建 项目 时使用的默认项。",
+      localBridgeSectionTitle: "本地桥接",
+      modelSectionTitle: "模型配置",
+      modelSectionDescription: "配置用于拆解需求的模型，以及本地桥接。",
+      modelApiPlaneLabel: "模型配置",
+      modelApiScopeLabel: "拆解需求",
       modelApiBlockTitle: "模型 API",
-      modelApiBlockDescription: "用于 Forge 将 Requirement 规划为 Task。",
-      agentSectionTitle: "Agent 执行",
-      agentSectionDescription: "用于 Forge 通过本地 Harness 启动 Task Workflow Run。",
-      agentProxyPlaneLabel: "执行桥接",
-      agentProxyScopeLabel: "Task Workflow Run 分发",
-      agentProxyBlockTitle: "本地 Agent 代理",
+      modelApiBlockDescription: "用于 Forge 拆解需求。",
+      agentSectionTitle: "Agent 管理",
+      agentSectionDescription: "用于 Forge 通过本地桥接启动任务工作流。",
+      agentProxyPlaneLabel: "本地桥接",
+      agentProxyScopeLabel: "任务工作流分发",
+      agentProxyBlockTitle: "本地桥接",
       agentProxySetupTitle: "CLI 初始化路径",
       agentProxySetupDescription:
         "预期配置路径是：安装 forgecli，执行 forgecli bridge bind --server <Forge Server URL>，然后执行 forgecli bridge start。",
       agentProxyCliUnavailable:
-        "当前 build 还不能通过 CLI 完成初始化。如果你已经有本地 Harness proxy，才需要在这里粘贴 URL。",
+        "当前 build 还不能通过 CLI 完成初始化。如果你已经有本地桥接，才需要在这里粘贴 URL。",
       languageLabel: "语言",
-      projectNameLabel: "Project 名称",
-      projectNameHelp: "修改当前 Project 在首页和 Project 切换器中显示的名称。",
-      noProjectNameHelp: "请先创建或选择一个 Project，再修改名称。",
-      saveProjectName: "保存 Project 名称",
-      defaultArtifactsLabel: "默认 Artifact 存储",
+      projectNameLabel: "项目名称",
+      projectNameHelp: "修改当前项目在首页和项目切换器中显示的名称。",
+      noProjectNameHelp: "请先创建或选择一个项目，再修改名称。",
+      saveProjectName: "保存项目名称",
+      defaultArtifactsLabel: "默认产物存储",
       defaultDatabaseLabel: "默认数据库",
       executionEyebrow: "执行能力",
-      executionTitle: "模型和本地 Agent 代理",
+      executionTitle: "模型和本地桥接",
       executionDescription:
-        "提交 Requirement 后需要已配置的模型提供方才能规划 Task；启动 Workflow Run 需要本地 Agent 代理 URL。",
+        "拆解需求需要已配置的模型提供方；启动任务工作流需要本地桥接 URL。",
       modelProviderLabel: "模型提供方",
       modelBaseUrlLabel: "模型 Base URL",
       modelNameLabel: "模型名称",
       modelApiKeyLabel: "API Key",
       modelApiKeyConfigured: "已配置。如需替换，请输入新 Key。",
       modelApiKeyPlaceholder: "粘贴 API Key",
-      agentProxyUrlLabel: "本地 Agent 代理 URL",
+      agentProxyUrlLabel: "本地桥接 URL",
       modelConfigured: "模型已配置",
       modelMissing: "模型未配置",
       saveModelApi: "保存模型 API",
       testModelApi: "测试 API Key",
-      saveAgentProxy: "保存本地 Agent 代理",
-      agentProxyConfigured: "Agent 代理已配置",
-      agentProxyMissing: "Agent 代理未配置",
+      saveAgentProxy: "保存本地桥接",
+      agentProxyConfigured: "本地桥接已配置",
+      agentProxyMissing: "本地桥接未配置",
       executionHelp:
         "API Key 由 Forge Server 保存，保存后不会再明文返回给浏览器。",
       saveExecutionSettings: "保存执行设置"
     },
     templatePage: {
-      eyebrow: "Workflow 模板",
-      title: "Workflow 模板管理",
+      eyebrow: "工作流模板",
+      title: "工作流模板管理",
       description:
         "单独管理 .wf 模板的导入、查看和作用域，不再混在设置页里。",
       newWorkflow: "新增 Workflow",
       importWorkflow: "导入 Workflow",
       totalTemplates: "模板总数",
-      totalWorkflowNodes: "Workflow Node",
+      totalWorkflowNodes: "节点",
       importEyebrow: "导入",
-      importTitle: "添加 Workflow File",
+      importTitle: "添加工作流模板",
       importDescription:
-        "粘贴 .wf 源文件。Workflow 模板统一描述任务维度的工作。",
+        "粘贴 .wf 源文件。工作流模板统一描述任务维度的工作。",
       importModeLabel: "Workflow 导入方式",
       importModeDefault: "默认模板",
       importModeSource: "粘贴源码",
       importModeFile: "上传 .wf",
       defaultTemplatesTitle: "默认模板",
       defaultTemplatesDescription:
-        "从 Forge 维护的常用 Requirement 和 Task 工作流模板开始。",
+        "从 Forge 维护的常用工作流模板开始。",
       defaultTemplateDescriptions: {
         "creative-writing-requirement":
-          "梳理创作目标、受众边界、内容大纲和候选 Task。",
+          "梳理创作目标、受众边界、内容大纲和拆解结果。",
         "creative-writing-task":
-          "为创意写作 Task 编排大纲、初稿、修订和确认。",
+          "为创意写作任务编排大纲、初稿、修订和确认。",
         "research-writing-requirement":
           "框定调研问题、整理证据、形成简报并拆出 Tasks。",
         "research-writing-task":
-          "为调研写作 Task 编排调研、提纲、草稿和编辑。",
+          "为调研写作任务编排调研、提纲、草稿和编辑。",
         "software-change-requirement":
-          "把软件变更 Requirement 转换成可执行的候选 Task。",
+          "把软件变更需求转换成可编辑的拆解结果。",
         "software-change-task":
-          "用 5 个节点编排软件 Task 的计划、实现、验证、评审和交付。"
+          "用 5 个节点编排软件任务的计划、实现、验证、评审和交付。"
       },
-      businessFunctionLabel: (businessFunction) =>
-        `业务功能：${businessFunction}`,
       businessTemplateName: (businessFunction) => `${businessFunction}模板`,
       businessFunctions: {
         codeImplementation: "代码编写",
@@ -775,22 +814,22 @@ const messages: Record<Locale, Messages> = {
         taskExecution: "任务执行",
         writingEditing: "写作编辑"
       },
-      fileSourceLabel: "上传 Workflow File",
+      fileSourceLabel: "上传工作流模板",
       fileSourceHelp:
         "上传的文件会先读取到源码编辑器，再执行导入。",
       libraryEyebrow: "模板库",
       libraryTitle: "可用模板",
       libraryDescription:
-        "在这里确认模板业务功能和节点数量，再决定使用哪个模板。",
-      emptyTitle: "暂无 Workflow 模板",
-      emptyBody: "导入 .wf 文件后，会在这里作为 Project 可用模板展示。",
+        "在这里确认模板节点数量，再决定使用哪个模板。",
+      emptyTitle: "暂无工作流模板",
+      emptyBody: "导入 .wf 文件后，会在这里作为项目可用模板展示。",
       previewEyebrow: "预览",
       previewTitle: "最近导入模板的节点",
       previewDescription:
         "查看节点顺序、执行器绑定、重试次数和依赖关系。",
-      previewGraphLabel: "Workflow 模板节点预览",
+      previewGraphLabel: "工作流模板节点预览",
       noPreviewTitle: "暂无模板预览",
-      noPreviewBody: "导入 Workflow File 后，会在这里检查节点。",
+      noPreviewBody: "导入工作流模板后，会在这里检查节点。",
       workflowNameLabel: "Workflow 名称",
       editWorkflow: "编辑",
       editWorkflowAria: "编辑 Workflow",
@@ -802,11 +841,17 @@ const messages: Record<Locale, Messages> = {
         "如果名称重复，Forge 会自动追加序号。",
       dependsOn: (dependencies) => `依赖 ${dependencies}`,
       retryBudget: (count) => `${count} 次重试`,
+      startPointLabel: "起始",
+      startPointDescription: (count) => `${count} 个起始节点`,
+      endPointLabel: "结束",
+      endPointDescription: (count) => `${count} 个终止节点`,
+      startNodeBadge: "起始节点",
+      endNodeBadge: "终止节点",
       inputsLabel: "输入",
       skillsLabel: "Skills",
-      agentRolesLabel: "Agent 角色",
-      artifactTypesLabel: "Artifact 类型",
-      exitCriteriaLabel: "Exit Criteria",
+      agentRolesLabel: "执行 Agent",
+      artifactTypesLabel: "产物",
+      exitCriteriaLabel: "验收条件",
       reviewMode: (mode) => `评审：${mode}`,
       humanReviewRequired: "需要人工评审",
       usesLabel: "使用",
@@ -816,96 +861,99 @@ const messages: Record<Locale, Messages> = {
     },
     workbench: {
       eyebrow: "工作台",
-      firstProjectTitle: "创建第一个 Project",
+      firstProjectTitle: "创建第一个项目",
       firstProjectBody:
-        "Project 会把 Requirements、Workflow Files、Tasks 和 Artifacts 放在一个可追踪的位置。",
-      workflowSetupTitle: "提出你的需求",
+        "项目会把需求、工作流模板、任务和产物放在一个可追踪的位置。",
+      workflowSetupTitle: "创建需求",
       workflowSetupBody:
-        "先描述目标。Forge 会使用默认 Requirement workflow，自定义模板可在设置里配置。",
-      readyTitle: "提出你的需求",
+        "先描述目标。Forge 会创建需求，随后可拆解需求。",
+      readyTitle: "创建需求",
       readyBody:
-        "先描述目标。Workflow templates 可以在设置里单独配置。",
-      createFirstProject: "创建第一个 Project",
+        "先描述目标。工作流模板可以在设置里单独配置。",
+      createFirstProject: "创建第一个项目",
       createFirstProjectBody:
-        "先设置 Artifact 存储和数据库默认值，后续可以在设置里调整。",
-      currentProject: "当前 Project",
-      noActiveProject: "未选择 Project",
-      projectsCount: "Projects",
+        "先设置产物存储和数据库默认值，后续可以在设置里调整。",
+      currentProject: "当前项目",
+      noActiveProject: "未选择项目",
+      projectsCount: "项目",
       nextActions: "下一步",
       quickActionsHeading: "选择接下来要做的事。",
-      workflowSetupHeading: "配置第一个 Workflow File。",
-      newRequirement: "提出你的需求",
-      newRequirementHelp: "描述目标，让 Forge 生成 Task。",
+      workflowSetupHeading: "配置第一个工作流模板。",
+      newRequirement: "创建需求",
+      newRequirementHelp: "描述目标，让 Forge 创建需求。",
       close: "关闭",
       closeRequirement: "关闭需求弹窗",
-      importWorkflow: "导入 Workflow File",
-      importWorkflowHelp: "添加用于 Requirement 或 Task 执行的 .wf 模板。",
-      newProject: "新建 Project",
-      newProjectHelp: "创建另一个拥有独立存储默认值的 Project。",
+      importWorkflow: "导入工作流模板",
+      importWorkflowHelp: "添加用于任务执行的 .wf 模板。",
+      newProject: "新建项目",
+      newProjectHelp: "创建另一个拥有独立存储默认值的项目。",
       pathLabel: "首次使用路径",
-      pathProject: "创建 Project",
-      pathProjectHelp: "定义 Forge 保存 Artifact 和项目数据的位置。",
-      pathRequirement: "提交 Requirement",
+      pathProject: "创建项目",
+      pathProjectHelp: "定义 Forge 保存产物和项目数据的位置。",
+      pathRequirement: "创建需求",
       pathRequirementHelp: "描述 Forge 需要转成工作的目标。",
-      pathReview: "运行 Task",
-      pathReviewHelp: "为生成的 Task 启动 Workflow Run。",
+      pathReview: "开始任务",
+      pathReviewHelp: "为生成的任务启动任务工作流。",
       defaultWorkflowHelp:
-        "使用默认 Requirement workflow。自定义模板在 Workflow 模板里配置。",
+        "创建需求后，可在需求页拆解需求。",
       modelRequiredHelp:
-        "模型规划尚未配置。Forge 会先保存这个 Requirement，但暂时不会创建 Task。"
+        "模型配置尚未完成。Forge 会先保存这个需求，但暂时不能拆解需求。"
     },
     progress: {
       ariaLabel: "Forge 进展",
       recipes: "配方",
       ideas: "需求",
       tasks: "任务",
-      runs: "运行"
+      runs: "任务工作流"
     },
     workspace: {
       generatedWorkLabel: "已生成工作",
-      taskBoardEyebrow: "Task Board",
-      taskBoardHeading: "运行已生成的 Task。",
+      taskBoardEyebrow: "任务看板",
+      taskBoardHeading: "开始已生成的任务。",
       taskBoardBody:
-        "Task 可以代表文档产出、代码变更、研究包，或任何会产出 Artifact 的 AI 工作。",
-      taskBoardLabel: "Task Board",
-      noTasks: "暂无 Task",
+        "任务可以代表文档产出、代码变更、研究包，或任何会产出产物的 AI 工作。",
+      taskBoardLabel: "任务看板",
+      noTasks: "暂无任务",
       sourceLabel: "来源",
       runRecipeLabel: "运行配方",
-      importTaskRecipeFirst: "请先导入 Task 配方",
-      startRun: "开始运行",
-      noRunsForTask: "这个 Task 还没有启动运行。",
-      workflowRun: "Workflow Run",
+      importTaskRecipeFirst: "请先导入工作流模板",
+      startRun: "开始任务",
+      noRunsForTask: "这个任务还没有启动任务工作流。",
+      workflowRun: "任务工作流",
       recipeAndHistoryLabel: "模板和历史",
-      recipeMapEyebrow: "Workflow 模板",
+      recipeMapEyebrow: "工作流模板",
       recipeMapHeading: "模板列表",
       templateCount: (count) => `当前 ${count} 个模板`,
       moreTemplates: "更多模板",
-      recipeSummary: (count) => `包含 ${count} 个 Workflow Node`,
+      recipeSummary: (count) => `包含 ${count} 个节点`,
       noDependency: "无依赖",
       noRecipePreviewTitle: "暂无配方预览",
-      noRecipePreviewBody: "导入 Workflow File 后会在这里展示节点。",
+      noRecipePreviewBody: "导入工作流模板后会在这里展示节点。",
       requirementsEyebrow: "需求",
       requirementsHeading: "已提交的需求。",
       requirementsLabel: "需求",
       allRequirementsHeading: "全部需求",
       allRequirementsBody:
-        "在当前 Project 内改名或移除仍然有效的 Requirement。",
+        "在当前项目内改名或移除仍然有效的需求。",
       viewAllRequirements: "查看全部需求",
-      noRequirements: "暂无已提交需求。",
-      planRequirement: "生成 Task",
+      noRequirements: "暂无已创建需求。",
+      planRequirement: "拆解需求",
+      generateTasks: "生成任务",
       editRequirement: "编辑",
       requirementNameLabel: "需求名称",
       renameRequirement: "改名",
       cancelRequirementEdit: "取消",
       saveRequirementName: "保存名称",
-      requirementRenameHelp: "当前 Project 内的 Requirement 名称不能重复。",
+      requirementRenameHelp: "当前项目内的需求名称不能重复。",
       deleteRequirement: "删除",
-      requirementDeleteHelp: "软删除该需求，并隐藏关联 Task。",
+      requirementDeleteHelp: "软删除该需求，并隐藏关联任务。",
       requirementStatus: {
-        completed: "已完成",
-        failed: "失败",
-        open: "待处理",
-        running: "运行中"
+        completed: "需求已完成",
+        decomposing: "拆解中",
+        decomposition_failed: "拆解失败",
+        init: "初始化",
+        ready_to_generate_tasks: "待生成任务",
+        tasks_generated: "已生成任务"
       }
     },
     options: {
@@ -916,58 +964,64 @@ const messages: Record<Locale, Messages> = {
       mysql: "MySQL"
     },
     taskStatus: {
-      done: "已完成",
-      in_progress: "进行中",
-      todo: "待处理"
+      cancelled: "已取消",
+      completed: "已完成",
+      failed: "执行失败",
+      init: "初始化",
+      pending_acceptance: "待验收",
+      running: "执行中"
     },
     status: {
-      projectIdle: "尚未创建 Project",
+      projectIdle: "尚未创建项目",
       workflowIdle: "尚未导入工作流",
-      requirementIdle: "尚未创建 Requirement",
-      taskBoardIdle: "尚未创建 Task",
-      requirementResourcesUnavailable: "Requirement 资源不可用",
+      requirementIdle: "尚未创建需求",
+      taskBoardIdle: "尚未创建任务",
+      requirementResourcesUnavailable: "需求资源不可用",
       resourcesUnavailable: "工作台资源不可用",
-      projectListUnavailable: "Project 列表不可用",
-      creatingProject: "正在创建 Project",
-      projectCreationFailed: "Project 创建失败",
-      importingWorkflowFile: "正在导入 Workflow File",
-      workflowImportFailed: "Workflow 导入失败",
-      runningRequirementWorkflow: "正在生成 Task",
-      requirementCreationFailed: "Requirement 创建失败",
+      projectListUnavailable: "项目列表不可用",
+      creatingProject: "正在创建项目",
+      projectCreationFailed: "项目创建失败",
+      importingWorkflowFile: "正在导入工作流模板",
+      workflowImportFailed: "工作流模板导入失败",
+      runningRequirementWorkflow: "正在拆解需求",
+      requirementCreationFailed: "需求创建失败",
+      createdRequirement: "需求已创建",
+      decompositionReady: "拆解结果已生成",
+      generatingTasks: "正在生成任务",
       modelNotConfigured:
-        "Requirement 已保存。请先在设置里配置模型，Forge 才能创建 Task。",
-      savingRequirement: "正在保存 Requirement",
-      renamedRequirement: "已改名 Requirement",
-      requirementUpdateFailed: "Requirement 更新失败",
-      savingWorkflow: "正在保存 Workflow",
-      renamedWorkflow: "已重命名 Workflow",
-      workflowUpdateFailed: "Workflow 更新失败",
-      deletingRequirement: "正在删除 Requirement",
-      deletedRequirement: "已删除 Requirement",
-      requirementDeletionFailed: "Requirement 删除失败",
+        "需求已保存。请先在设置里完成模型配置，Forge 才能拆解需求。",
+      savingRequirement: "正在保存需求",
+      renamedRequirement: "已改名需求",
+      requirementUpdateFailed: "需求更新失败",
+      savingWorkflow: "正在保存工作流模板",
+      renamedWorkflow: "已重命名工作流模板",
+      workflowUpdateFailed: "工作流模板更新失败",
+      deletingRequirement: "正在删除需求",
+      deletedRequirement: "已删除需求",
+      requirementDeletionFailed: "需求删除失败",
       settingsIdle: "设置未修改",
       testingModelApi: "正在测试模型 API",
       modelApiTestSucceeded: "模型 API 测试通过",
       modelApiTestFailed: "模型 API 测试失败",
       savingModelSettings: "正在保存模型 API",
       modelSettingsSaved: "模型 API 已保存",
-      savingAgentProxySettings: "正在保存本地 Agent 代理",
-      agentProxySettingsSaved: "本地 Agent 代理已保存",
+      savingAgentProxySettings: "正在保存本地桥接",
+      agentProxySettingsSaved: "本地桥接已保存",
       savingSettings: "正在保存设置",
       settingsSaved: "设置已保存",
       settingsSaveFailed: "设置保存失败",
-      importTaskWorkflowFirst: "请先导入 Task .wf",
-      startingWorkflowRun: "正在启动 Workflow Run",
-      workflowRunFailed: "Workflow Run 失败",
+      importTaskWorkflowFirst: "请先导入工作流模板",
+      startingWorkflowRun: "正在启动任务工作流",
+      workflowRunFailed: "任务工作流失败",
       ready: "就绪"
     },
     namedStatus: {
       createdProject: (name) => `已创建 ${name}`,
       importedWorkflow: (name) => `已导入 ${name}`,
-      workflowRunStatus: (status) => `Workflow Run ${status}`
+      workflowRunStatus: (status) => `任务工作流 ${status}`
     },
     countStatus: {
-      generatedTasks: (count) => `已生成 ${count} 个 Task`
+      generatedTasks: (count) => `已生成 ${count} 个任务`
     }
   }
 };

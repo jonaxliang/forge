@@ -22,7 +22,7 @@ function createDefaultWorkflowTemplate(
 }
 
 export const defaultWorkflowTemplates: readonly DefaultWorkflowTemplate[] = [
-  createDefaultWorkflowTemplate("software-change-requirement", `name: "Software Change Requirement"
+  createDefaultWorkflowTemplate("software-change-requirement", `name: "需求拆解模板"
 scope: requirement
 version: "1.1"
 inputs:
@@ -32,8 +32,8 @@ inputs:
 skills:
   - id: analysis
     ref: skill:software-requirement-analysis
-  - id: task-drafting
-    ref: skill:task-drafting
+  - id: decomposition
+    ref: skill:decomposition
   - id: risk-review
     ref: skill:risk-review
 agents:
@@ -47,9 +47,9 @@ artifacts:
   - id: requirement-brief
     type: markdown
     path: requirement-brief.md
-  - id: task-drafts
+  - id: decomposition-result
     type: json
-    path: task-drafts.json
+    path: decomposition-result.json
   - id: risk-check
     type: report
     path: risk-check.md
@@ -72,30 +72,30 @@ nodes:
       criteria:
         - Requirement goals, constraints, and acceptance signals are captured.
       retryInstruction: Tighten the Requirement brief around missing scope or constraints.
-  - id: draft-tasks
-    type: task-drafting
-    after: intake
+  - id: decompose
+    type: requirement-decomposition
+    dependsOn: intake
     executor: agent:planner
     uses:
-      - skill:task-drafting
+      - skill:decomposition
     inputs:
       - artifact:requirement-brief
     outputs:
-      - artifact: task-drafts
+      - artifact: decomposition-result
     exit:
       maxRetries: 2
       review: model
       criteria:
-        - Task Drafts are independently executable and trace back to the Requirement.
+        - Decomposition result items are independently executable and trace back to the Requirement.
       retryInstruction: Split oversized work and preserve Requirement traceability.
   - id: risk-review
     type: risk-review
-    after: draft-tasks
+    dependsOn: decompose
     executor: agent:reviewer
     uses:
       - skill:risk-review
     inputs:
-      - artifact:task-drafts
+      - artifact:decomposition-result
     outputs:
       - artifact: risk-check
     exit:
@@ -106,12 +106,12 @@ nodes:
       retryInstruction: Call out missing risk, dependency, or verification details.
   - id: package
     type: requirement-package
-    after: risk-review
+    dependsOn: risk-review
     executor: agent:planner
     uses:
-      - skill:task-drafting
+      - skill:decomposition
     inputs:
-      - artifact:task-drafts
+      - artifact:decomposition-result
       - artifact:risk-check
     outputs:
       - artifact: approval-notes
@@ -119,11 +119,11 @@ nodes:
       maxRetries: 1
       review: model
       criteria:
-        - Final package includes Task Drafts, risk notes, and approval guidance.
+        - Final package includes the decomposition result, risk notes, and approval guidance.
       retryInstruction: Complete the package with missing approval or handoff details.
 `,
   ),
-  createDefaultWorkflowTemplate("software-change-task", `name: "Software Change Task"
+  createDefaultWorkflowTemplate("software-change-task", `name: "代码编写模板"
 scope: task
 version: "1.1"
 inputs:
@@ -182,7 +182,7 @@ nodes:
       retryInstruction: Revise the plan to close scope and verification gaps.
   - id: implement
     type: code-change
-    after: plan
+    dependsOn: plan
     executor: agent:coder
     uses:
       - skill:coding
@@ -198,7 +198,7 @@ nodes:
       retryInstruction: Keep the patch surgical and aligned to the plan.
   - id: verify
     type: test-and-typecheck
-    after: implement
+    dependsOn: implement
     executor: agent:tester
     uses:
       - skill:verification
@@ -214,7 +214,7 @@ nodes:
       retryInstruction: Run the narrowest relevant checks or explain blockers precisely.
   - id: review
     type: code-review
-    after: verify
+    dependsOn: verify
     executor: agent:reviewer
     uses:
       - skill:review
@@ -231,7 +231,7 @@ nodes:
       retryInstruction: Ground review findings in file and behavior references.
   - id: handoff
     type: delivery-handoff
-    after: review
+    dependsOn: review
     executor: agent:planner
     uses:
       - skill:planning
@@ -247,7 +247,7 @@ nodes:
       retryInstruction: Fill in missing verification or residual-risk notes.
 `,
   ),
-  createDefaultWorkflowTemplate("research-writing-requirement", `name: "Research & Writing Requirement"
+  createDefaultWorkflowTemplate("research-writing-requirement", `name: "调研写作拆解模板"
 scope: requirement
 version: "1.1"
 inputs:
@@ -261,8 +261,8 @@ skills:
     ref: skill:source-evaluation
   - id: brief-writing
     ref: skill:brief-writing
-  - id: task-drafting
-    ref: skill:task-drafting
+  - id: decomposition
+    ref: skill:decomposition
 agents:
   - id: researcher
     role: research-planner
@@ -280,9 +280,9 @@ artifacts:
   - id: brief
     type: markdown
     path: brief.md
-  - id: task-drafts
+  - id: decomposition-result
     type: json
-    path: task-drafts.json
+    path: decomposition-result.json
 nodes:
   - id: frame
     type: research-framing
@@ -301,7 +301,7 @@ nodes:
       retryInstruction: Clarify audience, decision needs, or research boundaries.
   - id: source-map
     type: source-evaluation
-    after: frame
+    dependsOn: frame
     executor: agent:researcher
     uses:
       - skill:source-evaluation
@@ -317,7 +317,7 @@ nodes:
       retryInstruction: Add missing evidence categories or unresolved questions.
   - id: synthesize
     type: research-synthesis
-    after: source-map
+    dependsOn: source-map
     executor: agent:analyst
     uses:
       - skill:brief-writing
@@ -331,25 +331,25 @@ nodes:
       criteria:
         - Brief connects evidence to recommendations and writing constraints.
       retryInstruction: Tie findings back to the requested decision or draft.
-  - id: draft-tasks
-    type: task-drafting
-    after: synthesize
+  - id: decompose
+    type: requirement-decomposition
+    dependsOn: synthesize
     executor: agent:editor
     uses:
-      - skill:task-drafting
+      - skill:decomposition
     inputs:
       - artifact:brief
     outputs:
-      - artifact: task-drafts
+      - artifact: decomposition-result
     exit:
       maxRetries: 1
       review: model
       criteria:
-        - Task Drafts split research, drafting, and review work cleanly.
+        - Decomposition result items split research, drafting, and review work cleanly.
       retryInstruction: Separate unclear research, writing, or editorial work.
 `,
   ),
-  createDefaultWorkflowTemplate("research-writing-task", `name: "Research & Writing Task"
+  createDefaultWorkflowTemplate("research-writing-task", `name: "调研写作模板"
 scope: task
 version: "1.1"
 inputs:
@@ -403,7 +403,7 @@ nodes:
       retryInstruction: Add missing evidence, caveats, or constraints.
   - id: outline
     type: writing-outline
-    after: research
+    dependsOn: research
     executor: agent:writer
     uses:
       - skill:writing
@@ -419,7 +419,7 @@ nodes:
       retryInstruction: Restructure the outline around the audience and thesis.
   - id: draft
     type: writing-draft
-    after: outline
+    dependsOn: outline
     executor: agent:writer
     uses:
       - skill:writing
@@ -435,7 +435,7 @@ nodes:
       retryInstruction: Revise the draft for structure, evidence, and clarity.
   - id: edit
     type: editorial-review
-    after: draft
+    dependsOn: draft
     executor: agent:editor
     uses:
       - skill:editorial-review
@@ -451,7 +451,7 @@ nodes:
       retryInstruction: Make revision requests specific and actionable.
 `,
   ),
-  createDefaultWorkflowTemplate("creative-writing-requirement", `name: "Creative Writing Requirement"
+  createDefaultWorkflowTemplate("creative-writing-requirement", `name: "创意写作拆解模板"
 scope: requirement
 version: "1.1"
 inputs:
@@ -465,8 +465,8 @@ skills:
     ref: skill:audience-analysis
   - id: creative-outline
     ref: skill:creative-outline
-  - id: task-drafting
-    ref: skill:task-drafting
+  - id: decomposition
+    ref: skill:decomposition
 agents:
   - id: strategist
     role: creative-strategist
@@ -484,9 +484,9 @@ artifacts:
   - id: outline
     type: outline
     path: outline.md
-  - id: task-drafts
+  - id: decomposition-result
     type: json
-    path: task-drafts.json
+    path: decomposition-result.json
 nodes:
   - id: interpret
     type: creative-brief
@@ -505,7 +505,7 @@ nodes:
       retryInstruction: Clarify missing purpose, tone, format, or constraints.
   - id: audience
     type: audience-analysis
-    after: interpret
+    dependsOn: interpret
     executor: agent:strategist
     uses:
       - skill:audience-analysis
@@ -521,7 +521,7 @@ nodes:
       retryInstruction: Add missing audience expectations or content boundaries.
   - id: shape
     type: creative-outline
-    after: audience
+    dependsOn: audience
     executor: agent:writer
     uses:
       - skill:creative-outline
@@ -536,25 +536,25 @@ nodes:
       criteria:
         - Outline supports the requested arc, voice, and deliverable shape.
       retryInstruction: Reshape the outline around voice, arc, and deliverable needs.
-  - id: draft-tasks
-    type: task-drafting
-    after: shape
+  - id: decompose
+    type: requirement-decomposition
+    dependsOn: shape
     executor: agent:editor
     uses:
-      - skill:task-drafting
+      - skill:decomposition
     inputs:
       - artifact:outline
     outputs:
-      - artifact: task-drafts
+      - artifact: decomposition-result
     exit:
       maxRetries: 1
       review: model
       criteria:
-        - Task Drafts separate drafting, revision, and approval responsibilities.
-      retryInstruction: Split unclear creative writing work into executable Task Drafts.
+        - Decomposition result items separate drafting, revision, and approval responsibilities.
+      retryInstruction: Split unclear creative writing work into executable decomposition items.
 `,
   ),
-  createDefaultWorkflowTemplate("creative-writing-task", `name: "Creative Writing Task"
+  createDefaultWorkflowTemplate("creative-writing-task", `name: "创意写作模板"
 scope: task
 version: "1.1"
 inputs:
@@ -606,7 +606,7 @@ nodes:
       retryInstruction: Clarify premise, structure, or tone guardrails.
   - id: draft
     type: creative-draft
-    after: outline
+    dependsOn: outline
     executor: agent:writer
     uses:
       - skill:drafting
@@ -622,7 +622,7 @@ nodes:
       retryInstruction: Revise for voice, structure, and completeness.
   - id: revise
     type: creative-revision
-    after: draft
+    dependsOn: draft
     executor: agent:editor
     uses:
       - skill:revision
@@ -638,7 +638,7 @@ nodes:
       retryInstruction: Revise against clarity, pacing, and requested constraints.
   - id: approve
     type: creative-approval
-    after: revise
+    dependsOn: revise
     executor: agent:reviewer
     uses:
       - skill:editorial-review

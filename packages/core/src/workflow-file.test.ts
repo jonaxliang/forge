@@ -33,7 +33,7 @@ nodes:
     instruction:
       ref: prompt:implementation-plan
     outputs:
-      - artifact:plan
+      - artifact: plan
     exit:
       maxRetries: 1
       review: model
@@ -66,45 +66,42 @@ nodes:
     });
   });
 
-  it("normalizes legacy workflow files into the v1.1 shape", () => {
-    const workflow = parseWorkflowFile(`
-name: Legacy Coding workflow
+  it("rejects workflow files without the current schema version", () => {
+    expect(() =>
+      parseWorkflowFile(`
+name: Missing version workflow
 scope: task
 nodes:
   - id: code
     type: code-change
     executor: agent:coder
-    outputs:
-      - diff.patch
     exit:
       maxRetries: 2
-`);
-
-    expect(workflow).toMatchObject({
-      agents: [],
-      artifacts: [],
-      inputs: [],
-      skills: [],
-      version: "1",
-      nodes: [
-        {
-          exit: {
-            criteria: [],
-            maxRetries: 2,
-            retryInstruction: "",
-            review: "model"
-          },
-          outputs: [{ kind: "file", ref: "diff.patch" }],
-          uses: []
-        }
-      ]
-    });
+`)
+    ).toThrow(/Invalid workflow file/i);
   });
 
-  it("parses requirement-scoped workflow files and normalizes after into dependsOn", () => {
+  it("rejects old workflow schema versions", () => {
+    expect(() =>
+      parseWorkflowFile(`
+name: Old version workflow
+scope: task
+version: "1"
+nodes:
+  - id: code
+    type: code-change
+    executor: agent:coder
+    exit:
+      maxRetries: 2
+`)
+    ).toThrow(/Invalid workflow file/i);
+  });
+
+  it("parses requirement-scoped workflow files with explicit dependencies", () => {
     const workflow = parseWorkflowFile(`
 name: Requirement workflow
 scope: requirement
+version: "1.1"
 nodes:
   - id: clarify
     type: requirement-analysis
@@ -113,7 +110,7 @@ nodes:
       maxRetries: 0
   - id: split
     type: task-drafting
-    after: clarify
+    dependsOn: clarify
     executor: agent:planner
     exit:
       maxRetries: 1
@@ -127,12 +124,14 @@ nodes:
     const workflow = parseWorkflowFile(`
 name: Coding workflow
 scope: task
+version: "1.1"
 nodes:
   - id: analyze
     type: requirement-analysis
     executor: skill:requirements
     outputs:
-      - analysis.md
+      - kind: file
+        ref: analysis.md
     exit:
       maxRetries: 2
   - id: implement
@@ -141,7 +140,8 @@ nodes:
       - analyze
     executor: skill:code
     outputs:
-      - diff.patch
+      - kind: file
+        ref: diff.patch
     exit:
       maxRetries: 1
 `);
@@ -164,31 +164,11 @@ nodes:
     });
   });
 
-  it("normalizes after into dependsOn", () => {
-    const workflow = parseWorkflowFile(`
-name: Planning workflow
-scope: task
-nodes:
-  - id: clarify
-    type: analysis
-    executor: skill:analysis
-    exit:
-      maxRetries: 0
-  - id: draft
-    type: writing
-    after: clarify
-    executor: skill:writing
-    exit:
-      maxRetries: 1
-`);
-
-    expect(workflow.nodes[1]?.dependsOn).toEqual(["clarify"]);
-  });
-
-  it("merges dependsOn and after into dependsOn without duplicates", () => {
+  it("parses multiple dependencies", () => {
     const workflow = parseWorkflowFile(`
 name: Combined dependency workflow
 scope: task
+version: "1.1"
 nodes:
   - id: a
     type: first
@@ -205,7 +185,6 @@ nodes:
     dependsOn:
       - a
       - b
-    after: b
     executor: skill:third
     exit:
       maxRetries: 1
@@ -214,11 +193,12 @@ nodes:
     expect(workflow.nodes[2]?.dependsOn).toEqual(["a", "b"]);
   });
 
-  it("rejects unknown after dependencies when dependsOn is also present", () => {
+  it("rejects the old after dependency alias", () => {
     expect(() =>
       parseWorkflowFile(`
-name: Invalid combined dependency workflow
+name: Old dependency alias workflow
 scope: task
+version: "1.1"
 nodes:
   - id: a
     type: first
@@ -227,14 +207,12 @@ nodes:
       maxRetries: 0
   - id: c
     type: third
-    dependsOn:
-      - a
-    after: missing
+    after: a
     executor: skill:third
     exit:
       maxRetries: 1
 `)
-    ).toThrow(/unknown dependency/i);
+    ).toThrow(/unrecognized key/i);
   });
 
   it("rejects cyclic node dependencies", () => {
@@ -242,16 +220,17 @@ nodes:
       parseWorkflowFile(`
 name: Cyclic workflow
 scope: task
+version: "1.1"
 nodes:
   - id: a
     type: first
-    after: b
+    dependsOn: b
     executor: skill:first
     exit:
       maxRetries: 1
   - id: b
     type: second
-    after: a
+    dependsOn: a
     executor: skill:second
     exit:
       maxRetries: 1
@@ -264,6 +243,7 @@ nodes:
       parseWorkflowFile(`
 name: Missing dependency workflow
 scope: task
+version: "1.1"
 nodes:
   - id: implement
     type: coding
@@ -281,6 +261,7 @@ nodes:
       parseWorkflowFile(`
 name: Duplicate resources
 scope: task
+version: "1.1"
 skills:
   - id: planning
     ref: skill:one
@@ -301,6 +282,7 @@ nodes:
       parseWorkflowFile(`
 name: Missing skill
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
@@ -318,12 +300,13 @@ nodes:
       parseWorkflowFile(`
 name: Missing artifact output
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
     executor: agent:planner
     outputs:
-      - artifact:plan
+      - artifact: plan
     exit:
       maxRetries: 1
 `)
@@ -333,23 +316,25 @@ nodes:
   it("rejects artifact outputs with empty ids", () => {
     expect(() =>
       parseWorkflowFile(`
-name: Empty artifact output
+name: String artifact output
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
     executor: agent:planner
     outputs:
-      - "artifact:"
+      - artifact:plan
     exit:
       maxRetries: 1
 `)
-    ).toThrow(/artifact output/i);
+    ).toThrow(/Invalid workflow file/i);
 
     expect(() =>
       parseWorkflowFile(`
 name: Blank artifact output
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
@@ -359,7 +344,7 @@ nodes:
     exit:
       maxRetries: 1
 `)
-    ).toThrow(/artifact output/i);
+    ).toThrow(/Invalid workflow file/i);
   });
 
   it("rejects file outputs with empty refs", () => {
@@ -367,12 +352,14 @@ nodes:
       parseWorkflowFile(`
 name: Empty file output
 scope: task
+version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
     executor: agent:planner
     outputs:
-      - " "
+      - kind: file
+        ref: " "
     exit:
       maxRetries: 1
 `)
@@ -384,6 +371,7 @@ nodes:
       parseWorkflowFile(`
 name: Missing artifact input
 scope: task
+version: "1.1"
 nodes:
   - id: code
     type: code-change
@@ -401,6 +389,7 @@ nodes:
       parseWorkflowFile(`
 name: Inconsistent review
 scope: task
+version: "1.1"
 nodes:
   - id: review
     type: code-review
@@ -419,6 +408,7 @@ nodes:
     const workflow = parseWorkflowFile(`
 name: Human review workflow
 scope: task
+version: "1.1"
 nodes:
   - id: review
     type: code-review
@@ -442,44 +432,48 @@ nodes:
     });
   });
 
-  it("normalizes legacy objects parsed through the exported schema", () => {
-    const workflow = workflowFileSchema.parse({
-      name: "Legacy object workflow",
-      scope: "task",
-      nodes: [
-        {
-          id: "code",
-          type: "code-change",
-          dependsOn: [],
-          executor: "agent:coder",
-          outputs: ["diff.patch"],
-          exit: {
-            maxRetries: 2
+  it("rejects old objects parsed through the exported schema", () => {
+    expect(() =>
+      workflowFileSchema.parse({
+        name: "Old object workflow",
+        scope: "task",
+        version: "1",
+        nodes: [
+          {
+            id: "code",
+            type: "code-change",
+            dependsOn: [],
+            executor: "agent:coder",
+            outputs: [{ kind: "file", ref: "diff.patch" }],
+            exit: {
+              maxRetries: 2
+            }
           }
-        }
-      ]
-    });
+        ]
+      })
+    ).toThrow();
+  });
 
-    expect(workflow).toMatchObject({
-      agents: [],
-      artifacts: [],
-      inputs: [],
-      skills: [],
-      version: "1",
-      nodes: [
-        {
-          exit: {
-            criteria: [],
-            maxRetries: 2,
-            retryInstruction: "",
-            review: "model"
-          },
-          inputs: [],
-          outputs: [{ kind: "file", ref: "diff.patch" }],
-          uses: []
-        }
-      ]
-    });
+  it("rejects string outputs parsed through the exported schema", () => {
+    expect(() =>
+      workflowFileSchema.parse({
+        name: "String output workflow",
+        scope: "task",
+        version: "1.1",
+        nodes: [
+          {
+            id: "code",
+            type: "code-change",
+            dependsOn: [],
+            executor: "agent:coder",
+            outputs: ["diff.patch"],
+            exit: {
+              maxRetries: 2
+            }
+          }
+        ]
+      })
+    ).toThrow();
   });
 
   it("rejects invalid dependencies parsed through the exported schema", () => {
@@ -487,6 +481,7 @@ nodes:
       workflowFileSchema.parse({
         name: "Invalid dependency object workflow",
         scope: "task",
+        version: "1.1",
         nodes: [
           {
             id: "code",
@@ -507,6 +502,7 @@ nodes:
       workflowFileSchema.parse({
         name: "Duplicate skill object workflow",
         scope: "task",
+        version: "1.1",
         skills: [
           {
             id: "planning",

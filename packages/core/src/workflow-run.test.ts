@@ -56,7 +56,7 @@ const workflow: WorkflowFile = {
   ],
   scope: "task",
   skills: [],
-  version: "1"
+  version: "1.1"
 };
 
 describe("workflow run state machine", () => {
