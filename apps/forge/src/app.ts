@@ -2,6 +2,7 @@ import {
   createHealthPayload,
   parseWorkflowFile,
   planWorkflowDag,
+  readLegacyWorkflowScope,
   workflowFileSchema,
   type WorkflowFile
 } from "@forge/core";
@@ -112,11 +113,9 @@ const baseWorkflowTemplateSemanticKeyByName: Record<string, string> = {
   "creative writing requirement": "creative-writing-task",
   "creative writing task": "creative-writing-task",
   "human approval": "review-approval",
-  "requirement split": "requirement-planning",
   "research & writing requirement": "research-writing-task",
   "research & writing task": "research-writing-task",
   "research analysis": "research-analysis",
-  "software change requirement": "requirement-planning",
   "software change task": "software-task",
   "travel guide coding test": "travel-guide-coding-test",
   "writing review": "writing-editing",
@@ -129,12 +128,10 @@ const baseWorkflowTemplateSemanticKeyByName: Record<string, string> = {
   "评审审批模板": "review-approval",
   "写作编辑模板": "writing-editing",
   "旅行指南编写测试模板": "travel-guide-coding-test",
-  "自主测试任务完成": "travel-guide-coding-test",
-  "需求拆解模板": "requirement-planning"
+  "自主测试任务完成": "travel-guide-coding-test"
 };
 const baseWorkflowTemplateDisplayNameBySemanticKey: Record<string, string> = {
   "creative-writing-task": "创意写作模板",
-  "requirement-planning": "需求拆解模板",
   "research-analysis": "调研分析模板",
   "research-writing-task": "调研写作模板",
   "review-approval": "评审审批模板",
@@ -156,7 +153,6 @@ function parseStoredWorkflowDefinition(definition: string): WorkflowFile | null 
 
     if (
       typeof parsed.name !== "string" ||
-      !["requirement", "task"].includes(parsed.scope) ||
       !Array.isArray(parsed.nodes)
     ) {
       return null;
@@ -166,6 +162,10 @@ function parseStoredWorkflowDefinition(definition: string): WorkflowFile | null 
   } catch {
     return null;
   }
+}
+
+function isLegacyRequirementWorkflowDefinition(definition: string) {
+  return readLegacyWorkflowScope(definition) === "requirement";
 }
 
 function getBaseWorkflowTemplateSemanticKey(workflowFile: WorkflowFileMetadata) {
@@ -628,8 +628,13 @@ export function createApp({
   });
 
   api.get("/workflow-files", async (c) => {
+    const metadata = await deleteDuplicateBaseWorkflowTemplates(workflowFiles);
+
     return c.json({
-      workflowFiles: await deleteDuplicateBaseWorkflowTemplates(workflowFiles)
+      workflowFiles: metadata.filter(
+        (workflowFile) =>
+          !isLegacyRequirementWorkflowDefinition(workflowFile.definition)
+      )
     });
   });
 
@@ -643,6 +648,10 @@ export function createApp({
     }
 
     try {
+      if (readLegacyWorkflowScope(payload.data.source) === "requirement") {
+        throw new Error("Requirement-scoped Workflow Files are no longer supported");
+      }
+
       const workflow = parseWorkflowFile(payload.data.source);
       const existingWorkflowFiles = await workflowFiles.listWorkflowFileMetadata();
       const workflowName = deduplicateWorkflowName(
@@ -654,7 +663,6 @@ export function createApp({
         definition: JSON.stringify(storedWorkflow),
         name: storedWorkflow.name,
         nodeCount: storedWorkflow.nodes.length,
-        scope: storedWorkflow.scope,
         templateType: payload.data.templateType
       });
 
@@ -920,10 +928,6 @@ export function createApp({
         throw new Error("Selected workflow file was not found");
       }
 
-      if (workflowFile.scope !== "task") {
-        throw new Error("Selected workflow file must be task-scoped");
-      }
-
       const settings = await executionSettings.getExecutionSettings();
       const hasOnlineBridgeAgents = await bridges.hasOnlineAgentBindings();
 
@@ -1147,8 +1151,7 @@ async function planRequirementWithModel({
         title: requirement.title
       },
       workflowFile: {
-        name: workflowFile.name,
-        scope: workflowFile.scope
+        name: workflowFile.name
       }
     }),
     system:

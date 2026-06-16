@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import {
   createInMemoryExecutionSettingsRepository,
@@ -11,8 +12,7 @@ import {
   createInMemoryTaskRepository,
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
-  createSqliteWorkflowFileRepository,
-  type WorkflowFileRepository
+  createSqliteWorkflowFileRepository
 } from "./index";
 
 describe("ProjectRepository", () => {
@@ -88,64 +88,25 @@ describe("ProjectRepository", () => {
 });
 
 describe("WorkflowFileRepository", () => {
-  async function expectRequirementWorkflowScopePersists(
-    createRepository: () => WorkflowFileRepository
-  ) {
-    const repository = createRepository();
-    const definition = JSON.stringify({
-      name: "Requirement workflow",
-      nodes: [],
-      scope: "requirement"
-    });
-
-    const workflowFile = await repository.createWorkflowFileMetadata({
-      definition,
-      name: "Requirement workflow",
-      nodeCount: 1,
-      scope: "requirement"
-    });
-
-    expect(workflowFile).toMatchObject({
-      name: "Requirement workflow",
-      scope: "requirement"
-    });
-    expect(JSON.parse(workflowFile.definition)).toMatchObject({
-      scope: "requirement"
-    });
-    await expect(repository.listWorkflowFileMetadata()).resolves.toMatchObject([
-      {
-        id: workflowFile.id,
-        scope: "requirement"
-      }
-    ]);
-    await expect(
-      repository.getWorkflowFileMetadata(workflowFile.id)
-    ).resolves.toMatchObject({
-      scope: "requirement"
-    });
-  }
-
   it("persists workflow file metadata", async () => {
     const repository = createInMemoryWorkflowFileRepository();
 
     const workflowFile = await repository.createWorkflowFileMetadata({
       definition: JSON.stringify({
         name: "Coding workflow",
-        nodes: [],
-        scope: "task"
+        nodes: []
       }),
       name: "Coding workflow",
       nodeCount: 2,
-      scope: "task",
       templateType: "builtin"
     });
 
     expect(workflowFile).toMatchObject({
       name: "Coding workflow",
       nodeCount: 2,
-      scope: "task",
       templateType: "builtin"
     });
+    expect("scope" in workflowFile).toBe(false);
     expect(workflowFile.id).toMatch(/^wff_/);
 
     await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([
@@ -158,12 +119,10 @@ describe("WorkflowFileRepository", () => {
     const workflowFile = await repository.createWorkflowFileMetadata({
       definition: JSON.stringify({
         name: "Coding workflow",
-        nodes: [],
-        scope: "task"
+        nodes: []
       }),
       name: "Coding workflow",
-      nodeCount: 2,
-      scope: "task"
+      nodeCount: 2
     });
 
     const updated = await repository.updateWorkflowFileMetadata({
@@ -188,12 +147,10 @@ describe("WorkflowFileRepository", () => {
     const workflowFile = await repository.createWorkflowFileMetadata({
       definition: JSON.stringify({
         name: "Coding workflow",
-        nodes: [],
-        scope: "task"
+        nodes: []
       }),
       name: "Coding workflow",
-      nodeCount: 2,
-      scope: "task"
+      nodeCount: 2
     });
 
     await repository.deleteWorkflowFileMetadata(workflowFile.id);
@@ -202,29 +159,53 @@ describe("WorkflowFileRepository", () => {
     await expect(repository.listWorkflowFileMetadata()).resolves.toEqual([]);
   });
 
-  it("persists requirement-scoped workflow file metadata in memory", async () => {
-    await expectRequirementWorkflowScopePersists(createInMemoryWorkflowFileRepository);
-  });
-
-  it("persists requirement-scoped workflow file metadata in SQLite", async () => {
+  it("migrates legacy SQLite workflow file scope columns away", async () => {
     const directory = await mkdtemp(join(tmpdir(), "forge-db-"));
 
     try {
       const filename = join(directory, "forge.sqlite");
+      const legacyDb = new Database(filename);
 
-      await expectRequirementWorkflowScopePersists(() =>
-        createSqliteWorkflowFileRepository(filename)
-      );
+      legacyDb.exec(`
+        CREATE TABLE workflow_files (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          node_count INTEGER NOT NULL,
+          definition TEXT NOT NULL DEFAULT '{}',
+          template_type TEXT NOT NULL DEFAULT 'custom',
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO workflow_files (
+          id,
+          name,
+          scope,
+          node_count,
+          definition,
+          template_type,
+          created_at
+        )
+        VALUES (
+          'wff_legacy',
+          'Coding workflow',
+          'task',
+          2,
+          '{"name":"Coding workflow","nodes":[]}',
+          'custom',
+          '2026-01-01T00:00:00.000Z'
+        );
+      `);
+      legacyDb.close();
 
       const reopenedRepository = createSqliteWorkflowFileRepository(filename);
       const [workflowFile] = await reopenedRepository.listWorkflowFileMetadata();
 
       expect(workflowFile).toMatchObject({
-        scope: "requirement"
+        id: "wff_legacy",
+        name: "Coding workflow",
+        nodeCount: 2
       });
-      expect(JSON.parse(workflowFile?.definition ?? "{}")).toMatchObject({
-        scope: "requirement"
-      });
+      expect("scope" in (workflowFile ?? {})).toBe(false);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

@@ -10,7 +10,6 @@ import type {
   WorkflowNode as CoreWorkflowNode,
   WorkflowNodeOutput as CoreWorkflowNodeOutput,
   WorkflowReviewMode as CoreWorkflowReviewMode,
-  WorkflowScope as CoreWorkflowScope,
   WorkflowSkill as CoreWorkflowSkill,
   WorkflowVersion as CoreWorkflowVersion
 } from "@forge/core";
@@ -39,7 +38,6 @@ export type UpdateProjectRequest = {
   name: string;
 };
 
-export type WorkflowScope = CoreWorkflowScope;
 export type WorkflowVersion = CoreWorkflowVersion;
 export type WorkflowReviewMode = CoreWorkflowReviewMode;
 export type WorkflowArtifactType = CoreWorkflowArtifactType;
@@ -56,7 +54,6 @@ export type WorkflowFile = CoreWorkflowFile;
 export type WorkflowFileMetadata = {
   id: string;
   name: string;
-  scope: WorkflowScope;
   nodeCount: number;
   definition: string;
   templateType?: "builtin" | "custom";

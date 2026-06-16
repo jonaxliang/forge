@@ -31,6 +31,7 @@ import {
   type WorkflowFile,
   type WorkflowNodeOutput,
 } from "@forge/sdk";
+import { readLegacyWorkflowScope } from "@forge/core";
 import { StatusBadge } from "@forge/ui";
 import {
   type ChangeEvent,
@@ -70,7 +71,14 @@ type ActivePage =
   | "workflow-templates";
 type ActiveWorkbenchAction = "project" | "requirement" | null;
 type WorkflowTemplateDialog = "new" | "import" | null;
-type WorkflowImportMode = "default" | "source" | "file";
+type WorkflowImportMode = "source" | "file";
+type TemplateBuilderNode = {
+  executor: string;
+  id: string;
+  maxRetries: number;
+  output: string;
+  type: string;
+};
 type SettingsSection = "basic" | "model";
 type ModelSettingsSection = "model" | "local-bridge";
 type Messages = ReturnType<typeof getMessages>;
@@ -392,37 +400,6 @@ function MascotLaneEmpty({
 }
 
 const defaultWorkflowSource = defaultWorkflowTemplates[0].source;
-const defaultSelectableWorkflowTemplates = defaultWorkflowTemplates.filter(
-  (template) => template.workflow.scope === "task"
-);
-const defaultSelectableWorkflowTemplate =
-  defaultSelectableWorkflowTemplates[0] ?? defaultWorkflowTemplates[0];
-const baseTemplateDisplayNameBySourceName: Record<string, string> = {
-  "autonomous research plan": "调研分析模板",
-  "code implementation": "代码编写模板",
-  "creative writing requirement": "创意写作模板",
-  "creative writing task": "创意写作模板",
-  "human approval": "评审审批模板",
-  "requirement split": "需求拆解模板",
-  "research & writing requirement": "调研写作模板",
-  "research & writing task": "调研写作模板",
-  "research analysis": "调研分析模板",
-  "software change requirement": "需求拆解模板",
-  "software change task": "代码编写模板",
-  "travel guide coding test": "旅行指南编写测试模板",
-  "writing review": "写作编辑模板",
-  "代码编写模板": "代码编写模板",
-  "创意写作拆解模板": "创意写作模板",
-  "创意写作模板": "创意写作模板",
-  "调研分析模板": "调研分析模板",
-  "调研写作拆解模板": "调研写作模板",
-  "调研写作模板": "调研写作模板",
-  "评审审批模板": "评审审批模板",
-  "写作编辑模板": "写作编辑模板",
-  "旅行指南编写测试模板": "旅行指南编写测试模板",
-  "自主测试任务完成": "旅行指南编写测试模板",
-  "需求拆解模板": "需求拆解模板"
-};
 
 function getWorkflowOutputLabel(output: WorkflowNodeOutput | string) {
   if (typeof output === "string") {
@@ -636,156 +613,114 @@ function createWorkflowDagLayout(workflow: WorkflowFile): WorkflowDagLayout {
 
 function parseWorkflowDefinition(definition: string): WorkflowFile | null {
   try {
-    const parsed = JSON.parse(definition) as WorkflowFile;
+    const parsed = JSON.parse(definition) as Partial<WorkflowFile>;
 
     if (
       typeof parsed.name !== "string" ||
-      !["requirement", "task"].includes(parsed.scope) ||
       !Array.isArray(parsed.nodes)
     ) {
       return null;
     }
 
-    return parsed;
+    return parsed as WorkflowFile;
   } catch {
     return null;
   }
 }
 
-function normalizeBaseTemplateName(name: string) {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+\d+$/, "");
+function getWorkflowDefinitionScope(workflowFile: WorkflowFileMetadata) {
+  const scope =
+    getJsonWorkflowDefinitionScope(workflowFile.definition) ??
+    readLegacyWorkflowScope(workflowFile.definition);
+
+  return scope === "requirement" ? "requirement" : "task";
 }
 
-function getBaseTemplateDisplayName(workflowFile: WorkflowFileMetadata) {
-  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
-  const sourceNames = [workflowFile.name, parsedWorkflow?.name ?? ""];
+function getJsonWorkflowDefinitionScope(definition: string) {
+  try {
+    const parsed = JSON.parse(definition) as { scope?: unknown };
 
-  for (const sourceName of sourceNames) {
-    const displayName =
-      baseTemplateDisplayNameBySourceName[normalizeBaseTemplateName(sourceName)];
-
-    if (displayName) {
-      return displayName;
-    }
+    return typeof parsed.scope === "string" ? parsed.scope : null;
+  } catch {
+    return null;
   }
-
-  return "";
 }
 
 function isTaskWorkflowTemplate(workflowFile: WorkflowFileMetadata) {
-  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
-
-  return (
-    workflowFile.scope === "task" &&
-    (parsedWorkflow?.scope ?? workflowFile.scope) === "task"
-  );
+  return getWorkflowDefinitionScope(workflowFile) === "task";
 }
 
 function getVisibleWorkflowTemplates(workflowFiles: WorkflowFileMetadata[]) {
-  const workflowFileByDisplayKey = new Map<string, WorkflowFileMetadata>();
-
-  for (const workflowFile of workflowFiles) {
-    if (!isTaskWorkflowTemplate(workflowFile)) {
-      continue;
-    }
-
-    const displayName = getBaseTemplateDisplayName(workflowFile);
-    const displayKey = displayName || `workflow:${workflowFile.id}`;
-    const currentWorkflowFile = workflowFileByDisplayKey.get(displayKey);
-
-    if (
-      !currentWorkflowFile ||
-      workflowFile.nodeCount > currentWorkflowFile.nodeCount
-    ) {
-      workflowFileByDisplayKey.set(displayKey, workflowFile);
-    }
-  }
-
-  return [...workflowFileByDisplayKey.values()];
+  return workflowFiles.filter(isTaskWorkflowTemplate);
 }
 
-function getWorkspaceWorkflowTemplates(workflowFiles: WorkflowFileMetadata[]) {
-  return getVisibleWorkflowTemplates(workflowFiles).filter(
-    (workflowFile) =>
-      workflowFile.templateType !== "builtin" &&
-      !getBaseTemplateDisplayName(workflowFile)
-  );
-}
-
-type WorkflowBusinessFunction = keyof Messages["templatePage"]["businessFunctions"];
-
-function getWorkflowBusinessFunction(workflowFile: WorkflowFileMetadata): WorkflowBusinessFunction {
-  const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
-  const nodes = parsedWorkflow?.nodes ?? [];
-  const searchableText = [
-    workflowFile.name,
-    workflowFile.scope,
-    parsedWorkflow?.name,
-    parsedWorkflow?.scope,
-    ...nodes.flatMap((node) => [
-      node.id,
-      node.type,
-      node.executor,
-      ...node.outputs.map(getWorkflowNodeOutputLabel)
-    ])
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  if (
-    /research|survey|investigat|compare|recommend|调研|调查|研究|方案比较/.test(
-      searchableText
-    )
-  ) {
-    return "research";
-  }
-
-  if (/requirement|planning|task-drafting|split|需求|拆解|计划/.test(searchableText)) {
-    return "requirementPlanning";
-  }
-
-  if (
-    /code|coding|implement|diff\.patch|test-and-typecheck|coder|编码|代码/.test(
-      searchableText
-    )
-  ) {
-    return "codeImplementation";
-  }
-
-  if (/writing|draft|editor|editorial|article|report|写作|撰写|编辑/.test(searchableText)) {
-    return "writingEditing";
-  }
-
-  if (/approval|approve|human-review|reviewer|评审|审批/.test(searchableText)) {
-    return "reviewApproval";
-  }
-
-  return "taskExecution";
+function getWorkflowTemplateType(workflowFile: WorkflowFileMetadata) {
+  return workflowFile.templateType === "builtin" ? "builtin" : "custom";
 }
 
 function getWorkflowTemplateDisplayName(
   t: Messages,
   workflowFile: WorkflowFileMetadata
 ) {
-  const baseTemplateDisplayName = getBaseTemplateDisplayName(workflowFile);
-
-  if (baseTemplateDisplayName) {
-    return baseTemplateDisplayName;
-  }
-
   const parsedWorkflow = parseWorkflowDefinition(workflowFile.definition);
   const displayName = workflowFile.name.trim() || parsedWorkflow?.name.trim();
 
-  return (
-    displayName ||
-    t.templatePage.businessTemplateName(
-      t.templatePage.businessFunctions[getWorkflowBusinessFunction(workflowFile)]
-    )
-  );
+  return displayName || t.templatePage.unnamedWorkflowTemplate;
+}
+
+function quoteWorkflowValue(value: string) {
+  return JSON.stringify(value.trim());
+}
+
+function createWorkflowSourceFromBuilder(
+  name: string,
+  nodes: TemplateBuilderNode[]
+) {
+  const safeName = name.trim() || "Untitled Workflow template";
+  const safeNodes =
+    nodes.length > 0
+      ? nodes
+      : [
+          {
+            executor: "agent:worker",
+            id: "work",
+            maxRetries: 1,
+            output: "work.md",
+            type: "task-work"
+          }
+        ];
+
+  return `name: ${quoteWorkflowValue(safeName)}
+version: "1.1"
+inputs:
+  - id: task
+    type: task
+    required: true
+nodes:
+${safeNodes
+  .map((node, index) => {
+    const safeNodeId = node.id.trim() || `node-${index + 1}`;
+    const previousNodeId =
+      safeNodes[index - 1]?.id.trim() || `node-${index}`;
+    const dependsOn =
+      index === 0
+        ? ""
+        : `    dependsOn: ${quoteWorkflowValue(previousNodeId)}\n`;
+
+    return `  - id: ${quoteWorkflowValue(safeNodeId)}
+    type: ${quoteWorkflowValue(node.type.trim() || "task-work")}
+${dependsOn}    executor: ${quoteWorkflowValue(node.executor.trim() || "agent:worker")}
+    outputs:
+      - kind: file
+        ref: ${quoteWorkflowValue(node.output.trim() || `${safeNodeId}.md`)}
+    exit:
+      maxRetries: ${Number.isFinite(node.maxRetries) ? Math.max(0, Math.trunc(node.maxRetries)) : 1}
+      review: model
+      criteria:
+        - Node output is complete enough for the next Workflow Node.`;
+  })
+  .join("\n")}
+`;
 }
 
 export function App({
@@ -850,11 +785,17 @@ export function App({
   });
   const [workflowSource, setWorkflowSource] = useState("");
   const [workflowImportMode, setWorkflowImportMode] =
-    useState<WorkflowImportMode>(
-      initialWorkflowTemplateDialog === "import" ? "source" : "default"
-    );
-  const [selectedDefaultTemplateKey, setSelectedDefaultTemplateKey] =
-    useState<string>(defaultSelectableWorkflowTemplate.key);
+    useState<WorkflowImportMode>("source");
+  const [builderWorkflowName, setBuilderWorkflowName] = useState("");
+  const [builderNodes, setBuilderNodes] = useState<TemplateBuilderNode[]>([
+    {
+      executor: "agent:worker",
+      id: "work",
+      maxRetries: 1,
+      output: "work.md",
+      type: "task-work"
+    }
+  ]);
   const [selectedPreviewWorkflowId, setSelectedPreviewWorkflowId] = useState(
     initialPreviewWorkflowId
   );
@@ -1092,9 +1033,9 @@ export function App({
 
   function handleOpenWorkflowTemplateDialog(dialog: Exclude<WorkflowTemplateDialog, null>) {
     setActiveWorkflowTemplateDialog(dialog);
-    setWorkflowImportMode(dialog === "new" ? "default" : "source");
+    setWorkflowImportMode("source");
 
-    if (dialog === "import" && workflowSource === defaultWorkflowSource) {
+    if (dialog === "import") {
       setWorkflowSource("");
     }
   }
@@ -1178,21 +1119,8 @@ export function App({
       key: "importingWorkflowFile"
     });
 
-    const selectedDefaultTemplate =
-      defaultSelectableWorkflowTemplates.find(
-        (template) => template.key === selectedDefaultTemplateKey
-      ) ?? defaultSelectableWorkflowTemplate;
-    const source =
-      workflowImportMode === "default"
-        ? selectedDefaultTemplate.source
-        : workflowSource;
-
     try {
-      const result = await importWorkflowFile(
-        source,
-        "",
-        workflowImportMode === "default" ? { templateType: "builtin" } : {}
-      );
+      const result = await importWorkflowFile(workflowSource);
 
       setWorkflowPreview(result.workflow);
       setWorkflowFiles((currentWorkflowFiles) => [
@@ -1204,6 +1132,49 @@ export function App({
         [result.workflowFile.id]: result.workflowFile.name
       }));
       setSelectedRequirementWorkflowId(result.workflowFile.id);
+      setSelectedTaskWorkflowId(result.workflowFile.id);
+      setActiveWorkflowTemplateDialog(null);
+      setWorkflowImportStatus({
+        kind: "named",
+        key: "importedWorkflow",
+        name: result.workflowFile.name
+      });
+    } catch (error) {
+      setWorkflowPreview(null);
+      setWorkflowImportStatus(
+        error instanceof Error
+          ? { kind: "error", message: error.message }
+          : { kind: "status", key: "workflowImportFailed" }
+      );
+    }
+  }
+
+  async function handleCreateWorkflowFromBuilder(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+    setWorkflowImportStatus({
+      kind: "status",
+      key: "importingWorkflowFile"
+    });
+
+    const source = createWorkflowSourceFromBuilder(
+      builderWorkflowName,
+      builderNodes
+    );
+
+    try {
+      const result = await importWorkflowFile(source);
+
+      setWorkflowPreview(result.workflow);
+      setWorkflowFiles((currentWorkflowFiles) => [
+        ...currentWorkflowFiles,
+        result.workflowFile
+      ]);
+      setEditedWorkflowNames((currentNames) => ({
+        ...currentNames,
+        [result.workflowFile.id]: result.workflowFile.name
+      }));
       setSelectedTaskWorkflowId(result.workflowFile.id);
       setActiveWorkflowTemplateDialog(null);
       setWorkflowImportStatus({
@@ -1619,14 +1590,25 @@ export function App({
       settingsStatus,
       projectStatus
     ].find((status) => !isIdleStatus(status));
-  const workspaceWorkflowTemplates = getWorkspaceWorkflowTemplates(workflowFiles);
+  const projectWorkflowTemplates = getVisibleWorkflowTemplates(workflowFiles).filter(
+    (workflowFile) => getWorkflowTemplateType(workflowFile) === "custom"
+  );
+  const visibleWorkflowTemplateCount =
+    defaultWorkflowTemplates.length + projectWorkflowTemplates.length;
   const progressSteps = [
-    [t.progress.recipes, workspaceWorkflowTemplates.length],
+    [t.progress.workflowTemplates, visibleWorkflowTemplateCount],
     [t.progress.ideas, projectRequirements.length],
     [t.progress.tasks, projectTasks.length]
   ] as const;
-  const visibleWorkflowTemplates = getVisibleWorkflowTemplates(workflowFiles);
-  const topWorkflowTemplates = workspaceWorkflowTemplates.slice(0, 3);
+  const visibleWorkflowNodeCount =
+    defaultWorkflowTemplates.reduce(
+      (total, template) => total + template.workflow.nodes.length,
+      0
+    ) +
+    projectWorkflowTemplates.reduce(
+      (total, workflowFile) => total + workflowFile.nodeCount,
+      0
+    );
   const hasProjects = projects.length > 0;
   const hasGeneratedWork =
     projectRequirements.length > 0 ||
@@ -1687,10 +1669,11 @@ export function App({
       <button type="submit">{t.setup.createProject}</button>
     </form>
   );
-  const selectedDefaultTemplate =
-    defaultSelectableWorkflowTemplates.find(
-      (template) => template.key === selectedDefaultTemplateKey
-    ) ?? defaultSelectableWorkflowTemplate;
+  const selectedBuiltinTemplate = selectedPreviewWorkflowId.startsWith("builtin:")
+    ? defaultWorkflowTemplates.find(
+        (template) => `builtin:${template.key}` === selectedPreviewWorkflowId
+      ) ?? null
+    : null;
   const selectedWorkflowFile =
     workflowFiles.find(
       (workflowFile) =>
@@ -1701,12 +1684,12 @@ export function App({
     ? parseWorkflowDefinition(selectedWorkflowFile.definition)
     : null;
   const selectedWorkflowPreview =
+    selectedBuiltinTemplate?.workflow ??
     parsedSelectedWorkflow ??
     (selectedWorkflowFile?.id === selectedPreviewWorkflowId
       ? workflowPreview
       : null);
   const isNewWorkflowDialog = activeWorkflowTemplateDialog === "new";
-  const isImportWorkflowDialog = activeWorkflowTemplateDialog === "import";
   const workflowTemplateDialogTitle = isNewWorkflowDialog
     ? t.templatePage.newWorkflow
     : t.templatePage.importWorkflow;
@@ -1987,9 +1970,149 @@ export function App({
     );
   }
 
-  const workflowForm = (
+  function updateBuilderNode(
+    index: number,
+    update: Partial<TemplateBuilderNode>
+  ) {
+    setBuilderNodes((currentNodes) =>
+      currentNodes.map((node, nodeIndex) =>
+        nodeIndex === index ? { ...node, ...update } : node
+      )
+    );
+  }
+
+  function addBuilderNode() {
+    setBuilderNodes((currentNodes) => [
+      ...currentNodes,
+      {
+        executor: "agent:worker",
+        id: `node-${currentNodes.length + 1}`,
+        maxRetries: 1,
+        output: `node-${currentNodes.length + 1}.md`,
+        type: "task-work"
+      }
+    ]);
+  }
+
+  function removeBuilderNode(index: number) {
+    setBuilderNodes((currentNodes) =>
+      currentNodes.length <= 1
+        ? currentNodes
+        : currentNodes.filter((_, nodeIndex) => nodeIndex !== index)
+    );
+  }
+
+  const workflowBuilderForm = (
+    <form className="stack-form" onSubmit={handleCreateWorkflowFromBuilder}>
+      <label>
+        {t.templatePage.builderNameLabel}
+        <input
+          minLength={1}
+          onChange={(event) => setBuilderWorkflowName(event.target.value)}
+          required
+          value={builderWorkflowName}
+        />
+      </label>
+      <div className="template-builder-panel">
+        <div className="section-heading-with-action">
+          <div>
+            <p className="template-builder-title">
+              {t.templatePage.builderNodesTitle}
+            </p>
+            <p>{t.templatePage.createDescription}</p>
+          </div>
+          <button
+            className="button-secondary"
+            onClick={addBuilderNode}
+            type="button"
+          >
+            {t.templatePage.addWorkflowNode}
+          </button>
+        </div>
+        <div className="template-builder-node-list">
+          {builderNodes.map((node, index) => (
+            <article className="template-builder-node" key={index}>
+              <div className="template-builder-node-heading">
+                <strong>{String(index + 1).padStart(2, "0")}</strong>
+                <button
+                  className="button-secondary"
+                  disabled={builderNodes.length <= 1}
+                  onClick={() => removeBuilderNode(index)}
+                  type="button"
+                >
+                  {t.templatePage.removeWorkflowNode}
+                </button>
+              </div>
+              <div className="template-builder-grid">
+                <label>
+                  {t.templatePage.builderNodeIdLabel}
+                  <input
+                    minLength={1}
+                    onChange={(event) =>
+                      updateBuilderNode(index, { id: event.target.value })
+                    }
+                    required
+                    value={node.id}
+                  />
+                </label>
+                <label>
+                  {t.templatePage.builderNodeTypeLabel}
+                  <input
+                    minLength={1}
+                    onChange={(event) =>
+                      updateBuilderNode(index, { type: event.target.value })
+                    }
+                    required
+                    value={node.type}
+                  />
+                </label>
+                <label>
+                  {t.templatePage.builderExecutorLabel}
+                  <input
+                    minLength={1}
+                    onChange={(event) =>
+                      updateBuilderNode(index, { executor: event.target.value })
+                    }
+                    required
+                    value={node.executor}
+                  />
+                </label>
+                <label>
+                  {t.templatePage.builderOutputLabel}
+                  <input
+                    minLength={1}
+                    onChange={(event) =>
+                      updateBuilderNode(index, { output: event.target.value })
+                    }
+                    required
+                    value={node.output}
+                  />
+                </label>
+                <label>
+                  {t.templatePage.builderRetriesLabel}
+                  <input
+                    min={0}
+                    onChange={(event) =>
+                      updateBuilderNode(index, {
+                        maxRetries: Number(event.target.value)
+                      })
+                    }
+                    required
+                    type="number"
+                    value={node.maxRetries}
+                  />
+                </label>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+      <button type="submit">{t.templatePage.createWorkflow}</button>
+    </form>
+  );
+
+  const workflowImportForm = (
     <form className="stack-form" onSubmit={handleImportWorkflow}>
-      {isImportWorkflowDialog ? (
         <div
           className="template-import-modes template-import-modes-compact"
           aria-label={t.templatePage.importModeLabel}
@@ -2011,40 +2134,6 @@ export function App({
             {t.templatePage.importModeFile}
           </button>
         </div>
-      ) : null}
-      {isNewWorkflowDialog ? (
-        <div className="default-template-picker">
-          <div>
-            <p className="template-picker-title">
-              {t.templatePage.defaultTemplatesTitle}
-            </p>
-            <p>{t.templatePage.defaultTemplatesDescription}</p>
-          </div>
-          <div className="default-template-grid">
-            {defaultSelectableWorkflowTemplates.map((template) => (
-              <button
-                aria-pressed={selectedDefaultTemplateKey === template.key}
-                className="default-template-card"
-                key={template.key}
-                onClick={() => {
-                  setSelectedDefaultTemplateKey(template.key);
-                  setWorkflowImportMode("default");
-                  setSelectedPreviewWorkflowId("");
-                }}
-                type="button"
-              >
-                <strong>{template.workflow.name}</strong>
-                <span>
-                  {t.templatePage.templateSummary(template.workflow.nodes.length)}
-                </span>
-                <small>
-                  {t.templatePage.defaultTemplateDescriptions[template.key]}
-                </small>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
       <label>
         {workflowImportMode === "file"
           ? t.templatePage.fileSourceLabel
@@ -2058,29 +2147,21 @@ export function App({
           />
         ) : null}
         <textarea
-          className="recipe-editor"
+          className="workflow-source-editor"
           data-testid="workflow-source-textarea"
           onChange={(event) => {
             setWorkflowImportMode("source");
             setWorkflowSource(event.target.value);
           }}
-          readOnly={workflowImportMode === "default"}
-          required={workflowImportMode !== "default"}
+          required={workflowImportMode !== "file"}
           spellCheck={false}
-          value={
-            workflowImportMode === "default"
-              ? selectedDefaultTemplate.source
-              : workflowSource
-          }
+          value={workflowSource}
         />
       </label>
       {workflowImportMode === "file" ? (
         <p className="form-helper">{t.templatePage.fileSourceHelp}</p>
       ) : null}
-      {isNewWorkflowDialog && workflowImportMode === "default"
-        ? renderWorkflowPreviewGraph(selectedDefaultTemplate.workflow)
-        : null}
-      <button type="submit">{t.setup.importRecipe}</button>
+      <button type="submit">{t.setup.importWorkflowTemplate}</button>
     </form>
   );
   const requirementForm = (
@@ -2852,16 +2933,11 @@ export function App({
             <div className="template-overview-grid">
               <article className="template-stat">
                 <span>{t.templatePage.totalTemplates}</span>
-                <strong>{visibleWorkflowTemplates.length}</strong>
+                <strong>{visibleWorkflowTemplateCount}</strong>
               </article>
               <article className="template-stat">
                 <span>{t.templatePage.totalWorkflowNodes}</span>
-                <strong>
-                  {visibleWorkflowTemplates.reduce(
-                    (total, workflowFile) => total + workflowFile.nodeCount,
-                    0
-                  )}
-                </strong>
+                <strong>{visibleWorkflowNodeCount}</strong>
               </article>
             </div>
             <section className="template-library-panel template-library-panel-thin">
@@ -2871,8 +2947,7 @@ export function App({
                 <p>{t.templatePage.libraryDescription}</p>
               </div>
               <div className="template-card-list template-thin-list">
-                {visibleWorkflowTemplates.length === 0 ? (
-                  defaultSelectableWorkflowTemplates.map((template) => (
+                {defaultWorkflowTemplates.map((template) => (
                     <article
                       className="template-card template-thin-row"
                       key={template.key}
@@ -2893,13 +2968,15 @@ export function App({
                             template.workflow.nodes.length
                           )}
                         </span>
+                        <span className="template-type-badge">
+                          {t.templatePage.templateTypeLabels.builtin}
+                        </span>
                       </div>
                       <div className="template-row-actions">
                         <button
                           className="button-secondary"
                           onClick={() => {
-                            setSelectedDefaultTemplateKey(template.key);
-                            handleOpenWorkflowTemplateDialog("new");
+                            setSelectedPreviewWorkflowId(`builtin:${template.key}`);
                           }}
                           type="button"
                         >
@@ -2907,14 +2984,17 @@ export function App({
                         </button>
                       </div>
                     </article>
-                  ))
-                ) : (
-                  visibleWorkflowTemplates.map((workflowFile) => {
+                  ))}
+                {projectWorkflowTemplates.map((workflowFile) => {
                     const isEditing = editingWorkflowId === workflowFile.id;
                     const displayName = getWorkflowTemplateDisplayName(
                       t,
                       workflowFile
                     );
+                    const templateType =
+                      t.templatePage.templateTypeLabels[
+                        getWorkflowTemplateType(workflowFile)
+                      ];
                     return (
                       <article
                         className="template-card template-thin-row"
@@ -2928,6 +3008,9 @@ export function App({
                             {t.templatePage.templateSummary(
                               workflowFile.nodeCount
                             )}
+                          </span>
+                          <span className="template-type-badge">
+                            {templateType}
                           </span>
                         </div>
                         {isEditing ? (
@@ -3001,8 +3084,7 @@ export function App({
                         )}
                       </article>
                     );
-                  })
-                )}
+                  })}
               </div>
             </section>
           </section>
@@ -3114,7 +3196,7 @@ export function App({
                 </h2>
                 <p>
                   {isNewWorkflowDialog
-                    ? t.templatePage.defaultTemplatesDescription
+                    ? t.templatePage.createDescription
                     : t.templatePage.importDescription}
                 </p>
               </div>
@@ -3127,7 +3209,7 @@ export function App({
                 {t.workbench.close}
               </button>
             </div>
-            {workflowForm}
+            {isNewWorkflowDialog ? workflowBuilderForm : workflowImportForm}
             <StatusMascotMessage
               className="live-note"
               status={workflowImportStatus}
@@ -3156,9 +3238,10 @@ export function App({
               <div className="section-heading">
                 <p className="studio-label">{t.templatePage.previewEyebrow}</p>
                 <h2 id="workflow-preview-modal-heading">
-                  {selectedWorkflowFile
-                    ? getWorkflowTemplateDisplayName(t, selectedWorkflowFile)
-                    : selectedWorkflowPreview.name}
+                  {selectedBuiltinTemplate?.workflow.name ??
+                    (selectedWorkflowFile
+                      ? getWorkflowTemplateDisplayName(t, selectedWorkflowFile)
+                      : selectedWorkflowPreview.name)}
                 </h2>
                 <p>{t.templatePage.previewDescription}</p>
               </div>
@@ -3228,14 +3311,18 @@ export function App({
                 projectRequirements.map((requirement) => (
                   <article className="compact-record" key={requirement.id}>
                     <div className="record-header">
-                      <div>
+                      <div className="compact-record-main">
                         <h3>{requirement.title}</h3>
-                        <p>
-                          {t.workspace.requirementStatus[requirement.status]}
-                          {requirement.errorMessage
-                            ? ` / ${requirement.errorMessage}`
-                            : ""}
-                        </p>
+                        <div className="compact-record-meta">
+                          <span className="requirement-current-status">
+                            <StatusBadge tone={getNodeRunTone(requirement.status)}>
+                              {t.workspace.requirementStatus[requirement.status]}
+                            </StatusBadge>
+                          </span>
+                        </div>
+                        {requirement.errorMessage ? (
+                          <p>{requirement.errorMessage}</p>
+                        ) : null}
                       </div>
                       <div className="compact-record-actions">
                         {(() => {
@@ -3354,7 +3441,7 @@ export function App({
                               </div>
                               <div className="task-run-controls">
                                 <label>
-                                  {t.workspace.runRecipeLabel}
+                                  {t.workspace.runWorkflowTemplateLabel}
                                   <select
                                     data-testid="task-workflow-select"
                                     disabled={taskWorkflowFiles.length === 0}
@@ -3367,7 +3454,7 @@ export function App({
                                   >
                                     {taskWorkflowFiles.length === 0 ? (
                                       <option value="">
-                                        {t.workspace.importTaskRecipeFirst}
+                                        {t.workspace.importTaskWorkflowTemplateFirst}
                                       </option>
                                     ) : null}
                                     {taskWorkflowFiles.map((workflowFile) => (
@@ -3453,49 +3540,17 @@ export function App({
             </div>
           </section>
 
-          <section
-            aria-label={t.workspace.recipeAndHistoryLabel}
-            className="work-section workspace-template-section"
-          >
-            <div className="section-heading">
-              <p className="studio-label">{t.workspace.recipeMapEyebrow}</p>
-              <h2>{t.workspace.recipeMapHeading}</h2>
-            </div>
-            <div className="workspace-template-list">
-              <div className="workspace-template-summary">
-                <strong>
-                  {t.workspace.templateCount(workspaceWorkflowTemplates.length)}
-                </strong>
-              </div>
-              {topWorkflowTemplates.length > 0 ? (
-                <div className="compact-list">
-                  {topWorkflowTemplates.map((workflowFile) => (
-                    <article className="compact-record" key={workflowFile.id}>
-                      <div className="record-header">
-                        <div>
-                          <h3>{getWorkflowTemplateDisplayName(t, workflowFile)}</h3>
-                          <p>
-                            {t.workspace.recipeSummary(workflowFile.nodeCount)}
-                          </p>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              <button
-                className="button-secondary"
-                onClick={() => handleNavigatePage("workflow-templates")}
-                type="button"
-              >
-                {t.workspace.moreTemplates}
-              </button>
-            </div>
-          </section>
         </section>
       </div>
         </>
       ) : null}
+      <footer className="studio-footer">
+        <div>
+          <strong>{t.footer.brand}</strong>
+          <span>{t.footer.description}</span>
+        </div>
+        <span className="studio-footer-copyright">{t.footer.copyright}</span>
+      </footer>
     </main>
   );
 }

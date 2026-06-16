@@ -15,11 +15,10 @@ AFK
 - [ ] Server 在 Workflow Run 查询结果中返回 Node Run 的 Agent Binding 信息或 ID。
 - [ ] Control Room 展示 Node Run 分配的 Hosted Agent。
 - [ ] 未配置 Agent Binding 时给出明确阻塞状态，不再依赖全局 local Agent proxy 作为领域概念。
-- [ ] 测试覆盖成功分配、缺失 binding、Task 不存在和 Workflow File 作用域错误。
+- [ ] 测试覆盖成功分配、缺失 binding、Task 不存在和无效 Workflow File。
 
 ## Blocked by
 
 - [0018 Agent Binding 注册与管理最小链路](./0018-agent-binding-registration.md)
 - [0006 Workflow Run 与 Node Run 状态机闭环](./0006-workflow-run-node-state-machine.md)
 - [0017 禁止孤儿 Task Workflow Run](./0017-prevent-orphan-workflow-runs.md)
-

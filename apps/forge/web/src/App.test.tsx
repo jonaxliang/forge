@@ -27,6 +27,64 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("Recipe map");
   });
 
+  it("counts available Workflow templates on the home progress ribbon", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Check the template count.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_test",
+            projectId: "proj_test",
+            status: "init" as const,
+            title: "Template count",
+            updatedAt: timestamp,
+            workflowFileId: "wf_requirement"
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Project QA workflow",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:qa",
+                  exit: { maxRetries: 1 },
+                  id: "qa",
+                  outputs: ["qa.md"],
+                  type: "quality-review"
+                }
+              ]
+            }),
+            id: "wf_project_qa",
+            name: "Project QA workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("<span>Workflow templates</span>");
+    expect(markup).toContain("<strong>4</strong>");
+    expect(markup).not.toContain("<span>Recipes</span>");
+  });
+
   it("puts Project switching in the top navigation instead of quick actions", () => {
     const markup = renderToStaticMarkup(<App />);
 
@@ -160,7 +218,7 @@ describe("App workbench layout", () => {
     expect(markup.match(/Workspace preferences/g) ?? []).toHaveLength(1);
   });
 
-  it("shows a workflow template list summary with top three user templates", () => {
+  it("keeps workflow template summaries out of the home workspace", () => {
     const markup = renderToStaticMarkup(
       <App
         initialProjects={[
@@ -192,6 +250,7 @@ describe("App workbench layout", () => {
             createdAt: "2026-06-14T00:00:00.000Z",
             definition: JSON.stringify({
               name: "Requirement split",
+              scope: "requirement",
               nodes: [
                 {
                   dependsOn: [],
@@ -202,12 +261,10 @@ describe("App workbench layout", () => {
                   type: "task-drafting"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_1",
             name: "Requirement split",
             nodeCount: 2,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -223,12 +280,10 @@ describe("App workbench layout", () => {
                   type: "code-change"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_2",
             name: "Task run",
             nodeCount: 3,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -244,12 +299,10 @@ describe("App workbench layout", () => {
                   type: "human-review"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_3",
             name: "Review",
             nodeCount: 1,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -265,12 +318,10 @@ describe("App workbench layout", () => {
                   type: "deployment"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_4",
             name: "Deploy",
             nodeCount: 4,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -286,31 +337,27 @@ describe("App workbench layout", () => {
                   type: "writing-draft"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_5",
             name: "Hidden fourth",
             nodeCount: 5,
-            scope: "task"
           }
         ]}
       />
     );
 
-    expect(markup).toContain("Template list");
-    expect(markup).toContain("4 templates");
+    expect(markup).not.toContain("Template list");
+    expect(markup).not.toContain("workspace-template-section");
     expect(markup).not.toContain("需求拆解模板");
-    expect(markup).toContain("Task run");
-    expect(markup).toContain("Review");
-    expect(markup).toContain("Deploy");
-    expect(markup).toContain("3 Nodes");
+    expect(markup).not.toContain("Deploy");
     expect(markup).not.toContain("Hidden fourth");
-    expect(markup).toContain("More templates");
-    expect(markup).not.toContain("Recipe map");
+    expect(markup).toContain("studio-footer");
+    expect(markup).toContain("AI work orchestration control plane");
+    expect(markup).toContain("@2026 Forge");
     expect(markup).not.toContain(">requirement<");
   });
 
-  it("collapses the workspace template list when only built-in examples exist", () => {
+  it("does not replace the removed home template list with an empty state", () => {
     const markup = renderToStaticMarkup(
       <App
         initialProjects={[
@@ -352,12 +399,10 @@ describe("App workbench layout", () => {
                   type: "task-drafting"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_requirement",
             name: "Requirement split",
             nodeCount: 2,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -373,12 +418,10 @@ describe("App workbench layout", () => {
                   type: "research-analysis"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_research",
             name: "Research Analysis",
             nodeCount: 3,
-            scope: "task"
           },
           {
             createdAt: "2026-06-14T00:00:00.000Z",
@@ -394,27 +437,25 @@ describe("App workbench layout", () => {
                   type: "coding"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_travel",
             name: "自主测试任务完成",
             nodeCount: 1,
-            scope: "task"
           }
         ]}
       />
     );
 
-    expect(markup).toContain("Template list");
-    expect(markup).toContain("0 templates");
-    expect(markup).toContain("More templates");
+    expect(markup).not.toContain("Template list");
+    expect(markup).not.toContain("workspace-template-section");
     expect(markup).not.toContain("需求拆解模板");
     expect(markup).not.toContain("调研分析模板");
     expect(markup).not.toContain("旅行指南编写测试模板");
     expect(markup).not.toContain("No recipe preview");
+    expect(markup).toContain("studio-footer");
   });
 
-  it("places Workflow templates below the Task Board instead of in a side rail", () => {
+  it("places the general footer below the Task Board", () => {
     const markup = renderToStaticMarkup(
       <App
         initialProjects={[
@@ -448,16 +489,16 @@ describe("App workbench layout", () => {
             id: "wf_1",
             name: "Task run",
             nodeCount: 3,
-            scope: "task"
           }
         ]}
       />
     );
 
     expect(markup).not.toContain("workspace-aside");
-    expect(markup).toContain("workspace-template-section");
+    expect(markup).not.toContain("workspace-template-section");
+    expect(markup).toContain("studio-footer");
     expect(markup.indexOf('class="task-board"')).toBeLessThan(
-      markup.indexOf("workspace-template-section")
+      markup.indexOf("studio-footer")
     );
   });
 
@@ -541,6 +582,67 @@ describe("App workbench layout", () => {
     expect(pageMarkup).not.toContain('aria-label="Rename Requirements page"');
     expect(pageMarkup).not.toContain("Save name");
     expect(pageMarkup).not.toContain("No requirement created yet");
+  });
+
+  it("shows current Requirement status and task generation from the home page", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const projects = [
+      {
+        artifactStorageMode: "local-only" as const,
+        createdAt: timestamp,
+        dbStrategy: "sqlite" as const,
+        id: "proj_test",
+        name: "Project",
+        updatedAt: timestamp
+      }
+    ];
+    const requirements = [
+      {
+        body: "Turn the approved requirement into executable Tasks.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage: null,
+        id: "req_ready",
+        projectId: "proj_test",
+        status: "ready_to_generate_tasks" as const,
+        title: "Approved requirement",
+        updatedAt: timestamp,
+        workflowFileId: "wf_1"
+      }
+    ];
+
+    const markup = renderToStaticMarkup(
+      <App
+        initialDecompositionResults={[
+          {
+            createdAt: timestamp,
+            id: "dec_ready",
+            items: [
+              {
+                body: "Create the first executable Task.",
+                sortOrder: 0,
+                title: "First generated Task"
+              }
+            ],
+            projectId: "proj_test",
+            requirementId: "req_ready",
+            summary: "Ready to generate Tasks.",
+            updatedAt: timestamp
+          }
+        ]}
+        initialProjects={projects}
+        initialRequirements={requirements}
+      />
+    );
+
+    expect(markup).toContain("Current Requirement");
+    expect(markup).toContain("Approved requirement");
+    expect(markup).toContain('class="requirement-current-status"');
+    expect(markup).toContain("Ready to generate Tasks");
+    expect(markup).toContain("Generate Tasks");
+    expect(markup.indexOf('class="requirement-current-status"')).toBeLessThan(
+      markup.indexOf('class="compact-record-actions"')
+    );
   });
 
   it("shows a planning action for open Requirements without generated Tasks", () => {
@@ -833,16 +935,56 @@ describe("App workbench layout", () => {
       <App initialPage="workflow-templates" />
     );
 
-    expect(markup).toContain("Use built-in template");
-    expect(markup).toContain("Import custom template");
+    expect(markup).toContain("New Workflow");
+    expect(markup).toContain("Import Workflow");
     expect(markup).toContain("Available templates");
-    expect(markup).toContain("Built-in template");
+    expect(markup).toContain("System template");
     expect(markup).toContain("代码编写模板");
     expect(markup).toContain("调研写作模板");
     expect(markup).toContain("创意写作模板");
     expect(markup).toContain("Preview");
+    expect(markup).not.toContain("Use built-in template");
+    expect(markup).not.toContain("Built-in templates");
     expect(markup).not.toContain("workflow-preview-graph");
     expect(markup).not.toContain("intake");
+  });
+
+  it("lists system templates together with Project-created templates", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowFiles={[
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "Project QA workflow",
+              nodes: [
+                {
+                  dependsOn: [],
+                  executor: "agent:qa",
+                  exit: { maxRetries: 1 },
+                  id: "qa",
+                  outputs: ["qa.md"],
+                  type: "quality-review"
+                }
+              ]
+            }),
+            id: "wf_project_qa",
+            name: "Project QA workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("4");
+    expect(markup).toContain("<h3>代码编写模板</h3>");
+    expect(markup).toContain("<h3>调研写作模板</h3>");
+    expect(markup).toContain("<h3>创意写作模板</h3>");
+    expect(markup).toContain("<h3>Project QA workflow</h3>");
+    expect(markup).toContain("System template");
+    expect(markup).toContain("Project template");
   });
 
   it("does not expose default Requirement decomposition templates as selectable Workflow templates", () => {
@@ -861,7 +1003,7 @@ describe("App workbench layout", () => {
     expect(markup).toContain("创意写作模板");
   });
 
-  it("shows distinct workflow names without exposing inferred categories", () => {
+  it("shows stored workflow names without exposing inferred categories", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const workflowFiles = [
       {
@@ -886,12 +1028,10 @@ describe("App workbench layout", () => {
               type: "task-drafting"
             }
           ],
-          scope: "task"
         }),
         id: "wf_requirement_split",
         name: "Requirement split",
         nodeCount: 2,
-        scope: "task" as const
       },
       {
         createdAt: timestamp,
@@ -915,12 +1055,10 @@ describe("App workbench layout", () => {
               type: "option-comparison"
             }
           ],
-          scope: "task"
         }),
         id: "wf_research",
         name: "Autonomous research plan",
         nodeCount: 2,
-        scope: "task" as const
       },
       {
         createdAt: timestamp,
@@ -944,12 +1082,10 @@ describe("App workbench layout", () => {
               type: "code-change"
             }
           ],
-          scope: "task"
         }),
         id: "wf_code",
         name: "Code Implementation",
         nodeCount: 2,
-        scope: "task" as const
       },
       {
         createdAt: timestamp,
@@ -973,12 +1109,10 @@ describe("App workbench layout", () => {
               type: "editorial-review"
             }
           ],
-          scope: "task"
         }),
         id: "wf_writing",
         name: "Writing Review",
         nodeCount: 2,
-        scope: "task" as const
       },
       {
         createdAt: timestamp,
@@ -1002,12 +1136,10 @@ describe("App workbench layout", () => {
               type: "approval-gate"
             }
           ],
-          scope: "task"
         }),
         id: "wf_approval",
         name: "Human Approval",
         nodeCount: 2,
-        scope: "task" as const
       }
     ];
 
@@ -1018,15 +1150,15 @@ describe("App workbench layout", () => {
       />
     );
 
-    expect(markup).toContain("5");
+    expect(markup).toContain("8");
     expect(markup).not.toContain("Scope:");
     expect(markup).not.toContain("作用域");
     expect(markup).not.toContain("Business function:");
-    expect(markup).toContain("<h3>需求拆解模板</h3>");
-    expect(markup).toContain("<h3>调研分析模板</h3>");
-    expect(markup).toContain("<h3>代码编写模板</h3>");
-    expect(markup).toContain("<h3>写作编辑模板</h3>");
-    expect(markup).toContain("<h3>评审审批模板</h3>");
+    expect(markup).toContain("<h3>Requirement split</h3>");
+    expect(markup).toContain("<h3>Autonomous research plan</h3>");
+    expect(markup).toContain("<h3>Code Implementation</h3>");
+    expect(markup).toContain("<h3>Writing Review</h3>");
+    expect(markup).toContain("<h3>Human Approval</h3>");
     expect(markup).not.toContain("<h3>Requirement planning template</h3>");
     expect(markup).not.toContain("<h3>Research analysis template</h3>");
     expect(markup).not.toContain("<h3>Code implementation template</h3>");
@@ -1044,6 +1176,7 @@ describe("App workbench layout", () => {
             createdAt: timestamp,
             definition: JSON.stringify({
               name: "Requirement split",
+              scope: "requirement",
               nodes: [
                 {
                   dependsOn: [],
@@ -1054,17 +1187,16 @@ describe("App workbench layout", () => {
                   type: "task-drafting"
                 }
               ],
-              scope: "requirement"
             }),
             id: "wf_requirement_split",
             name: "Requirement split",
             nodeCount: 2,
-            scope: "requirement" as const
           },
           {
             createdAt: timestamp,
             definition: JSON.stringify({
               name: "Software Change Requirement",
+              scope: "requirement",
               nodes: [
                 {
                   dependsOn: [],
@@ -1099,17 +1231,16 @@ describe("App workbench layout", () => {
                   type: "requirement-package"
                 }
               ],
-              scope: "requirement"
             }),
             id: "wf_software_requirement",
             name: "Software Change Requirement",
             nodeCount: 4,
-            scope: "requirement" as const
           },
           {
             createdAt: timestamp,
             definition: JSON.stringify({
               name: "Software Change Requirement 2",
+              scope: "requirement",
               nodes: [
                 {
                   dependsOn: [],
@@ -1120,12 +1251,10 @@ describe("App workbench layout", () => {
                   type: "task-drafting"
                 }
               ],
-              scope: "requirement"
             }),
             id: "wf_software_requirement_2",
             name: "Software Change Requirement 2",
             nodeCount: 1,
-            scope: "requirement" as const
           },
           {
             createdAt: timestamp,
@@ -1141,18 +1270,16 @@ describe("App workbench layout", () => {
                   type: "research-analysis"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_research",
             name: "Research Analysis",
             nodeCount: 1,
-            scope: "task" as const
           }
         ]}
       />
     );
 
-    expect(markup).toContain("<h3>调研分析模板</h3>");
+    expect(markup).toContain("<h3>Research Analysis</h3>");
     expect(markup).toContain("1 nodes");
     expect(markup).not.toContain("Scope:");
     expect(markup).not.toContain("Scope: requirement");
@@ -1160,10 +1287,9 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("<h3>Requirement split</h3>");
     expect(markup).not.toContain("<h3>Software Change Requirement</h3>");
     expect(markup).not.toContain("<h3>Software Change Requirement 2</h3>");
-    expect(markup).not.toContain("<h3>Research Analysis</h3>");
   });
 
-  it("shows the autonomous test Workflow template by its concrete purpose", () => {
+  it("keeps autonomous test Workflow template names unchanged", () => {
     const markup = renderToStaticMarkup(
       <App
         initialPage="workflow-templates"
@@ -1182,21 +1308,19 @@ describe("App workbench layout", () => {
                   type: "coding"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_autonomous_test",
             name: "自主测试任务完成",
             nodeCount: 1,
-            scope: "task"
           }
         ]}
       />
     );
 
-    expect(markup).toContain("<h3>旅行指南编写测试模板</h3>");
+    expect(markup).toContain("<h3>自主测试任务完成</h3>");
     expect(markup).not.toContain("Scope:");
     expect(markup).not.toContain("Business function:");
-    expect(markup).not.toContain("<h3>自主测试任务完成</h3>");
+    expect(markup).not.toContain("<h3>旅行指南编写测试模板</h3>");
   });
 
   it("keeps workflow template rows compact until editing or previewing", () => {
@@ -1218,12 +1342,10 @@ describe("App workbench layout", () => {
                   type: "research-analysis"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_research",
             name: "Research Analysis",
             nodeCount: 1,
-            scope: "task"
           }
         ]}
       />
@@ -1260,12 +1382,10 @@ describe("App workbench layout", () => {
                   type: "research-analysis"
                 }
               ],
-              scope: "task"
             }),
             id: "wf_research",
             name: "Research Analysis",
             nodeCount: 1,
-            scope: "task"
           }
         ]}
       />
@@ -1289,13 +1409,13 @@ describe("App workbench layout", () => {
       <App initialPage="workflow-templates" />
     );
 
-    expect(markup).toContain("Use built-in template");
-    expect(markup).toContain("Import custom template");
+    expect(markup).toContain("New Workflow");
+    expect(markup).toContain("Import Workflow");
     expect(markup).not.toContain("Workflow template source");
     expect(markup).not.toContain("Import Recipe");
   });
 
-  it("opens the default Workflow form as a modal for new templates", () => {
+  it("opens a visual Workflow builder as the new template modal", () => {
     const markup = renderToStaticMarkup(
       <App
         initialPage="workflow-templates"
@@ -1305,20 +1425,23 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('id="workflow-template-modal-heading"');
-    expect(markup).toContain("Use built-in template");
-    expect(markup).toContain("Built-in templates");
-    expect(markup).not.toContain("需求拆解模板");
-    expect(markup).toContain("代码编写模板");
+    expect(markup).toContain("New Workflow");
+    expect(markup).toContain("Template name");
+    expect(markup).toContain("Workflow Nodes");
+    expect(markup).toContain("Node ID");
+    expect(markup).toContain("Executor");
+    expect(markup).toContain("Add Workflow Node");
+    expect(markup).toContain("Create Workflow");
+    expect(markup).not.toContain("Workflow template source");
+    expect(markup).not.toContain("Built-in templates");
     expect(markup).not.toContain("调研写作拆解模板");
-    expect(markup).toContain("调研写作模板");
     expect(markup).not.toContain("创意写作拆解模板");
-    expect(markup).toContain("创意写作模板");
-    expect(markup).toContain("task template with 5 nodes");
-    expect(markup).toContain("Import Recipe");
+    expect(markup).not.toContain("default-template-card");
+    expect(markup).not.toContain("Import Recipe");
   });
 
   it("derives default template previews from parsed workflow source", () => {
-    expect(defaultWorkflowTemplates).toHaveLength(6);
+    expect(defaultWorkflowTemplates).toHaveLength(3);
 
     for (const template of defaultWorkflowTemplates) {
       const parsedWorkflow = parseWorkflowFile(template.source);
@@ -1348,10 +1471,7 @@ describe("App workbench layout", () => {
 
   it("previews rich Workflow template contracts", () => {
     const markup = renderToStaticMarkup(
-      <App
-        initialPage="workflow-templates"
-        initialWorkflowTemplateDialog="new"
-      />
+      <App initialPage="workflow-templates" initialPreviewWorkflowId="builtin:software-change-task" />
     );
 
     expect(markup).toContain("Inputs");
@@ -1372,7 +1492,7 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('id="workflow-template-modal-heading"');
-    expect(markup).toContain("Import custom template");
+    expect(markup).toContain("Import Workflow");
     expect(markup).toContain("Workflow template source");
     expect(markup).toContain("Upload .wf");
     expect(markup).not.toContain("Built-in templates");
@@ -1381,7 +1501,6 @@ describe("App workbench layout", () => {
   it("previews the selected workflow template as a node graph", () => {
     const taskWorkflow = {
       name: "Code Implementation",
-      scope: "task",
       nodes: [
         {
           dependsOn: [],
@@ -1428,7 +1547,6 @@ describe("App workbench layout", () => {
             id: "wf_code",
             name: "Code Implementation",
             nodeCount: 4,
-            scope: "task"
           }
         ]}
       />
@@ -1483,7 +1601,6 @@ describe("App workbench layout", () => {
             id: "wf_requirement",
             name: "Requirement Planning",
             nodeCount: 1,
-            scope: "requirement"
           }
         ]}
       />
