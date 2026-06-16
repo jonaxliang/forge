@@ -77,7 +77,6 @@ Forge Server 不反连用户本机。Bridge 主动连接 Server，避免内网�
 
 ```yaml
 name: software.change
-scope: task
 
 inputs:
   task: required

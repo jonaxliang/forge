@@ -28,7 +28,7 @@ describe("i18n configuration", () => {
       expect(messages.settings.executionTitle).toBeTruthy();
       expect(messages.workbench.firstProjectTitle).toBeTruthy();
       expect(messages.settings.languageLabel).toBeTruthy();
-      expect(messages.progress.recipes).toBeTruthy();
+      expect(messages.progress.workflowTemplates).toBeTruthy();
       expect(messages.workspace.taskBoardHeading).toBeTruthy();
       expect(messages.taskStatus.init).toBeTruthy();
     }

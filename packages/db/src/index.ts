@@ -8,7 +8,6 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const artifactStorageModes = ["local-only", "cloud"] as const;
 export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
-export const workflowScopes = ["requirement", "task"] as const;
 export const requirementStatuses = [
   "init",
   "decomposing",
@@ -60,7 +59,6 @@ export const nodeRunStatuses = [
 
 export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
 export type DbStrategy = (typeof dbStrategies)[number];
-export type WorkflowScope = (typeof workflowScopes)[number];
 export type RequirementStatus = (typeof requirementStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
 export type WorkflowRunStatus = (typeof workflowRunStatuses)[number];
@@ -164,7 +162,6 @@ export type ProjectRepository = {
 export type WorkflowFileMetadata = {
   id: string;
   name: string;
-  scope: WorkflowScope;
   nodeCount: number;
   definition: string;
   templateType: "builtin" | "custom";
@@ -173,7 +170,6 @@ export type WorkflowFileMetadata = {
 
 export type CreateWorkflowFileMetadataInput = {
   name: string;
-  scope: WorkflowScope;
   nodeCount: number;
   definition?: string;
   templateType?: "builtin" | "custom";
@@ -457,7 +453,6 @@ type ProjectRow = typeof projects.$inferSelect;
 const workflowFiles = sqliteTable("workflow_files", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  scope: text("scope").notNull(),
   nodeCount: integer("node_count").notNull(),
   definition: text("definition").notNull(),
   templateType: text("template_type").notNull(),
@@ -672,7 +667,7 @@ export function createSqliteBridgeRepository(
 
 function createProjectRepository(sqlite: Database.Database): ProjectRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async createProject(input) {
@@ -766,7 +761,7 @@ function createNextTimestamp(previousTimestamp: string) {
   return now.toISOString();
 }
 
-function initializeSqliteSchema(db: BetterSQLite3Database) {
+function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Database) {
   db.run(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY NOT NULL,
@@ -781,7 +776,6 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
     CREATE TABLE IF NOT EXISTS workflow_files (
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
-      scope TEXT NOT NULL,
       node_count INTEGER NOT NULL,
       definition TEXT NOT NULL DEFAULT '{}',
       template_type TEXT NOT NULL DEFAULT 'custom',
@@ -890,11 +884,51 @@ function initializeSqliteSchema(db: BetterSQLite3Database) {
     )
   `);
   ensureSqliteColumn(db, "workflow_files", "template_type", "TEXT NOT NULL DEFAULT 'custom'");
+  dropLegacyWorkflowFileScopeColumn(sqlite);
   ensureSqliteColumn(db, "requirements", "project_id", "TEXT");
   ensureSqliteColumn(db, "tasks", "project_id", "TEXT");
   ensureSqliteColumn(db, "requirements", "deleted_at", "TEXT");
   ensureSqliteColumn(db, "tasks", "deleted_at", "TEXT");
   db.run("UPDATE requirements SET status = 'open' WHERE status = 'completed'");
+}
+
+function dropLegacyWorkflowFileScopeColumn(sqlite: Database.Database) {
+  const columns = sqlite
+    .prepare("PRAGMA table_info(workflow_files)")
+    .all() as Array<{ name: string }>;
+
+  if (!columns.some((column) => column.name === "scope")) {
+    return;
+  }
+
+  sqlite.exec(`
+    CREATE TABLE workflow_files_next (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      node_count INTEGER NOT NULL,
+      definition TEXT NOT NULL DEFAULT '{}',
+      template_type TEXT NOT NULL DEFAULT 'custom',
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO workflow_files_next (
+      id,
+      name,
+      node_count,
+      definition,
+      template_type,
+      created_at
+    )
+    SELECT
+      id,
+      name,
+      node_count,
+      definition,
+      template_type,
+      created_at
+    FROM workflow_files;
+    DROP TABLE workflow_files;
+    ALTER TABLE workflow_files_next RENAME TO workflow_files;
+  `);
 }
 
 function ensureSqliteColumn(
@@ -972,14 +1006,13 @@ function createWorkflowFileRepository(
   sqlite: Database.Database
 ): WorkflowFileRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async createWorkflowFileMetadata(input) {
       const workflowFile: WorkflowFileMetadata = {
         id: `wff_${randomUUID()}`,
         name: input.name.trim(),
-        scope: input.scope,
         nodeCount: input.nodeCount,
         definition: input.definition ?? "{}",
         templateType: input.templateType ?? "custom",
@@ -1062,7 +1095,7 @@ function createExecutionSettingsRepository(
   sqlite: Database.Database
 ): ExecutionSettingsRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async getExecutionSettings() {
@@ -1113,7 +1146,7 @@ function createRequirementRepository(
   sqlite: Database.Database
 ): RequirementRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async createRequirement(input) {
@@ -1292,7 +1325,7 @@ function createDecompositionResultRepository(
   sqlite: Database.Database
 ): DecompositionResultRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async getDecompositionResult(id) {
@@ -1387,7 +1420,7 @@ function createDecompositionResultRepository(
 
 function createTaskRepository(sqlite: Database.Database): TaskRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async createTasksFromDecompositionResult(input) {
@@ -1450,7 +1483,7 @@ function createWorkflowRunRepository(
   sqlite: Database.Database
 ): WorkflowRunRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async createWorkflowRun(input) {
@@ -1574,7 +1607,7 @@ function createWorkflowRunRepository(
 
 function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
   const db = drizzle(sqlite);
-  initializeSqliteSchema(db);
+  initializeSqliteSchema(db, sqlite);
 
   return {
     async claimNextBridgeJob(bridgeId) {
@@ -1756,7 +1789,6 @@ function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
   return {
     id: row.id,
     name: row.name,
-    scope: row.scope as WorkflowScope,
     nodeCount: row.nodeCount,
     definition: row.definition,
     templateType: row.templateType as WorkflowFileMetadata["templateType"],

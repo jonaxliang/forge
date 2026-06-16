@@ -20,16 +20,16 @@ type Messages = {
     namePlaceholder: string;
     bodyLabel: string;
     bodyPlaceholder: string;
-    recipeLabel: string;
-    importRecipeFirst: string;
+    workflowTemplateLabel: string;
+    importWorkflowTemplateFirst: string;
     createRequirement: string;
   };
   setup: {
     ariaLabel: string;
-    recipeEyebrow: string;
-    recipeHeading: string;
+    workflowTemplateEyebrow: string;
+    workflowTemplateHeading: string;
     workflowSourceLabel: string;
-    importRecipe: string;
+    importWorkflowTemplate: string;
     workspaceEyebrow: string;
     workspaceHeading: string;
     projectNameLabel: string;
@@ -94,27 +94,31 @@ type Messages = {
     description: string;
     newWorkflow: string;
     importWorkflow: string;
+    createDescription: string;
+    builderNameLabel: string;
+    builderNodesTitle: string;
+    builderNodeIdLabel: string;
+    builderNodeTypeLabel: string;
+    builderExecutorLabel: string;
+    builderOutputLabel: string;
+    builderRetriesLabel: string;
+    addWorkflowNode: string;
+    removeWorkflowNode: string;
+    createWorkflow: string;
     totalTemplates: string;
     totalWorkflowNodes: string;
     importEyebrow: string;
     importTitle: string;
     importDescription: string;
     importModeLabel: string;
-    importModeDefault: string;
     importModeSource: string;
     importModeFile: string;
-    defaultTemplatesTitle: string;
-    defaultTemplatesDescription: string;
     defaultTemplateDescriptions: Record<DefaultWorkflowTemplateKey, string>;
-    businessTemplateName: (businessFunction: string) => string;
-    businessFunctions: {
-      codeImplementation: string;
-      requirementPlanning: string;
-      research: string;
-      reviewApproval: string;
-      taskExecution: string;
-      writingEditing: string;
+    templateTypeLabels: {
+      builtin: string;
+      custom: string;
     };
+    unnamedWorkflowTemplate: string;
     fileSourceLabel: string;
     fileSourceHelp: string;
     libraryEyebrow: string;
@@ -192,10 +196,15 @@ type Messages = {
   };
   progress: {
     ariaLabel: string;
-    recipes: string;
+    workflowTemplates: string;
     ideas: string;
     tasks: string;
     runs: string;
+  };
+  footer: {
+    brand: string;
+    description: string;
+    copyright: string;
   };
   workspace: {
     generatedWorkLabel: string;
@@ -205,20 +214,12 @@ type Messages = {
     taskBoardLabel: string;
     noTasks: string;
     sourceLabel: string;
-    runRecipeLabel: string;
-    importTaskRecipeFirst: string;
+    runWorkflowTemplateLabel: string;
+    importTaskWorkflowTemplateFirst: string;
     startRun: string;
     noRunsForTask: string;
     workflowRun: string;
-    recipeAndHistoryLabel: string;
-    recipeMapEyebrow: string;
-    recipeMapHeading: string;
-    templateCount: (count: number) => string;
-    moreTemplates: string;
-    recipeSummary: (count: number) => string;
     noDependency: string;
-    noRecipePreviewTitle: string;
-    noRecipePreviewBody: string;
     requirementsEyebrow: string;
     requirementsHeading: string;
     requirementsLabel: string;
@@ -346,16 +347,16 @@ const messages: Record<Locale, Messages> = {
       bodyLabel: "What should Forge help with?",
       bodyPlaceholder:
         "Explain the goal, audience, constraints, files, tone, or acceptance criteria.",
-      recipeLabel: "Recipe",
-      importRecipeFirst: "Import a recipe first",
+      workflowTemplateLabel: "Workflow Template",
+      importWorkflowTemplateFirst: "Import a Workflow Template first",
       createRequirement: "Create Requirement"
     },
     setup: {
       ariaLabel: "Studio setup",
-      recipeEyebrow: "Recipe",
-      recipeHeading: "Teach Forge the workflow",
+      workflowTemplateEyebrow: "Workflow Template",
+      workflowTemplateHeading: "Teach Forge the workflow",
       workflowSourceLabel: "Workflow template source",
-      importRecipe: "Import Recipe",
+      importWorkflowTemplate: "Import Workflow Template",
       workspaceEyebrow: "Workspace",
       workspaceHeading: "Save outputs where you want them",
       projectNameLabel: "Project name",
@@ -431,6 +432,18 @@ const messages: Record<Locale, Messages> = {
         "Import, inspect, and organize .wf templates separately from workspace settings.",
       newWorkflow: "New Workflow",
       importWorkflow: "Import Workflow",
+      createDescription:
+        "Create a Task Workflow Template by naming nodes, executors, outputs, and retry budgets.",
+      builderNameLabel: "Template name",
+      builderNodesTitle: "Workflow Nodes",
+      builderNodeIdLabel: "Node ID",
+      builderNodeTypeLabel: "Node type",
+      builderExecutorLabel: "Executor",
+      builderOutputLabel: "Output file",
+      builderRetriesLabel: "Retries",
+      addWorkflowNode: "Add Workflow Node",
+      removeWorkflowNode: "Remove node",
+      createWorkflow: "Create Workflow",
       totalTemplates: "Total templates",
       totalWorkflowNodes: "Nodes",
       importEyebrow: "Import",
@@ -438,35 +451,21 @@ const messages: Record<Locale, Messages> = {
       importDescription:
         "Paste a .wf source file. Workflow templates describe task-level work.",
       importModeLabel: "Workflow import modes",
-      importModeDefault: "Default templates",
       importModeSource: "Paste source",
       importModeFile: "Upload .wf",
-      defaultTemplatesTitle: "Default templates",
-      defaultTemplatesDescription:
-        "Start from Forge-maintained templates for common Task workflows.",
       defaultTemplateDescriptions: {
-        "creative-writing-requirement":
-          "Shape creative goals, audience boundaries, outline, and candidate Tasks.",
         "creative-writing-task":
           "Outline, draft, revise, and approve a creative writing Task.",
-        "research-writing-requirement":
-          "Frame research questions, source evidence, brief findings, and draft Tasks.",
         "research-writing-task":
           "Research, outline, draft, and edit an evidence-backed writing Task.",
-        "software-change-requirement":
-          "Turn a software Requirement into implementation-ready candidate Tasks.",
         "software-change-task":
           "Plan, implement, verify, review, and hand off a task template with 5 nodes."
       },
-      businessTemplateName: (businessFunction) => `${businessFunction} template`,
-      businessFunctions: {
-        codeImplementation: "Code implementation",
-        requirementPlanning: "Requirement planning",
-        research: "Research analysis",
-        reviewApproval: "Review and approval",
-        taskExecution: "Task execution",
-        writingEditing: "Writing and editing"
+      templateTypeLabels: {
+        builtin: "System template",
+        custom: "Project template"
       },
+      unnamedWorkflowTemplate: "Untitled Workflow template",
       fileSourceLabel: "Workflow templates upload",
       fileSourceHelp:
         "The uploaded file is loaded into the source editor before import.",
@@ -556,10 +555,15 @@ const messages: Record<Locale, Messages> = {
     },
     progress: {
       ariaLabel: "Forge progress",
-      recipes: "Recipes",
+      workflowTemplates: "Workflow templates",
       ideas: "Ideas",
       tasks: "Tasks",
       runs: "Runs"
+    },
+    footer: {
+      brand: "Forge",
+      description: "AI work orchestration control plane",
+      copyright: "@2026 Forge"
     },
     workspace: {
       generatedWorkLabel: "Generated work",
@@ -570,22 +574,14 @@ const messages: Record<Locale, Messages> = {
       taskBoardLabel: "Task Board",
       noTasks: "No Tasks",
       sourceLabel: "Source",
-      runRecipeLabel: "Run recipe",
-      importTaskRecipeFirst: "Import a task recipe first",
+      runWorkflowTemplateLabel: "Task Workflow Template",
+      importTaskWorkflowTemplateFirst: "Import a Task Workflow Template first",
       startRun: "Start Run",
       noRunsForTask: "No runs started for this Task.",
       workflowRun: "Task Workflow",
-      recipeAndHistoryLabel: "Templates and history",
-      recipeMapEyebrow: "Workflow templates",
-      recipeMapHeading: "Template list",
-      templateCount: (count) => `${count} ${count === 1 ? "template" : "templates"}`,
-      moreTemplates: "More templates",
-      recipeSummary: (count) => `${count} Nodes`,
       noDependency: "No dependency",
-      noRecipePreviewTitle: "No recipe preview",
-      noRecipePreviewBody: "Import a Workflow templates to show its nodes here.",
       requirementsEyebrow: "Requirements",
-      requirementsHeading: "Submitted Requirements.",
+      requirementsHeading: "Current Requirement",
       requirementsLabel: "Requirements",
       allRequirementsHeading: "All Requirements",
       allRequirementsBody:
@@ -698,16 +694,16 @@ const messages: Record<Locale, Messages> = {
       namePlaceholder: "起草一份入职指南",
       bodyLabel: "希望 Forge 协助什么？",
       bodyPlaceholder: "说明目标、受众、约束、文件、语气或验收标准。",
-      recipeLabel: "配方",
-      importRecipeFirst: "请先导入配方",
+      workflowTemplateLabel: "工作流模板",
+      importWorkflowTemplateFirst: "请先导入工作流模板",
       createRequirement: "创建需求"
     },
     setup: {
       ariaLabel: "工作室设置",
-      recipeEyebrow: "配方",
-      recipeHeading: "让 Forge 理解工作流",
+      workflowTemplateEyebrow: "工作流模板",
+      workflowTemplateHeading: "让 Forge 理解工作流",
       workflowSourceLabel: "模板源码",
-      importRecipe: "导入配方",
+      importWorkflowTemplate: "导入工作流模板",
       workspaceEyebrow: "工作区",
       workspaceHeading: "按你的方式保存输出",
       projectNameLabel: "项目名称",
@@ -775,9 +771,21 @@ const messages: Record<Locale, Messages> = {
       eyebrow: "工作流模板",
       title: "工作流模板管理",
       description:
-        "单独管理 .wf 模板的导入、查看和作用域，不再混在设置页里。",
-      newWorkflow: "新增 Workflow",
-      importWorkflow: "导入 Workflow",
+        "单独管理 .wf 模板的导入、查看和预览，不再混在设置页里。",
+      newWorkflow: "新建模板",
+      importWorkflow: "导入模板",
+      createDescription:
+        "通过填写节点、执行器、输出和重试次数，可视化创建 Task Workflow Template。",
+      builderNameLabel: "模板名称",
+      builderNodesTitle: "Workflow Nodes",
+      builderNodeIdLabel: "Node ID",
+      builderNodeTypeLabel: "节点类型",
+      builderExecutorLabel: "执行器",
+      builderOutputLabel: "输出文件",
+      builderRetriesLabel: "重试次数",
+      addWorkflowNode: "添加 Workflow Node",
+      removeWorkflowNode: "移除节点",
+      createWorkflow: "创建模板",
       totalTemplates: "模板总数",
       totalWorkflowNodes: "节点",
       importEyebrow: "导入",
@@ -785,35 +793,21 @@ const messages: Record<Locale, Messages> = {
       importDescription:
         "粘贴 .wf 源文件。工作流模板统一描述任务维度的工作。",
       importModeLabel: "Workflow 导入方式",
-      importModeDefault: "默认模板",
       importModeSource: "粘贴源码",
       importModeFile: "上传 .wf",
-      defaultTemplatesTitle: "默认模板",
-      defaultTemplatesDescription:
-        "从 Forge 维护的常用工作流模板开始。",
       defaultTemplateDescriptions: {
-        "creative-writing-requirement":
-          "梳理创作目标、受众边界、内容大纲和拆解结果。",
         "creative-writing-task":
           "为创意写作任务编排大纲、初稿、修订和确认。",
-        "research-writing-requirement":
-          "框定调研问题、整理证据、形成简报并拆出 Tasks。",
         "research-writing-task":
           "为调研写作任务编排调研、提纲、草稿和编辑。",
-        "software-change-requirement":
-          "把软件变更需求转换成可编辑的拆解结果。",
         "software-change-task":
           "用 5 个节点编排软件任务的计划、实现、验证、评审和交付。"
       },
-      businessTemplateName: (businessFunction) => `${businessFunction}模板`,
-      businessFunctions: {
-        codeImplementation: "代码编写",
-        requirementPlanning: "需求拆解",
-        research: "调研分析",
-        reviewApproval: "评审审批",
-        taskExecution: "任务执行",
-        writingEditing: "写作编辑"
+      templateTypeLabels: {
+        builtin: "系统内置",
+        custom: "项目模板"
       },
+      unnamedWorkflowTemplate: "未命名工作流模板",
       fileSourceLabel: "上传工作流模板",
       fileSourceHelp:
         "上传的文件会先读取到源码编辑器，再执行导入。",
@@ -901,10 +895,15 @@ const messages: Record<Locale, Messages> = {
     },
     progress: {
       ariaLabel: "Forge 进展",
-      recipes: "配方",
+      workflowTemplates: "工作流模板",
       ideas: "需求",
       tasks: "任务",
       runs: "任务工作流"
+    },
+    footer: {
+      brand: "Forge",
+      description: "AI 工作编排控制平面",
+      copyright: "@2026 Forge"
     },
     workspace: {
       generatedWorkLabel: "已生成工作",
@@ -915,22 +914,14 @@ const messages: Record<Locale, Messages> = {
       taskBoardLabel: "任务看板",
       noTasks: "暂无任务",
       sourceLabel: "来源",
-      runRecipeLabel: "运行配方",
-      importTaskRecipeFirst: "请先导入工作流模板",
+      runWorkflowTemplateLabel: "Task Workflow Template",
+      importTaskWorkflowTemplateFirst: "请先导入 Task Workflow Template",
       startRun: "开始任务",
       noRunsForTask: "这个任务还没有启动任务工作流。",
       workflowRun: "任务工作流",
-      recipeAndHistoryLabel: "模板和历史",
-      recipeMapEyebrow: "工作流模板",
-      recipeMapHeading: "模板列表",
-      templateCount: (count) => `当前 ${count} 个模板`,
-      moreTemplates: "更多模板",
-      recipeSummary: (count) => `包含 ${count} 个节点`,
       noDependency: "无依赖",
-      noRecipePreviewTitle: "暂无配方预览",
-      noRecipePreviewBody: "导入工作流模板后会在这里展示节点。",
       requirementsEyebrow: "需求",
-      requirementsHeading: "已提交的需求。",
+      requirementsHeading: "当前需求",
       requirementsLabel: "需求",
       allRequirementsHeading: "全部需求",
       allRequirementsBody:

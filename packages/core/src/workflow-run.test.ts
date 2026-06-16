@@ -54,7 +54,6 @@ const workflow: WorkflowFile = {
       uses: []
     }
   ],
-  scope: "task",
   skills: [],
   version: "1.1"
 };

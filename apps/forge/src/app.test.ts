@@ -501,7 +501,6 @@ nodes:
     await expect(response.json()).resolves.toMatchObject({
       workflow: {
         name: "Coding workflow",
-        scope: "task",
         nodes: [
           {
             id: "analyze"
@@ -515,7 +514,6 @@ nodes:
       workflowFile: {
         name: "Coding workflow",
         nodeCount: 2,
-        scope: "task"
       }
     });
 
@@ -527,7 +525,6 @@ nodes:
         {
           name: "Coding workflow",
           nodeCount: 2,
-          scope: "task"
         }
       ]
     });
@@ -593,7 +590,6 @@ nodes:
       artifacts: [{ id: "plan", path: "plan.md", type: "markdown" }],
       inputs: [{ id: "task", required: true, type: "task" }],
       name: "Rich workflow",
-      scope: "task",
       skills: [{ id: "planning", ref: "skill:implementation-planning" }],
       version: "1.1",
       nodes: [
@@ -619,7 +615,6 @@ nodes:
     expect(body.workflowFile).toMatchObject({
       name: "Rich workflow",
       nodeCount: 1,
-      scope: "task"
     });
     expect(JSON.parse(body.workflowFile.definition)).toMatchObject({
       version: "1.1",
@@ -748,13 +743,13 @@ nodes:
     const app = createApp();
     const source = (name: string, nodeIds: string[]) => `
 name: ${name}
-scope: requirement
+scope: task
 version: "1.1"
 nodes:
 ${nodeIds
   .map(
     (nodeId, index) => `  - id: ${nodeId}
-    type: ${index === 0 ? "requirement-intake" : "task-drafting"}
+    type: ${index === 0 ? "implementation-plan" : "code-change"}
     ${index === 0 ? "" : `dependsOn: ${nodeIds[index - 1]}\n    `}executor: agent:planner
     outputs:
       - kind: file
@@ -766,13 +761,13 @@ ${nodeIds
 `;
 
     await app.request("/api/workflow-files/import", {
-      body: JSON.stringify({ source: source("Requirement split", ["split"]) }),
+      body: JSON.stringify({ source: source("Code Implementation", ["plan"]) }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });
     await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
-        source: source("Software Change Requirement", [
+        source: source("Software Change Task", [
           "intake",
           "decompose",
           "risk-review",
@@ -784,7 +779,7 @@ ${nodeIds
     });
     await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
-        source: source("Software Change Requirement", ["split-again"])
+        source: source("Software Change Task", ["split-again"])
       }),
       headers: { "content-type": "application/json" },
       method: "POST"
@@ -802,7 +797,7 @@ ${nodeIds
     expect(listResponse.status).toBe(200);
     expect(listBody.workflowFiles).toHaveLength(1);
     expect(listBody.workflowFiles[0]).toMatchObject({
-      name: "需求拆解模板",
+      name: "代码编写模板",
       nodeCount: 4,
       templateType: "builtin"
     });
@@ -895,7 +890,6 @@ nodes:
           type: "coding"
         })
       ],
-      scope: "task"
     });
   });
 
@@ -1776,10 +1770,8 @@ nodes:
     });
   });
 
-  it("rejects workflow runs for requirement-scoped workflow files", async () => {
+  it("rejects importing legacy requirement-scoped workflow files", async () => {
     const app = createPlanningApp();
-    await configureModel(app);
-    const createdTask = await createTask(app);
 
     const requirementWorkflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
@@ -1800,31 +1792,10 @@ nodes:
       },
       method: "POST"
     });
-    const requirementWorkflowBody = (await requirementWorkflowResponse.json()) as {
-      workflowFile: { definition: string; id: string; scope: string };
-    };
 
-    const runResponse = await app.request(
-      `/api/tasks/${createdTask.task.id}/workflow-runs`,
-      {
-        body: JSON.stringify({
-          workflowFileId: requirementWorkflowBody.workflowFile.id
-        }),
-        headers: {
-          "content-type": "application/json"
-        },
-        method: "POST"
-      }
-    );
-
-    expect(requirementWorkflowResponse.status).toBe(201);
-    expect(requirementWorkflowBody.workflowFile.scope).toBe("requirement");
-    expect(JSON.parse(requirementWorkflowBody.workflowFile.definition)).toMatchObject({
-      scope: "requirement"
-    });
-    expect(runResponse.status).toBe(400);
-    await expect(runResponse.json()).resolves.toMatchObject({
-      error: "Selected workflow file must be task-scoped"
+    expect(requirementWorkflowResponse.status).toBe(400);
+    await expect(requirementWorkflowResponse.json()).resolves.toMatchObject({
+      error: "Requirement-scoped Workflow Files are no longer supported"
     });
   });
 

@@ -1150,77 +1150,59 @@ h3 {
   box-shadow: inset 0 0 0 1px rgba(19, 128, 125, 0.12);
 }
 
-.default-template-picker {
-  display: grid;
-  gap: 12px;
+.template-builder-title {
+  color: var(--color-ink) !important;
+  font-weight: 800;
 }
 
-.default-template-picker p {
+.template-builder-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.template-builder-panel p {
   color: var(--color-subtle);
   font-size: 13px;
   line-height: 1.45;
 }
 
-.template-picker-title {
-  color: var(--color-ink) !important;
-  font-weight: 800;
-}
-
-.default-template-grid {
+.template-builder-node-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.default-template-card {
+.template-builder-node {
   display: grid;
-  gap: 7px;
-  align-content: start;
-  justify-content: stretch;
-  justify-items: start;
-  min-height: 132px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-card);
-  background: #ffffff;
-  color: var(--color-ink);
-  cursor: pointer;
-  padding: 12px;
-  text-align: left;
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
+  gap: 10px;
+  border-top: 1px solid #e1e8f0;
+  padding-top: 10px;
 }
 
-.default-template-card:hover:not(:disabled),
-.default-template-card[aria-pressed="true"] {
-  border-color: rgba(19, 128, 125, 0.42);
-  background: #ecfdfb;
-  color: var(--color-ink);
-  box-shadow: inset 0 0 0 1px rgba(19, 128, 125, 0.14);
+.template-builder-node:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
-.default-template-card:active {
-  transform: translateY(1px);
+.template-builder-node-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.default-template-card strong {
-  display: block;
-  max-width: 100%;
-  font-size: 14px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.default-template-card span,
-.default-template-card small {
-  display: block;
-  max-width: 100%;
-  color: var(--color-subtle);
+.template-builder-node-heading strong {
+  color: var(--color-accent);
   font-size: 12px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  white-space: normal;
+}
+
+.template-builder-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
 }
 
 .workflow-template-modal {
@@ -1280,7 +1262,7 @@ h3 {
 
 .template-row-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -1307,6 +1289,22 @@ h3 {
   border-radius: 999px;
   background: #f8fafc;
   color: #425064;
+  font-size: 12px;
+  font-weight: 750;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.template-type-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border: 1px solid rgba(19, 128, 125, 0.24);
+  border-radius: 999px;
+  background: #ecfdfb;
+  color: #0f766e;
   font-size: 12px;
   font-weight: 750;
   padding: 0 9px;
@@ -1824,7 +1822,7 @@ h3 {
   gap: 12px;
 }
 
-.recipe-editor {
+.workflow-source-editor {
   min-height: 214px;
   border-color: #263345;
   background: #121821;
@@ -1934,6 +1932,38 @@ h3 {
   align-items: start;
 }
 
+.studio-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  border-top: 1px solid rgba(205, 216, 228, 0.9);
+  color: var(--color-muted);
+  padding: 4px 2px 0;
+}
+
+.studio-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.studio-footer strong {
+  color: var(--color-heading);
+  font-size: 13px;
+}
+
+.studio-footer span {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.studio-footer-copyright {
+  white-space: nowrap;
+}
+
 .workspace-main {
   display: grid;
   gap: 16px;
@@ -1949,8 +1979,7 @@ h3 {
 .compact-list,
 .workflow-node-list,
 .run-history,
-.node-run-list,
-.recipe-map {
+.node-run-list {
   display: grid;
   gap: 10px;
 }
@@ -1958,8 +1987,7 @@ h3 {
 .task-card,
 .compact-record,
 .workflow-node,
-.run-group,
-.recipe-summary {
+.run-group {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
   background: #ffffff;
@@ -1968,8 +1996,7 @@ h3 {
 .task-card,
 .compact-record,
 .workflow-node,
-.run-group,
-.recipe-summary {
+.run-group {
   padding: 14px;
 }
 
@@ -2007,8 +2034,7 @@ h3 {
 
 .task-card-header h3,
 .compact-record h3,
-.workflow-node h3,
-.recipe-summary h3 {
+.workflow-node h3 {
   overflow-wrap: anywhere;
 }
 
@@ -2023,6 +2049,23 @@ h3 {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.compact-record-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.compact-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.requirement-current-status {
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .compact-record .record-header {
@@ -2075,8 +2118,7 @@ h3 {
 
 .task-card p,
 .compact-record p,
-.workflow-node p,
-.recipe-summary p {
+.workflow-node p {
   color: var(--color-subtle);
   font-size: 13px;
   line-height: 1.42;
@@ -2320,10 +2362,25 @@ h3 {
     padding: 14px;
   }
 
+  .studio-footer,
+  .studio-footer > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .studio-footer {
+    gap: 10px;
+  }
+
+  .studio-footer > div {
+    gap: 6px;
+  }
+
   .studio-nav,
   .composer-actions,
   .requirement-rename-form,
   .section-heading-with-action,
+  .template-builder-grid,
   .task-board {
     grid-template-columns: 1fr;
   }
@@ -2363,15 +2420,10 @@ h3 {
     grid-column: 1 / -1;
     grid-row: 2;
     width: 100%;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: flex-start;
-    overflow-x: auto;
+    overflow-x: visible;
     padding-bottom: 2px;
-    scrollbar-width: none;
-  }
-
-  .page-nav::-webkit-scrollbar {
-    display: none;
   }
 
   .page-nav .nav-button {
@@ -2413,10 +2465,6 @@ h3 {
   .settings-nav-item {
     justify-content: center;
     text-align: center;
-  }
-
-  .default-template-grid {
-    grid-template-columns: 1fr;
   }
 
   .workflow-contract-grid {

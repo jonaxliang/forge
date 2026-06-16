@@ -1,7 +1,6 @@
 import { parse } from "yaml";
 import { z } from "zod";
 
-export const workflowScopes = ["requirement", "task"] as const;
 export const workflowVersions = ["1.1"] as const;
 export const workflowReviewModes = ["model", "human", "none"] as const;
 export const workflowArtifactTypes = [
@@ -123,27 +122,26 @@ export const workflowNodeSchema = z
   }));
 
 export const workflowFileSchema = z
-  .object({
-    name: z.string(),
-    scope: z.enum(workflowScopes),
-    version: z.enum(workflowVersions),
-    inputs: z.array(workflowInputSchema).optional().default([]),
-    skills: z.array(workflowSkillSchema).optional().default([]),
-    agents: z.array(workflowAgentSchema).optional().default([]),
-    artifacts: z.array(workflowArtifactSchema).optional().default([]),
-    nodes: z.array(workflowNodeSchema).min(1)
-  })
-  .strict()
-  .superRefine((workflow, context) => {
-    validateWorkflowFile(workflow, (message) => {
-      context.addIssue({
-        code: "custom",
-        message
+  .preprocess(stripLegacyWorkflowScope, z
+    .object({
+      name: z.string(),
+      version: z.enum(workflowVersions),
+      inputs: z.array(workflowInputSchema).optional().default([]),
+      skills: z.array(workflowSkillSchema).optional().default([]),
+      agents: z.array(workflowAgentSchema).optional().default([]),
+      artifacts: z.array(workflowArtifactSchema).optional().default([]),
+      nodes: z.array(workflowNodeSchema).min(1)
+    })
+    .strict()
+    .superRefine((workflow, context) => {
+      validateWorkflowFile(workflow, (message) => {
+        context.addIssue({
+          code: "custom",
+          message
+        });
       });
-    });
-  });
+    }));
 
-export type WorkflowScope = (typeof workflowScopes)[number];
 export type WorkflowVersion = (typeof workflowVersions)[number];
 export type WorkflowReviewMode = (typeof workflowReviewModes)[number];
 export type WorkflowArtifactType = (typeof workflowArtifactTypes)[number];
@@ -172,6 +170,34 @@ export function parseWorkflowFile(source: string): WorkflowFile {
   }
 
   return result.data;
+}
+
+export function readLegacyWorkflowScope(source: string): string | null {
+  try {
+    return getLegacyWorkflowScope(parse(source));
+  } catch {
+    return null;
+  }
+}
+
+function stripLegacyWorkflowScope(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const { scope: _legacyScope, ...workflow } = value as Record<string, unknown>;
+
+  return workflow;
+}
+
+function getLegacyWorkflowScope(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const scope = (value as Record<string, unknown>).scope;
+
+  return typeof scope === "string" ? scope : null;
 }
 
 function validateWorkflowFile(workflow: WorkflowFile, addIssue: (message: string) => void) {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkflowFile, workflowFileSchema } from "./workflow-file";
+import {
+  parseWorkflowFile,
+  readLegacyWorkflowScope,
+  workflowFileSchema
+} from "./workflow-file";
 
 describe("parseWorkflowFile", () => {
   it("parses a v1.1 workflow file with reusable resources and exit criteria", () => {
@@ -97,8 +101,8 @@ nodes:
     ).toThrow(/Invalid workflow file/i);
   });
 
-  it("parses requirement-scoped workflow files with explicit dependencies", () => {
-    const workflow = parseWorkflowFile(`
+  it("reads legacy requirement scope while parsing dependencies", () => {
+    const source = `
 name: Requirement workflow
 scope: requirement
 version: "1.1"
@@ -114,14 +118,15 @@ nodes:
     executor: agent:planner
     exit:
       maxRetries: 1
-`);
+`;
+    const workflow = parseWorkflowFile(source);
 
-    expect(workflow.scope).toBe("requirement");
+    expect(readLegacyWorkflowScope(source)).toBe("requirement");
     expect(workflow.nodes[1]?.dependsOn).toEqual(["clarify"]);
   });
 
   it("parses a task-scoped workflow file with node exit criteria", () => {
-    const workflow = parseWorkflowFile(`
+    const source = `
 name: Coding workflow
 scope: task
 version: "1.1"
@@ -144,11 +149,11 @@ nodes:
         ref: diff.patch
     exit:
       maxRetries: 1
-`);
+`;
+    const workflow = parseWorkflowFile(source);
 
     expect(workflow).toMatchObject({
       name: "Coding workflow",
-      scope: "task",
       nodes: [
         {
           id: "analyze",
@@ -162,6 +167,7 @@ nodes:
         }
       ]
     });
+    expect(readLegacyWorkflowScope(source)).toBe("task");
   });
 
   it("parses multiple dependencies", () => {
