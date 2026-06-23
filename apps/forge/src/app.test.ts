@@ -240,6 +240,50 @@ async function waitForTaskWorkflowRun(
   throw new Error(`Timed out waiting for Task Workflow Run: ${taskId}`);
 }
 
+async function readSseEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  eventName: string
+) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+        setTimeout(() => reject(new Error(`Timed out waiting for ${eventName}`)), 50);
+      })
+    ]);
+
+    if (chunk.done) {
+      throw new Error(`SSE stream ended before ${eventName}`);
+    }
+
+    buffer += decoder.decode(chunk.value, { stream: true });
+
+    const messages = buffer.split("\n\n");
+    buffer = messages.pop() ?? "";
+
+    for (const message of messages) {
+      const event = message
+        .split("\n")
+        .find((line) => line.startsWith("event: "))
+        ?.slice("event: ".length);
+      const data = message
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice("data: ".length))
+        .join("\n");
+
+      if (event === eventName) {
+        return JSON.parse(data) as unknown;
+      }
+    }
+  }
+
+  throw new Error(`Timed out waiting for ${eventName}`);
+}
+
 async function generateTasksFromDecompositionResult(
   app: ReturnType<typeof createApp>,
   decompositionResultId: string
@@ -2532,6 +2576,98 @@ nodes:
 
     return { task: generatedBody.tasks[0] };
   }
+
+  it("opens a Server-Sent Events stream for realtime workspace updates", async () => {
+    const app = createPlanningApp();
+
+    const response = await app.request("/api/events");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.body).not.toBeNull();
+
+    await response.body?.cancel();
+  });
+
+  it("publishes Task Workflow status changes to realtime subscribers", async () => {
+    const agentProxyRequests: unknown[] = [];
+    const app = createPlanningApp({
+      agentProxyClient: async (input) => {
+        agentProxyRequests.push(input);
+      }
+    });
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        agentProxyUrl: "http://127.0.0.1:8787"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+version: "1.1"
+nodes:
+  - id: plan
+    type: planning
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const eventsResponse = await app.request("/api/events");
+    const reader = eventsResponse.body!.getReader();
+
+    try {
+      const startResponse = await app.request(
+        `/api/tasks/${createdTask.task.id}/workflow-runs`,
+        {
+          body: JSON.stringify({
+            workflowFileId: taskWorkflowBody.workflowFile.id
+          }),
+          headers: {
+            "content-type": "application/json"
+          },
+          method: "POST"
+        }
+      );
+
+      expect(startResponse.status).toBe(201);
+      await expect(readSseEvent(reader, "workflowRun.created")).resolves.toMatchObject({
+        workflowRun: {
+          status: "running",
+          taskId: createdTask.task.id
+        }
+      });
+      await expect(readSseEvent(reader, "nodeRun.created")).resolves.toMatchObject({
+        nodeRun: {
+          nodeId: "plan",
+          status: "queued"
+        }
+      });
+      await expect(readSseEvent(reader, "task.updated")).resolves.toMatchObject({
+        task: {
+          id: createdTask.task.id,
+          status: "running"
+        }
+      });
+    } finally {
+      await reader.cancel();
+    }
+  });
 
   it("starts a task workflow run by enqueueing nodes through the configured local executor", async () => {
     const agentProxyRequests: unknown[] = [];

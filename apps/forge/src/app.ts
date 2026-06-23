@@ -552,6 +552,162 @@ type AppDependencies = {
   webAssetsRoot?: string;
 };
 
+type RealtimeEvent =
+  | {
+      task: Task;
+      type: "task.created" | "task.updated";
+    }
+  | {
+      type: "tasks.deleted";
+      requirementId: string;
+    }
+  | {
+      type: "workflowRun.created" | "workflowRun.updated";
+      workflowRun: WorkflowRun;
+    }
+  | {
+      nodeRun: NodeRun;
+      type: "nodeRun.created" | "nodeRun.updated";
+      workflowRun: WorkflowRun | null;
+    };
+
+type RealtimeEventListener = (event: RealtimeEvent) => void;
+
+function encodeSseEvent(event: RealtimeEvent) {
+  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function createRealtimeEventHub() {
+  const listeners = new Set<RealtimeEventListener>();
+
+  return {
+    createStream(signal?: AbortSignal) {
+      let cleanup = () => {};
+
+      return new ReadableStream<Uint8Array>({
+        cancel() {
+          cleanup();
+        },
+        start(controller) {
+          const encoder = new TextEncoder();
+          let closed = false;
+          const write = (message: string) => {
+            if (!closed) {
+              controller.enqueue(encoder.encode(message));
+            }
+          };
+          const listener: RealtimeEventListener = (event) => {
+            write(encodeSseEvent(event));
+          };
+          const heartbeat = setInterval(() => {
+            write(`: heartbeat ${Date.now()}\n\n`);
+          }, 15000);
+
+          cleanup = () => {
+            if (closed) {
+              return;
+            }
+
+            closed = true;
+            clearInterval(heartbeat);
+            listeners.delete(listener);
+            signal?.removeEventListener("abort", cleanup);
+          };
+
+          listeners.add(listener);
+          signal?.addEventListener("abort", cleanup, { once: true });
+          write(": connected\n\n");
+        }
+      });
+    },
+    publish(event: RealtimeEvent) {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    }
+  };
+}
+
+function createRealtimeTaskRepository(
+  repository: TaskRepository,
+  publish: (event: RealtimeEvent) => void
+): TaskRepository {
+  return {
+    async createTasksFromDecompositionResult(input) {
+      const createdTasks = await repository.createTasksFromDecompositionResult(input);
+
+      for (const task of createdTasks) {
+        publish({ task, type: "task.created" });
+      }
+
+      return createdTasks;
+    },
+    async deleteTasksForRequirement(requirementId) {
+      await repository.deleteTasksForRequirement(requirementId);
+      publish({ requirementId, type: "tasks.deleted" });
+    },
+    getTask: (id) => repository.getTask(id),
+    listTasks: () => repository.listTasks(),
+    async updateTaskStatus(input) {
+      const task = await repository.updateTaskStatus(input);
+
+      publish({ task, type: "task.updated" });
+
+      return task;
+    }
+  };
+}
+
+function createRealtimeWorkflowRunRepository(
+  repository: WorkflowRunRepository,
+  publish: (event: RealtimeEvent) => void
+): WorkflowRunRepository {
+  async function getWorkflowRunForNodeRun(nodeRun: NodeRun) {
+    const workflowRuns = await repository.listWorkflowRuns();
+
+    return (
+      workflowRuns.find(
+        (workflowRun) => workflowRun.id === nodeRun.workflowRunId
+      ) ?? null
+    );
+  }
+
+  return {
+    async createNodeRun(input) {
+      const nodeRun = await repository.createNodeRun(input);
+      const workflowRun = await getWorkflowRunForNodeRun(nodeRun);
+
+      publish({ nodeRun, type: "nodeRun.created", workflowRun });
+
+      return nodeRun;
+    },
+    async createWorkflowRun(input) {
+      const workflowRun = await repository.createWorkflowRun(input);
+
+      publish({ type: "workflowRun.created", workflowRun });
+
+      return workflowRun;
+    },
+    listNodeRuns: (workflowRunId) => repository.listNodeRuns(workflowRunId),
+    listWorkflowRuns: (taskId) => repository.listWorkflowRuns(taskId),
+    async updateNodeRunStatus(input) {
+      const nodeRun = await repository.updateNodeRunStatus(input);
+      const workflowRun = await getWorkflowRunForNodeRun(nodeRun);
+
+      publish({ nodeRun, type: "nodeRun.updated", workflowRun });
+
+      return nodeRun;
+    },
+    async updateWorkflowRunStatus(input) {
+      const workflowRun = await repository.updateWorkflowRunStatus(input);
+
+      publish({ type: "workflowRun.updated", workflowRun });
+
+      return workflowRun;
+    }
+  };
+}
+
 type RequirementPlanner = (input: {
   requirement: {
     id: string;
@@ -628,9 +784,15 @@ export function createApp({
   const skills = skillRepository ?? createInMemorySkillRepository();
   const resolvedSkillStorageRoot =
     skillStorageRoot?.trim() || join(homedir(), ".forge", "skills");
-  const tasks = taskRepository ?? createInMemoryTaskRepository();
-  const workflowRuns =
-    workflowRunRepository ?? createInMemoryWorkflowRunRepository();
+  const realtimeEvents = createRealtimeEventHub();
+  const tasks = createRealtimeTaskRepository(
+    taskRepository ?? createInMemoryTaskRepository(),
+    realtimeEvents.publish
+  );
+  const workflowRuns = createRealtimeWorkflowRunRepository(
+    workflowRunRepository ?? createInMemoryWorkflowRunRepository(),
+    realtimeEvents.publish
+  );
   const workflowFiles =
     workflowFileRepository ?? createInMemoryWorkflowFileRepository();
   const planner = requirementPlanner ?? planRequirementWithModel;
@@ -974,6 +1136,17 @@ export function createApp({
       }, 0);
     }
   }
+
+  api.get("/events", (c) => {
+    return new Response(realtimeEvents.createStream(c.req.raw.signal), {
+      headers: {
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "content-type": "text/event-stream; charset=utf-8",
+        "x-accel-buffering": "no"
+      }
+    });
+  });
 
   api.get("/health", (c) => c.json(createHealthPayload()));
 

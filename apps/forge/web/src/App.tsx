@@ -35,6 +35,7 @@ import {
   type ModelProviderKind,
   type Project,
   type Requirement,
+  type RealtimeEvent,
   type Skill,
   type Task,
   type WorkflowRunWithNodes,
@@ -514,6 +515,91 @@ export function getVisibleTaskBoardTasks<T extends Pick<Task, "requirementId">>(
     : tasks;
 }
 
+export function applyRealtimeTaskEvent(tasks: Task[], event: RealtimeEvent) {
+  if (event.type === "tasks.deleted") {
+    return tasks.filter((task) => task.requirementId !== event.requirementId);
+  }
+
+  if (event.type !== "task.created" && event.type !== "task.updated") {
+    return tasks;
+  }
+
+  const existingTaskIndex = tasks.findIndex((task) => task.id === event.task.id);
+
+  if (existingTaskIndex === -1) {
+    return [...tasks, event.task];
+  }
+
+  return tasks.map((task, index) =>
+    index === existingTaskIndex ? event.task : task
+  );
+}
+
+export function applyRealtimeWorkflowRunEvent(
+  workflowRunsByTaskId: Record<string, WorkflowRunWithNodes[]>,
+  event: RealtimeEvent
+) {
+  if (event.type === "workflowRun.created" || event.type === "workflowRun.updated") {
+    const taskRuns = workflowRunsByTaskId[event.workflowRun.taskId] ?? [];
+    const existingRunIndex = taskRuns.findIndex(
+      (run) => run.workflowRun.id === event.workflowRun.id
+    );
+    const nextTaskRuns =
+      existingRunIndex === -1
+        ? [...taskRuns, { nodeRuns: [], workflowRun: event.workflowRun }]
+        : taskRuns.map((run, index) =>
+            index === existingRunIndex
+              ? { ...run, workflowRun: event.workflowRun }
+              : run
+          );
+
+    return {
+      ...workflowRunsByTaskId,
+      [event.workflowRun.taskId]: nextTaskRuns
+    };
+  }
+
+  if (event.type !== "nodeRun.created" && event.type !== "nodeRun.updated") {
+    return workflowRunsByTaskId;
+  }
+
+  if (!event.workflowRun) {
+    return workflowRunsByTaskId;
+  }
+
+  const taskRuns = workflowRunsByTaskId[event.workflowRun.taskId] ?? [];
+  const existingRunIndex = taskRuns.findIndex(
+    (run) => run.workflowRun.id === event.workflowRun?.id
+  );
+  const mergeNodeRuns = (nodeRuns: WorkflowRunWithNodes["nodeRuns"]) => {
+    const existingNodeRunIndex = nodeRuns.findIndex(
+      (nodeRun) => nodeRun.id === event.nodeRun.id
+    );
+
+    return existingNodeRunIndex === -1
+      ? [...nodeRuns, event.nodeRun]
+      : nodeRuns.map((nodeRun, index) =>
+          index === existingNodeRunIndex ? event.nodeRun : nodeRun
+        );
+  };
+  const nextTaskRuns =
+    existingRunIndex === -1
+      ? [{ nodeRuns: [event.nodeRun], workflowRun: event.workflowRun }]
+      : taskRuns.map((run, index) =>
+          index === existingRunIndex
+            ? {
+                nodeRuns: mergeNodeRuns(run.nodeRuns),
+                workflowRun: event.workflowRun!
+              }
+            : run
+        );
+
+  return {
+    ...workflowRunsByTaskId,
+    [event.workflowRun.taskId]: nextTaskRuns
+  };
+}
+
 function hasSucceededWorkflowRun(
   taskId: string,
   workflowRunsByTaskId: Record<string, WorkflowRunWithNodes[]>
@@ -529,6 +615,10 @@ function shouldRunTaskInRunAll(task: Task) {
 
 function waitFor(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function createRealtimeEventSource(baseUrl = "") {
+  return new EventSource(`${baseUrl.replace(/\/$/, "")}/api/events`);
 }
 
 function getOrderedNodeRuns(run: WorkflowRunWithNodes) {
@@ -1574,6 +1664,45 @@ export function App({
     kind: "status",
     key: "settingsIdle"
   });
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") {
+      return;
+    }
+
+    const eventSource = createRealtimeEventSource();
+    const eventTypes = [
+      "task.created",
+      "task.updated",
+      "tasks.deleted",
+      "workflowRun.created",
+      "workflowRun.updated",
+      "nodeRun.created",
+      "nodeRun.updated"
+    ];
+    const handleRealtimeEvent = (message: Event) => {
+      try {
+        const event = JSON.parse(
+          (message as MessageEvent<string>).data
+        ) as RealtimeEvent;
+
+        setTasks((currentTasks) => applyRealtimeTaskEvent(currentTasks, event));
+        setWorkflowRunsByTaskId((currentWorkflowRuns) =>
+          applyRealtimeWorkflowRunEvent(currentWorkflowRuns, event)
+        );
+      } catch {
+        // Ignore malformed realtime messages and keep the current board state.
+      }
+    };
+
+    for (const eventType of eventTypes) {
+      eventSource.addEventListener(eventType, handleRealtimeEvent);
+    }
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
