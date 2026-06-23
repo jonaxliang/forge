@@ -357,6 +357,10 @@ export type GenerateTasksResponse = {
 export type ResetRequirementResponse = {
   requirement: Requirement;
 };
+export type AcceptRequirementResponse = {
+  requirement: Requirement;
+  task: Task;
+};
 
 export type ImportWorkflowFileResponse = {
   workflow: WorkflowFile;
@@ -763,6 +767,25 @@ export async function resetRequirement(
   return response.json() as Promise<ResetRequirementResponse>;
 }
 
+export async function acceptRequirement(
+  id: string,
+  baseUrl = ""
+): Promise<AcceptRequirementResponse> {
+  const response = await fetch(apiUrl(baseUrl, `/requirements/${id}/acceptance`), {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+
+    throw new Error(body?.error ?? "Requirement acceptance failed");
+  }
+
+  return response.json() as Promise<AcceptRequirementResponse>;
+}
+
 export async function updateRequirement(
   id: string,
   input: UpdateRequirementRequest,
@@ -859,6 +882,24 @@ export async function listTasks(baseUrl = ""): Promise<Task[]> {
   const body = (await response.json()) as { tasks: Task[] };
 
   return body.tasks;
+}
+
+export async function acceptTask(taskId: string, baseUrl = ""): Promise<Task> {
+  const response = await fetch(apiUrl(baseUrl, `/tasks/${taskId}/acceptance`), {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+
+    throw new Error(body?.error ?? "Task acceptance failed");
+  }
+
+  const body = (await response.json()) as { task: Task };
+
+  return body.task;
 }
 
 export async function startTaskWorkflowRun(

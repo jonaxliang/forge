@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/assets/forge-product-intro.png" alt="Forge product introduction with the Forge cat mascot and orchestration control plane" width="100%" />
+</p>
+
 <div align="center">
   <img src="./apps/forge/web/public/brand/forge-cat-logo-256.png" alt="Forge logo" width="88" />
   <h1>Forge</h1>
