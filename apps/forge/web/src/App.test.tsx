@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import {
+  applyRealtimeTaskEvent,
+  applyRealtimeWorkflowRunEvent,
   createWorkflowSourceFromBuilder,
   getTaskRunOrder,
   getPathForPage,
@@ -1345,6 +1347,105 @@ describe("App workbench layout", () => {
     expect(getVisibleTaskBoardTasks(tasks, "")).toEqual(tasks);
     expect(getVisibleTaskBoardTasks(tasks, "req_first")).toEqual([tasks[0]]);
     expect(getVisibleTaskBoardTasks(tasks, "req_missing")).toEqual([]);
+  });
+
+  it("applies realtime Task updates to the Task Board state", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const task = {
+      body: "First body",
+      createdAt: timestamp,
+      deletedAt: null,
+      dependsOn: [],
+      executorAgentBindingId: null,
+      executorLabel: "Model API",
+      executorType: "model-api" as const,
+      id: "tsk_first",
+      projectId: "proj_test",
+      requirementId: "req_first",
+      sourceItemId: "item_first",
+      status: "init" as const,
+      title: "First task",
+      updatedAt: timestamp
+    };
+
+    expect(
+      applyRealtimeTaskEvent([task], {
+        task: {
+          ...task,
+          status: "running",
+          updatedAt: "2026-06-14T00:01:00.000Z"
+        },
+        type: "task.updated"
+      })
+    ).toEqual([
+      {
+        ...task,
+        status: "running",
+        updatedAt: "2026-06-14T00:01:00.000Z"
+      }
+    ]);
+  });
+
+  it("applies realtime Workflow Run and Node Run updates to the Task Board state", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const workflowRun = {
+      createdAt: timestamp,
+      executorAssignments: {},
+      id: "wfr_first",
+      status: "running" as const,
+      taskId: "tsk_first",
+      updatedAt: timestamp,
+      workflowFileId: "wf_task"
+    };
+    const nodeRun = {
+      createdAt: timestamp,
+      dependsOn: [],
+      errorMessage: null,
+      id: "ndr_plan",
+      nodeId: "plan",
+      output: null,
+      sortOrder: 0,
+      status: "queued" as const,
+      updatedAt: timestamp,
+      workflowRunId: workflowRun.id
+    };
+    const currentRuns = {
+      tsk_first: [
+        {
+          nodeRuns: [nodeRun],
+          workflowRun
+        }
+      ]
+    };
+
+    const afterWorkflowRun = applyRealtimeWorkflowRunEvent(currentRuns, {
+      type: "workflowRun.updated",
+      workflowRun: {
+        ...workflowRun,
+        status: "succeeded",
+        updatedAt: "2026-06-14T00:01:00.000Z"
+      }
+    });
+
+    expect(afterWorkflowRun.tsk_first[0]?.workflowRun.status).toBe("succeeded");
+
+    const afterNodeRun = applyRealtimeWorkflowRunEvent(afterWorkflowRun, {
+      nodeRun: {
+        ...nodeRun,
+        status: "succeeded",
+        updatedAt: "2026-06-14T00:02:00.000Z"
+      },
+      type: "nodeRun.updated",
+      workflowRun: afterWorkflowRun.tsk_first[0]!.workflowRun
+    });
+
+    expect(afterNodeRun.tsk_first[0]?.nodeRuns).toEqual([
+      {
+        ...nodeRun,
+        status: "succeeded",
+        updatedAt: "2026-06-14T00:02:00.000Z"
+      }
+    ]);
   });
 
   it("renders Task Board Requirement filters", () => {

@@ -208,6 +208,25 @@ export type RetriedWorkflowRunWithTask = WorkflowRunWithNodes & {
   task: Task;
 };
 
+export type RealtimeEvent =
+  | {
+      task: Task;
+      type: "task.created" | "task.updated";
+    }
+  | {
+      type: "tasks.deleted";
+      requirementId: string;
+    }
+  | {
+      type: "workflowRun.created" | "workflowRun.updated";
+      workflowRun: WorkflowRun;
+    }
+  | {
+      nodeRun: NodeRun;
+      type: "nodeRun.created" | "nodeRun.updated";
+      workflowRun: WorkflowRun | null;
+    };
+
 export type AgentConnectorType = "cli" | "mcp";
 export type AgentBindingStatus = "online" | "offline" | "error";
 
@@ -358,6 +377,10 @@ export type UpdateSkillFromSourceResponse = {
 
 function apiUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/$/, "")}/api${path}`;
+}
+
+export function createRealtimeEventSource(baseUrl = "") {
+  return new EventSource(apiUrl(baseUrl, "/events"));
 }
 
 export async function getServerHealth(baseUrl = ""): Promise<ServerHealth> {
