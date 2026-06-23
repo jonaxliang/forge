@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -174,6 +174,46 @@ describe("CLI Connector", () => {
       exitCode: 7,
       stderr: "agent failed",
       stdout: ""
+    });
+  });
+
+  it("runs a local command inside the Bridge job worktree when provided", async () => {
+    const home = await createHome();
+    const worktreePath = join(home, "worktrees", "job_1");
+    const scriptPath = join(home, "read-marker.mjs");
+
+    await mkdir(worktreePath, { recursive: true });
+    await writeFile(join(worktreePath, "marker.txt"), "isolated worktree");
+    await writeFile(
+      scriptPath,
+      [
+        "import { readFileSync } from 'node:fs';",
+        "process.stdout.write(readFileSync('marker.txt', 'utf8'));"
+      ].join("\n")
+    );
+
+    const result = await executeCliAgent(
+      {
+        command: `${process.execPath} ${scriptPath}`,
+        connector: "cli",
+        name: "coco"
+      },
+      {
+        id: "job_1",
+        nodeRun: {
+          id: "ndr_1",
+          nodeId: "implement"
+        },
+        workspace: {
+          worktreePath
+        }
+      }
+    );
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      stderr: "",
+      stdout: "isolated worktree"
     });
   });
 });

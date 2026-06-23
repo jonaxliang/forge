@@ -5,6 +5,9 @@ export type BridgeJobPayload = {
   id: string;
   nodeRun?: unknown;
   task?: unknown;
+  workspace?: {
+    worktreePath?: string;
+  };
   workflowFile?: unknown;
   workflowRun?: unknown;
 };
@@ -37,7 +40,9 @@ export async function executeCliAgent(
   }
 
   return new Promise((resolve, reject) => {
+    const cwd = resolveJobWorktreePath(payload);
     const child = spawn(command[0], command.slice(1), {
+      ...(cwd ? { cwd } : {}),
       stdio: ["pipe", "pipe", "pipe"]
     });
     const stdout: string[] = [];
@@ -57,6 +62,12 @@ export async function executeCliAgent(
     });
     child.stdin.end(`${JSON.stringify(payload)}\n`);
   });
+}
+
+function resolveJobWorktreePath(payload: BridgeJobPayload) {
+  const worktreePath = payload.workspace?.worktreePath?.trim();
+
+  return worktreePath || undefined;
 }
 
 export async function executeMcpAgent(

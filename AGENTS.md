@@ -130,6 +130,7 @@ Forge Web should read as product software rather than a promotional AI website: 
 - Use `rg` or `rg --files` for searching whenever possible.
 - Before editing a file, inspect the surrounding code, exports, callers, and tests that define the local pattern.
 - Use `apply_patch` for manual edits.
+- For local manual or browser testing that needs a Project, reuse `【TEST】Main_Test` unless the test explicitly requires a new Project. Any new test Project must use the `【TEST】` name prefix. Do not treat existing non-`【TEST】` Projects as disposable test data.
 - Do not use destructive git commands such as `git reset --hard` or `git checkout --` unless explicitly requested.
 - Treat dirty or untracked files as user-owned unless you created them in the current task.
 - Keep comments sparse and useful. Do not narrate obvious code.

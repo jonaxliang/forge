@@ -3,12 +3,36 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
-import { getPathForPage, resolvePageFromPath } from "./App";
+import {
+  createWorkflowSourceFromBuilder,
+  getTaskRunOrder,
+  getPathForPage,
+  getVisibleTaskBoardTasks,
+  readStoredTaskWorkflowSelections,
+  resolvePageFromPath
+} from "./App";
 import { defaultWorkflowTemplates } from "./default-workflow-templates";
 import { getModelSettingsForProviderChange } from "./model-settings";
 import { shouldShowModelConfigurationStatus } from "./status";
 
 describe("App workbench layout", () => {
+  it("marks the app shell as a motion scope", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toContain('data-motion-scope="app-shell"');
+    expect(markup).toContain('class="studio-shell"');
+  });
+
+  it("marks modal panels as motion scopes", () => {
+    const markup = renderToStaticMarkup(
+      <App initialWorkbenchAction="project" />
+    );
+
+    expect(markup).toContain('data-motion-scope="modal-backdrop"');
+    expect(markup).toContain('data-motion-scope="modal-panel"');
+    expect(markup).toContain('role="dialog"');
+  });
+
   it("guides first-time users to create a Project before showing work forms", () => {
     const markup = renderToStaticMarkup(<App />);
 
@@ -57,13 +81,11 @@ describe("App workbench layout", () => {
         ]}
         initialWorkflowFiles={[
           {
-            createdAt: timestamp,
             definition: JSON.stringify({
               name: "Project QA workflow",
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:qa",
                   exit: { maxRetries: 1 },
                   id: "qa",
                   outputs: ["qa.md"],
@@ -74,7 +96,8 @@ describe("App workbench layout", () => {
             id: "wf_project_qa",
             name: "Project QA workflow",
             nodeCount: 1,
-            templateType: "custom"
+            templateType: "custom",
+            createdAt: timestamp
           }
         ]}
       />
@@ -190,6 +213,36 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("workbench-drawer");
   });
 
+  it("does not duplicate the idle Project status in the creation modal", () => {
+    const markup = renderToStaticMarkup(
+      <App initialWorkbenchAction="project" />
+    );
+
+    expect(markup).toContain('id="project-modal-heading"');
+    expect(markup.match(/No project created yet/g)).toHaveLength(1);
+  });
+
+  it("does not show the idle Requirement status in the creation modal", () => {
+    const markup = renderToStaticMarkup(
+      <App initialWorkbenchAction="requirement" />
+    );
+
+    expect(markup).toContain('id="requirement-modal-heading"');
+    expect(markup).not.toContain("No requirement created yet");
+  });
+
+  it("does not show the idle Workflow status in template modals", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowTemplateDialog="new"
+      />
+    );
+
+    expect(markup).toContain('id="workflow-template-modal-heading"');
+    expect(markup).not.toContain("No workflow imported yet");
+  });
+
   it("shows the active Project name editor in basic settings", () => {
     const markup = renderToStaticMarkup(
       <App
@@ -216,6 +269,154 @@ describe("App workbench layout", () => {
     const markup = renderToStaticMarkup(<App initialPage="settings" />);
 
     expect(markup.match(/Workspace preferences/g) ?? []).toHaveLength(1);
+  });
+
+  it("shows a Skill library in settings", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="settings"
+        initialSettingsSection="skills"
+        initialSkills={[
+          {
+            body: "# Code Review",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            description: "Reviews code changes.",
+            files: [{ content: "# Code Review", path: "SKILL.md" }],
+            id: "skl_code_review",
+            name: "Code Review",
+            projectId: "proj_test",
+            ref: "skill:code-review",
+            sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review",
+            storagePath: "/tmp/forge-skills/proj_test/code-review",
+            updatedAt: "2026-06-14T00:00:00.000Z"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Skill library");
+    expect(markup).toContain("Upload zip");
+    expect(markup).toContain("Import from link");
+    expect(markup).toContain("View Skill");
+    expect(markup).toContain("Update from source");
+    expect(markup).toContain("Linked source");
+    expect(markup).toContain("Delete Skill");
+    expect(markup).toContain("Code Review");
+    expect(markup).toContain("skill:code-review");
+    expect(markup).not.toContain("Skill body");
+  });
+
+  it("shows a zip-only Skill upload modal from the upload zip action", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="settings"
+        initialSettingsSection="skills"
+        initialSkillUploadDialogOpen
+      />
+    );
+
+    expect(markup).toContain("Skill zip");
+    expect(markup).toContain("Choose zip");
+    expect(markup).not.toContain("Skill source URL");
+    expect(markup).not.toContain("GitHub tree, GitHub archive, raw SKILL.md, or zip URL");
+    expect(markup).toContain("Confirm upload");
+    expect(markup).not.toContain("Skill name");
+    expect(markup).not.toContain("Skill ref");
+    expect(markup).not.toContain("Skill body");
+  });
+
+  it("shows a link-only Skill import modal from the import link action", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="settings"
+        initialSettingsSection="skills"
+        initialSkillUploadDialogOpen
+        initialSkillUploadMode="url"
+      />
+    );
+
+    expect(markup).toContain("Skill source URL");
+    expect(markup).toContain("GitHub tree, GitHub archive, raw SKILL.md, or zip URL");
+    expect(markup).toContain("Import from link");
+    expect(markup).not.toContain("Skill zip");
+    expect(markup).not.toContain("Choose zip");
+    expect(markup).not.toContain("Skill body");
+  });
+
+  it("shows a Skill file directory without inline preview content", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialSkillContentDialogOpen
+        initialPage="settings"
+        initialSelectedSkillId="skl_code_review"
+        initialSettingsSection="skills"
+        initialSkills={[
+          {
+            body: "# Code Review\n\nReview changes for behavioral regressions.",
+            createdAt: "2026-06-14T00:00:00.000Z",
+            description: "Reviews code changes.",
+            files: [
+              {
+                content: "# Code Review\n\nReview changes for behavioral regressions.",
+                path: "SKILL.md"
+              },
+              {
+                content: "Use the repository review checklist.",
+                path: "references/checklist.md"
+              }
+            ],
+            id: "skl_code_review",
+            name: "Code Review",
+            projectId: "proj_test",
+            ref: "skill:code-review",
+            sourceUrl: null,
+            storagePath: "/tmp/forge-skills/proj_test/code-review",
+            updatedAt: "2026-06-14T00:00:00.000Z"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("File tree");
+    expect(markup).toContain("SKILL.md");
+    expect(markup).toContain("references/checklist.md");
+    expect(markup).not.toContain("Review changes for behavioral regressions.");
+    expect(markup).not.toContain("Use the repository review checklist.");
+  });
+
+  it("generates Workflow File Skill declarations from selected builder tools", () => {
+    const source = createWorkflowSourceFromBuilder(
+      "Code workflow",
+      [
+        {
+          id: "review",
+          maxRetries: 1,
+          output: "review.md",
+          skillRef: "skill:code-review",
+          type: "code-review"
+        }
+      ],
+      [
+        {
+          body: "# Code Review",
+          createdAt: "2026-06-14T00:00:00.000Z",
+          description: "Reviews code changes.",
+          files: [{ content: "# Code Review", path: "SKILL.md" }],
+          id: "skl_code_review",
+          name: "Code Review",
+          projectId: "proj_test",
+          ref: "skill:code-review",
+          sourceUrl: null,
+          storagePath: "/tmp/forge-skills/proj_test/code-review",
+          updatedAt: "2026-06-14T00:00:00.000Z"
+        }
+      ]
+    );
+
+    expect(source).toContain("skills:\n  - id: \"code-review\"\n    ref: \"skill:code-review\"");
+    expect(source).toContain("uses:\n      - \"skill:code-review\"");
+    expect(source).not.toContain("executor:");
+    expect(source).not.toContain("agent:worker");
   });
 
   it("keeps workflow template summaries out of the home workspace", () => {
@@ -254,7 +455,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:requirements",
                   exit: { maxRetries: 1 },
                   id: "split",
                   outputs: ["tasks.md"],
@@ -273,7 +473,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:coder",
                   exit: { maxRetries: 1 },
                   id: "code",
                   outputs: ["diff.patch"],
@@ -292,7 +491,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:reviewer",
                   exit: { maxRetries: 1 },
                   id: "review",
                   outputs: ["review.md"],
@@ -311,7 +509,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:deployer",
                   exit: { maxRetries: 1 },
                   id: "deploy",
                   outputs: ["release.md"],
@@ -330,7 +527,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:writer",
                   exit: { maxRetries: 1 },
                   id: "draft",
                   outputs: ["draft.md"],
@@ -392,7 +588,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:requirements",
                   exit: { maxRetries: 1 },
                   id: "split",
                   outputs: ["tasks.md"],
@@ -411,7 +606,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:research",
                   exit: { maxRetries: 1 },
                   id: "analyze",
                   outputs: ["analysis.md"],
@@ -430,7 +624,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:autonomous-test-agent",
                   exit: { maxRetries: 1 },
                   id: "write_travel_guide",
                   outputs: ["travel-guide.md"],
@@ -579,9 +772,142 @@ describe("App workbench layout", () => {
     expect(pageMarkup).toContain("Build the requirements page.");
     expect(pageMarkup).toContain("Edit");
     expect(pageMarkup).toContain("Delete");
+    expect(pageMarkup).not.toContain(
+      '<button class="button-secondary" type="button">Home</button>'
+    );
     expect(pageMarkup).not.toContain('aria-label="Rename Requirements page"');
     expect(pageMarkup).not.toContain("Save name");
     expect(pageMarkup).not.toContain("No requirement created yet");
+  });
+
+  it("shows management parameters for each Requirement", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const projects = [
+      {
+        artifactStorageMode: "local-only" as const,
+        createdAt: timestamp,
+        dbStrategy: "sqlite" as const,
+        id: "proj_test",
+        name: "Project",
+        updatedAt: timestamp
+      }
+    ];
+    const requirements = [
+      {
+        body: "Implement real Requirement management.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage: null,
+        id: "req_manage",
+        projectId: "proj_test",
+        status: "tasks_generated" as const,
+        title: "Requirement management",
+        updatedAt: "2026-06-15T08:30:00.000Z",
+        workflowFileId: "wf_requirement"
+      }
+    ];
+
+    const markup = renderToStaticMarkup(
+      <App
+        initialDecompositionResults={[
+          {
+            createdAt: timestamp,
+            id: "dec_manage",
+            items: [
+              {
+                body: "Update the Requirement list.",
+                dependsOn: [],
+                executorAgentBindingId: null,
+                executorLabel: "Model API",
+                executorType: "model-api",
+                id: "item_list",
+                sortOrder: 0,
+                title: "Requirement list"
+              },
+              {
+                body: "Update the Requirement editor.",
+                dependsOn: [],
+                executorAgentBindingId: null,
+                executorLabel: "Model API",
+                executorType: "model-api",
+                id: "item_editor",
+                sortOrder: 1,
+                title: "Requirement editor"
+              }
+            ],
+            projectId: "proj_test",
+            requirementId: "req_manage",
+            summary: "Two manageable Task entries.",
+            updatedAt: timestamp
+          }
+        ]}
+        initialPage="requirements"
+        initialProjects={projects}
+        initialRequirements={requirements}
+        initialTasks={[
+          {
+            body: "Update the Requirement list.",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "task_list",
+            projectId: "proj_test",
+            requirementId: "req_manage",
+            sourceItemId: "item_list",
+            status: "running",
+            title: "Requirement list",
+            updatedAt: timestamp
+          },
+          {
+            body: "Update the Requirement editor.",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "task_editor",
+            projectId: "proj_test",
+            requirementId: "req_manage",
+            sourceItemId: "item_editor",
+            status: "completed",
+            title: "Requirement editor",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({ name: "Requirement workflow", nodes: [] }),
+            id: "wf_requirement",
+            name: "Requirement workflow",
+            nodeCount: 2,
+            templateType: "custom"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain('class="requirement-management-summary"');
+    expect(markup).toContain('class="requirement-management-metrics"');
+    expect(markup).not.toContain("Requirement ID");
+    expect(markup).not.toContain("req_manage");
+    expect(markup).toContain("Project");
+    expect(markup).not.toContain("Workflow File");
+    expect(markup).not.toContain("Requirement workflow");
+    expect(markup).toContain("Created");
+    expect(markup).toContain("2026-06-14 00:00");
+    expect(markup).toContain("Updated");
+    expect(markup).toContain("2026-06-15 08:30");
+    expect(markup).toContain("Decomposition items");
+    expect(markup).toContain("2 items");
+    expect(markup).toContain("Linked Tasks");
+    expect(markup).toContain("2 Tasks");
+    expect(markup).toContain("Next action");
+    expect(markup).toContain("Track generated Tasks");
   });
 
   it("shows current Requirement status and task generation from the home page", () => {
@@ -620,6 +946,11 @@ describe("App workbench layout", () => {
             items: [
               {
                 body: "Create the first executable Task.",
+                dependsOn: [],
+                executorAgentBindingId: null,
+                executorLabel: "Model API",
+                executorType: "model-api",
+                id: "item_first",
                 sortOrder: 0,
                 title: "First generated Task"
               }
@@ -640,9 +971,154 @@ describe("App workbench layout", () => {
     expect(markup).toContain('class="requirement-current-status"');
     expect(markup).toContain("Ready to generate Tasks");
     expect(markup).toContain("Generate Tasks");
+    expect(markup).toContain('class="compact-record-main"');
+    expect(markup).toContain('class="compact-record-meta-grid"');
+    expect(markup).toContain('class="compact-record-meta-item"');
+    expect(markup).toContain('class="compact-record-meta-label"');
+    expect(markup).toContain('class="compact-record-meta-value"');
     expect(markup.indexOf('class="requirement-current-status"')).toBeLessThan(
       markup.indexOf('class="compact-record-actions"')
     );
+  });
+
+  it("opens a dialog to edit the current Requirement details from the home page", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const projects = [
+      {
+        artifactStorageMode: "local-only" as const,
+        createdAt: timestamp,
+        dbStrategy: "sqlite" as const,
+        id: "proj_test",
+        name: "Project",
+        updatedAt: timestamp
+      }
+    ];
+    const requirements = [
+      {
+        body: "Keep the visible Requirement name current.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage: null,
+        id: "req_current",
+        projectId: "proj_test",
+        status: "init" as const,
+        title: "Current editable requirement",
+        updatedAt: timestamp,
+        workflowFileId: "wf_1"
+      }
+    ];
+
+    const readOnlyMarkup = renderToStaticMarkup(
+      <App initialProjects={projects} initialRequirements={requirements} />
+    );
+    const editingMarkup = renderToStaticMarkup(
+      <App
+        initialEditingRequirementId="req_current"
+        initialProjects={projects}
+        initialRequirements={requirements}
+      />
+    );
+
+    expect(readOnlyMarkup).toContain(
+      'aria-label="Edit Current editable requirement"'
+    );
+    expect(readOnlyMarkup).not.toContain("Rename");
+    expect(editingMarkup).toContain('role="dialog"');
+    expect(editingMarkup).toContain('class="modal-panel requirement-name-dialog"');
+    expect(editingMarkup).not.toContain('class="compact-record-rename-form"');
+    expect(editingMarkup).toContain("Requirement name");
+    expect(editingMarkup).toContain('value="Current editable requirement"');
+    expect(editingMarkup).toContain("Requirement description");
+    expect(editingMarkup).toContain("Keep the visible Requirement name current.");
+    expect(editingMarkup).toContain("Save Requirement");
+    expect(editingMarkup).toContain("Cancel");
+  });
+
+  it("opens a clarification answer dialog for Requirements that need more input", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const projects = [
+      {
+        artifactStorageMode: "local-only" as const,
+        createdAt: timestamp,
+        dbStrategy: "sqlite" as const,
+        id: "proj_test",
+        name: "Project",
+        updatedAt: timestamp
+      }
+    ];
+    const requirements = [
+      {
+        body: "Write an LLM Wiki material.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage:
+          "Need target reader details.\n- Who is the target reader?\n- Which output format is expected?",
+        id: "req_clarify",
+        projectId: "proj_test",
+        status: "decomposition_failed" as const,
+        title: "LLM Wiki material",
+        updatedAt: timestamp,
+        workflowFileId: "wf_1"
+      }
+    ];
+
+    const readOnlyMarkup = renderToStaticMarkup(
+      <App initialProjects={projects} initialRequirements={requirements} />
+    );
+    const dialogMarkup = renderToStaticMarkup(
+      <App
+        initialClarificationRequirementId="req_clarify"
+        initialProjects={projects}
+        initialRequirements={requirements}
+      />
+    );
+
+    expect(readOnlyMarkup).toContain("Answer questions");
+    expect(readOnlyMarkup).not.toContain(">Decompose Requirement</button>");
+    expect(readOnlyMarkup).toContain("Answer clarification for LLM Wiki material");
+    expect(readOnlyMarkup).toContain("Need target reader details.");
+    expect(dialogMarkup).toContain('class="modal-panel clarification-dialog"');
+    expect(dialogMarkup).toContain("Who is the target reader?");
+    expect(dialogMarkup).toContain("Which output format is expected?");
+    expect(dialogMarkup).toContain("Your answers");
+    expect(dialogMarkup).toContain("Submit answers and decompose");
+    expect(dialogMarkup).not.toContain("Save answers");
+  });
+
+  it("shows legacy Requirement statuses instead of empty badges", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Legacy requirement status from an existing database.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_legacy",
+            projectId: "proj_test",
+            status: "open" as never,
+            title: "Legacy requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain('class="requirement-current-status"');
+    expect(markup).toContain("Open");
+    expect(markup).toContain("Decompose Requirement");
   });
 
   it("shows a planning action for open Requirements without generated Tasks", () => {
@@ -677,6 +1153,8 @@ describe("App workbench layout", () => {
         initialExecutionSettings={{
           agentProxyConfigured: false,
           agentProxyUrl: "",
+          defaultExecutorAgentBindingId: null,
+          defaultExecutorType: "model-api",
           modelBaseUrl: "https://api.openai.com/v1",
           modelConfigured: true,
           modelName: "gpt-5",
@@ -693,9 +1171,47 @@ describe("App workbench layout", () => {
     expect(markup).toContain("LLM Wiki research report");
   });
 
+  it("puts destructive Requirement actions behind a menu and confirmation copy", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const requirements = [
+      {
+        body: "Reset or remove this requirement.",
+        createdAt: timestamp,
+        deletedAt: null,
+        errorMessage: null,
+        id: "req_actions",
+        projectId: "proj_test",
+        status: "tasks_generated" as const,
+        title: "Requirement actions",
+        updatedAt: timestamp,
+        workflowFileId: "wf_requirement"
+      }
+    ];
+
+    const markup = renderToStaticMarkup(
+      <App initialPage="requirements" initialRequirements={requirements} />
+    );
+
+    expect(markup).toContain('aria-label="More Requirement actions"');
+    expect(markup).toContain("Reset Requirement");
+    expect(markup).toContain("Delete Requirement");
+    expect(markup).toContain("Reset this Requirement?");
+    expect(markup).toContain("Delete this Requirement?");
+  });
+
   it("resolves the Requirements page route", () => {
     expect(resolvePageFromPath("/requirements")).toBe("requirements");
     expect(getPathForPage("requirements")).toBe("/requirements");
+  });
+
+  it("orders Tasks for run-all by dependency before dependent work", () => {
+    expect(
+      getTaskRunOrder([
+        { dependsOn: ["task_a"], id: "task_b" },
+        { dependsOn: [], id: "task_a" },
+        { dependsOn: ["task_b"], id: "task_c" }
+      ])
+    ).toEqual(["task_a", "task_b", "task_c"]);
   });
 
   it("scopes generated work to the selected Project", () => {
@@ -751,9 +1267,14 @@ describe("App workbench layout", () => {
             body: "A task body",
             createdAt: timestamp,
             deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
             id: "tsk_a",
             projectId: "proj_a",
             requirementId: "req_a",
+            sourceItemId: "item_a",
             status: "init",
             title: "Project A task",
             updatedAt: timestamp
@@ -762,9 +1283,14 @@ describe("App workbench layout", () => {
             body: "B task body",
             createdAt: timestamp,
             deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
             id: "tsk_b",
             projectId: "proj_b",
             requirementId: "req_b",
+            sourceItemId: "item_b",
             status: "init",
             title: "Project B task",
             updatedAt: timestamp
@@ -777,6 +1303,98 @@ describe("App workbench layout", () => {
     expect(markup).toContain("Project A task");
     expect(markup).not.toContain("Project B requirement");
     expect(markup).not.toContain("Project B task");
+  });
+
+  it("filters Task Board tasks by Requirement", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const tasks = [
+      {
+        body: "First body",
+        createdAt: timestamp,
+        deletedAt: null,
+        dependsOn: [],
+        executorAgentBindingId: null,
+        executorLabel: "Model API",
+        executorType: "model-api" as const,
+        id: "tsk_first",
+        projectId: "proj_test",
+        requirementId: "req_first",
+        sourceItemId: "item_first",
+        status: "init" as const,
+        title: "First task",
+        updatedAt: timestamp
+      },
+      {
+        body: "Second body",
+        createdAt: timestamp,
+        deletedAt: null,
+        dependsOn: [],
+        executorAgentBindingId: null,
+        executorLabel: "Model API",
+        executorType: "model-api" as const,
+        id: "tsk_second",
+        projectId: "proj_test",
+        requirementId: "req_second",
+        sourceItemId: "item_second",
+        status: "failed" as const,
+        title: "Second task",
+        updatedAt: timestamp
+      }
+    ];
+
+    expect(getVisibleTaskBoardTasks(tasks, "")).toEqual(tasks);
+    expect(getVisibleTaskBoardTasks(tasks, "req_first")).toEqual([tasks[0]]);
+    expect(getVisibleTaskBoardTasks(tasks, "req_missing")).toEqual([]);
+  });
+
+  it("renders Task Board Requirement filters", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "First body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_first",
+            projectId: "proj_test",
+            status: "init",
+            title: "First Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          },
+          {
+            body: "Second body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_second",
+            projectId: "proj_test",
+            status: "init",
+            title: "Second Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain('class="task-board-toolbar"');
+    expect(markup).toContain("All");
+    expect(markup).toContain("Requirement");
+    expect(markup).toContain("First Requirement");
+    expect(markup).toContain("Second Requirement");
   });
 
   it("renders Node Run id and status in separate layout targets", () => {
@@ -812,9 +1430,14 @@ describe("App workbench layout", () => {
             body: "Task body",
             createdAt: timestamp,
             deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
             id: "tsk_a",
             projectId: "proj_a",
             requirementId: "req_a",
+            sourceItemId: "item_a",
             status: "init",
             title: "Task",
             updatedAt: timestamp
@@ -827,8 +1450,10 @@ describe("App workbench layout", () => {
                 {
                   createdAt: timestamp,
                   dependsOn: [],
+                  errorMessage: null,
                   id: "ndr_a",
                   nodeId: "write_travel_guide",
+                  output: null,
                   sortOrder: 0,
                   status: "succeeded",
                   updatedAt: timestamp,
@@ -837,6 +1462,7 @@ describe("App workbench layout", () => {
               ],
               workflowRun: {
                 createdAt: timestamp,
+                executorAssignments: {},
                 id: "wfr_a",
                 status: "succeeded",
                 taskId: "tsk_a",
@@ -851,6 +1477,593 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain('class="node-run-id"');
     expect(markup).toContain('class="node-run-status"');
+  });
+
+  it("labels the action as rerunning the Workflow when a Task already has runs", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "pending_acceptance",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Task workflow",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1 },
+                  id: "write",
+                  outputs: ["artifact.md"],
+                  type: "writing"
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Task workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  id: "ndr_a",
+                  nodeId: "write",
+                  output: "done",
+                  sortOrder: 0,
+                  status: "succeeded",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "succeeded",
+                taskId: "tsk_a",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(markup).toContain(">Rerun Workflow</button>");
+    expect(markup).not.toContain(">Start Run</button>");
+  });
+
+  it("shows a run-all action for generated Tasks", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "First task",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "init",
+            title: "First task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Task workflow",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1 },
+                  id: "write",
+                  outputs: ["artifact.md"],
+                  type: "writing"
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Task workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain(">Run all</button>");
+  });
+
+  it("does not show Workflow template controls for a running Task", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "running",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Task workflow",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1 },
+                  id: "write",
+                  outputs: ["artifact.md"],
+                  type: "writing"
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Task workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "running",
+                taskId: "tsk_a",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(markup).not.toContain("Task Workflow Template");
+    expect(markup).not.toContain(">Rerun Workflow</button>");
+    expect(markup).not.toContain(">Start Run</button>");
+  });
+
+  it("opens Workflow Run details instead of summarizing the current Workflow Node on Task cards", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "running",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            definition: JSON.stringify({
+              name: "Travel Guide",
+              version: "1",
+              inputs: [{ id: "task", description: "Approved travel guide task" }],
+              skills: [
+                {
+                  id: "destination-research",
+                  ref: "skill:destination-research"
+                }
+              ],
+              artifacts: [
+                {
+                  id: "trip-brief",
+                  type: "doc",
+                  description: "Trip brief"
+                }
+              ],
+              nodes: [
+                {
+                  id: "clarify-trip",
+                  type: "analysis",
+                  dependsOn: [],
+                  uses: ["skill:destination-research"],
+                  inputs: ["task"],
+                  instruction: {
+                    text: "Extract destination, dates, budget, travelers, and constraints."
+                  },
+                  outputs: [{ artifact: "trip-brief" }],
+                  exit: {
+                    maxRetries: 1,
+                    criteria: ["Trip constraints are explicit."]
+                  }
+                },
+                {
+                  id: "design-itinerary",
+                  type: "generation",
+                  dependsOn: ["clarify-trip"],
+                  uses: ["skill:destination-research"],
+                  inputs: ["trip-brief"],
+                  instruction: {
+                    text: "Create the day-by-day itinerary."
+                  },
+                  outputs: [{ artifact: "draft-itinerary" }],
+                  exit: {
+                    maxRetries: 1,
+                    criteria: ["Itinerary covers each travel day."]
+                  }
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Travel Guide",
+            nodeCount: 2,
+            templateType: "custom",
+            createdAt: timestamp
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  id: "ndr_a",
+                  nodeId: "clarify-trip",
+                  output: null,
+                  sortOrder: 0,
+                  status: "running",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                },
+                {
+                  createdAt: timestamp,
+                  dependsOn: ["clarify-trip"],
+                  errorMessage: null,
+                  id: "ndr_b",
+                  nodeId: "design-itinerary",
+                  output: null,
+                  sortOrder: 1,
+                  status: "queued",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "running",
+                taskId: "tsk_a",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+        initialWorkflowRunDetailDialog={{
+          taskId: "tsk_a",
+          workflowRunId: "wfr_a"
+        }}
+      />
+    );
+
+    expect(markup).not.toContain('class="task-current-node"');
+    expect(markup).toContain("View details");
+    expect(markup).toContain("run-group-summary");
+    expect(markup).toContain("run-group-timestamp");
+    expect(markup).toContain("Workflow Run details");
+    expect(markup).toContain("Current node 1 / 2");
+    expect(markup).toContain("clarify-trip");
+    expect(markup).toContain("design-itinerary");
+    expect(markup).toContain("Inputs");
+    expect(markup).toContain("Outputs");
+    expect(markup).toContain("Depends on");
+    expect(markup).toContain("Execution trace");
+    expect(markup).toContain("Process details have not been captured yet.");
+  });
+
+  it("shows a retry action for failed Workflow Nodes in the detail dialog", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "failed",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Travel Guide",
+              version: "1",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1, criteria: ["Research is complete."] },
+                  id: "clarify-trip",
+                  inputs: [],
+                  outputs: [],
+                  type: "analysis"
+                },
+                {
+                  dependsOn: ["clarify-trip"],
+                  exit: { maxRetries: 1, criteria: ["Itinerary is complete."] },
+                  id: "design-itinerary",
+                  inputs: [],
+                  outputs: [],
+                  type: "generation"
+                },
+                {
+                  dependsOn: ["design-itinerary"],
+                  exit: { maxRetries: 1, criteria: ["Guide is localized."] },
+                  id: "localize-guide",
+                  inputs: [],
+                  outputs: [],
+                  type: "writing"
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Travel Guide",
+            nodeCount: 3,
+            templateType: "custom"
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  id: "ndr_a",
+                  nodeId: "clarify-trip",
+                  output: "done",
+                  sortOrder: 0,
+                  status: "succeeded",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                },
+                {
+                  createdAt: timestamp,
+                  dependsOn: ["clarify-trip"],
+                  errorMessage: "analysis failed",
+                  id: "ndr_b",
+                  nodeId: "design-itinerary",
+                  output: null,
+                  sortOrder: 1,
+                  status: "failed",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                },
+                {
+                  createdAt: timestamp,
+                  dependsOn: ["design-itinerary"],
+                  errorMessage: null,
+                  id: "ndr_c",
+                  nodeId: "localize-guide",
+                  output: null,
+                  sortOrder: 2,
+                  status: "queued",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "failed",
+                taskId: "tsk_a",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+        initialWorkflowRunDetailDialog={{
+          taskId: "tsk_a",
+          workflowRunId: "wfr_a"
+        }}
+      />
+    );
+
+    expect(markup).toContain("Retry node");
+    expect(markup).toContain("workflow-run-detail-retry-panel");
+    expect(markup).toContain("workflow-run-detail-header");
+    expect(markup).toContain("workflow-run-detail-body");
+    expect(markup).toContain("Current node 2 / 3");
   });
 
   it("restores the selected Project from local storage after reload", () => {
@@ -930,6 +2143,21 @@ describe("App workbench layout", () => {
     }
   });
 
+  it("reads stored Task Workflow template selections from local storage", () => {
+    const storage = {
+      getItem: (key: string) =>
+        key === "forge:task-workflow-selections"
+          ? JSON.stringify({ tsk_a: "wf_research" })
+          : null,
+      removeItem: () => undefined,
+      setItem: () => undefined
+    };
+
+    expect(readStoredTaskWorkflowSelections(storage)).toEqual({
+      tsk_a: "wf_research"
+    });
+  });
+
   it("offers default Workflow templates in the template manager", () => {
     const markup = renderToStaticMarkup(
       <App initialPage="workflow-templates" />
@@ -961,7 +2189,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:qa",
                   exit: { maxRetries: 1 },
                   id: "qa",
                   outputs: ["qa.md"],
@@ -985,6 +2212,39 @@ describe("App workbench layout", () => {
     expect(markup).toContain("<h3>Project QA workflow</h3>");
     expect(markup).toContain("System template");
     expect(markup).toContain("Project template");
+  });
+
+  it("shows stored system Task Workflow templates that task runs can select", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="workflow-templates"
+        initialWorkflowFiles={[
+          {
+            createdAt: "2026-06-14T00:00:00.000Z",
+            definition: JSON.stringify({
+              name: "旅行攻略模板",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1 },
+                  id: "write_travel_guide",
+                  outputs: ["travel-guide.md"],
+                  type: "coding"
+                }
+              ]
+            }),
+            id: "wf_travel",
+            name: "旅行攻略模板",
+            nodeCount: 1,
+            templateType: "builtin"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("4");
+    expect(markup).toContain("<h3>旅行攻略模板</h3>");
+    expect(markup).toContain("System template");
   });
 
   it("does not expose default Requirement decomposition templates as selectable Workflow templates", () => {
@@ -1013,7 +2273,6 @@ describe("App workbench layout", () => {
           nodes: [
             {
               dependsOn: [],
-              executor: "skill:requirements",
               exit: { maxRetries: 1 },
               id: "analyze",
               outputs: ["analysis.md"],
@@ -1021,7 +2280,6 @@ describe("App workbench layout", () => {
             },
             {
               dependsOn: ["analyze"],
-              executor: "skill:requirements",
               exit: { maxRetries: 1 },
               id: "implement",
               outputs: ["tasks.md"],
@@ -1040,7 +2298,6 @@ describe("App workbench layout", () => {
           nodes: [
             {
               dependsOn: [],
-              executor: "skill:research",
               exit: { maxRetries: 1 },
               id: "scope",
               outputs: ["scope.md"],
@@ -1048,7 +2305,6 @@ describe("App workbench layout", () => {
             },
             {
               dependsOn: ["scope"],
-              executor: "agent:researcher",
               exit: { maxRetries: 1 },
               id: "compare",
               outputs: ["options.md"],
@@ -1067,7 +2323,6 @@ describe("App workbench layout", () => {
           nodes: [
             {
               dependsOn: [],
-              executor: "agent:planner",
               exit: { maxRetries: 1 },
               id: "plan",
               outputs: ["plan.md"],
@@ -1075,7 +2330,6 @@ describe("App workbench layout", () => {
             },
             {
               dependsOn: ["plan"],
-              executor: "agent:coder",
               exit: { maxRetries: 1 },
               id: "code",
               outputs: ["diff.patch"],
@@ -1094,7 +2348,6 @@ describe("App workbench layout", () => {
           nodes: [
             {
               dependsOn: [],
-              executor: "agent:writer",
               exit: { maxRetries: 1 },
               id: "draft",
               outputs: ["draft.md"],
@@ -1102,7 +2355,6 @@ describe("App workbench layout", () => {
             },
             {
               dependsOn: ["draft"],
-              executor: "agent:editor",
               exit: { maxRetries: 1 },
               id: "edit",
               outputs: ["edited.md"],
@@ -1121,7 +2373,6 @@ describe("App workbench layout", () => {
           nodes: [
             {
               dependsOn: [],
-              executor: "agent:reviewer",
               exit: { maxRetries: 1 },
               id: "review",
               outputs: ["review.md"],
@@ -1129,7 +2380,6 @@ describe("App workbench layout", () => {
             },
             {
               dependsOn: ["review"],
-              executor: "human:approver",
               exit: { maxRetries: 1 },
               id: "approve",
               outputs: ["approval.md"],
@@ -1180,7 +2430,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:requirements",
                   exit: { maxRetries: 1 },
                   id: "split",
                   outputs: ["tasks.md"],
@@ -1200,7 +2449,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:analyst",
                   exit: { maxRetries: 1 },
                   id: "intake",
                   outputs: ["requirement-brief.md"],
@@ -1208,7 +2456,6 @@ describe("App workbench layout", () => {
                 },
                 {
                   dependsOn: ["intake"],
-                  executor: "agent:planner",
                   exit: { maxRetries: 1 },
                   id: "decompose",
                   outputs: ["decomposition-result.json"],
@@ -1216,7 +2463,6 @@ describe("App workbench layout", () => {
                 },
                 {
                   dependsOn: ["decompose"],
-                  executor: "agent:reviewer",
                   exit: { maxRetries: 1 },
                   id: "risk-review",
                   outputs: ["risk-check.md"],
@@ -1224,7 +2470,6 @@ describe("App workbench layout", () => {
                 },
                 {
                   dependsOn: ["risk-review"],
-                  executor: "agent:planner",
                   exit: { maxRetries: 1 },
                   id: "package",
                   outputs: ["approval-notes.md"],
@@ -1244,7 +2489,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:planner",
                   exit: { maxRetries: 1 },
                   id: "split",
                   outputs: ["tasks.md"],
@@ -1263,7 +2507,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:research",
                   exit: { maxRetries: 1 },
                   id: "analyze",
                   outputs: ["analysis.md"],
@@ -1301,7 +2544,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "agent:autonomous-test-agent",
                   exit: { maxRetries: 1 },
                   id: "write_travel_guide",
                   outputs: ["travel-guide.md"],
@@ -1335,7 +2577,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:research",
                   exit: { maxRetries: 1 },
                   id: "analyze",
                   outputs: ["analysis.md"],
@@ -1375,7 +2616,6 @@ describe("App workbench layout", () => {
               nodes: [
                 {
                   dependsOn: [],
-                  executor: "skill:research",
                   exit: { maxRetries: 1 },
                   id: "analyze",
                   outputs: ["analysis.md"],
@@ -1400,7 +2640,10 @@ describe("App workbench layout", () => {
   it("maps Workflow template management to its own route path", () => {
     expect(resolvePageFromPath("/workflow-templates")).toBe("workflow-templates");
     expect(resolvePageFromPath("/settings")).toBe("settings");
+    expect(resolvePageFromPath("/main")).toBe("control-room");
     expect(resolvePageFromPath("/control-room")).toBe("control-room");
+    expect(resolvePageFromPath("/")).toBe("control-room");
+    expect(getPathForPage("control-room")).toBe("/main");
     expect(getPathForPage("workflow-templates")).toBe("/workflow-templates");
   });
 
@@ -1427,9 +2670,15 @@ describe("App workbench layout", () => {
     expect(markup).toContain('id="workflow-template-modal-heading"');
     expect(markup).toContain("New Workflow");
     expect(markup).toContain("Template name");
+    expect(markup).toContain("Human-readable name shown in the Workflow template library.");
     expect(markup).toContain("Workflow Nodes");
     expect(markup).toContain("Node ID");
-    expect(markup).toContain("Executor");
+    expect(markup).toContain("template-builder-helper");
+    expect(markup).toContain("Stable identifier used by dependencies and run history.");
+    expect(markup).toContain("Semantic label for what this Workflow Node does.");
+    expect(markup).toContain("Optional reusable tool instructions for this Workflow Node.");
+    expect(markup).toContain("Artifact file this Workflow Node should produce.");
+    expect(markup).toContain("How many times Forge may retry this Workflow Node.");
     expect(markup).toContain("Add Workflow Node");
     expect(markup).toContain("Create Workflow");
     expect(markup).not.toContain("Workflow template source");
@@ -1479,7 +2728,9 @@ describe("App workbench layout", () => {
     expect(markup).toContain("Agent Roles");
     expect(markup).toContain("Artifact Types");
     expect(markup).toContain("Exit Criteria");
-    expect(markup).toContain("Review: model");
+    expect(markup).toContain("workflow-node-kv-label");
+    expect(markup).toContain("Review");
+    expect(markup).toContain("model");
   });
 
   it("opens the source import Workflow form as a modal without default templates", () => {
@@ -1504,7 +2755,6 @@ describe("App workbench layout", () => {
       nodes: [
         {
           dependsOn: [],
-          executor: "agent:planner",
           exit: { maxRetries: 1 },
           id: "plan",
           outputs: ["plan.md"],
@@ -1512,7 +2762,6 @@ describe("App workbench layout", () => {
         },
         {
           dependsOn: ["plan"],
-          executor: "agent:coder",
           exit: { maxRetries: 2 },
           id: "code",
           outputs: ["diff.patch"],
@@ -1520,7 +2769,6 @@ describe("App workbench layout", () => {
         },
         {
           dependsOn: ["plan"],
-          executor: "agent:qa",
           exit: { maxRetries: 1 },
           id: "verify",
           outputs: ["verification.md"],
@@ -1528,7 +2776,6 @@ describe("App workbench layout", () => {
         },
         {
           dependsOn: ["code", "verify"],
-          executor: "agent:reviewer",
           exit: { maxRetries: 1 },
           id: "handoff",
           outputs: ["summary.md"],
@@ -1556,6 +2803,9 @@ describe("App workbench layout", () => {
     expect(markup).toContain('id="workflow-preview-modal-heading"');
     expect(markup).toContain("workflow-preview-graph");
     expect(markup).toContain("workflow-dag-map");
+    expect(markup).toContain("workflow-node-type-pill");
+    expect(markup).toContain("workflow-node-kv-grid");
+    expect(markup).toContain("workflow-node-kv-label");
     expect(markup).toContain("Code Implementation");
     expect(markup).toContain("Start");
     expect(markup).toContain("End");
@@ -1572,7 +2822,7 @@ describe("App workbench layout", () => {
     expect(markup).toContain('aria-label="Start to plan"');
     expect(markup).toContain('aria-label="code to handoff"');
     expect(markup).toContain('aria-label="verify to handoff"');
-    expect(markup).toContain("agent:coder");
+    expect(markup).not.toContain("agent:coder");
   });
 
   it("does not preview requirement-scoped workflow file definitions", () => {
@@ -1582,7 +2832,6 @@ describe("App workbench layout", () => {
       nodes: [
         {
           dependsOn: [],
-          executor: "agent:planner",
           exit: { maxRetries: 1 },
           id: "split",
           outputs: ["tasks.md"],
@@ -1620,6 +2869,8 @@ describe("App workbench layout", () => {
         initialExecutionSettings={{
           agentProxyConfigured: false,
           agentProxyUrl: "",
+          defaultExecutorAgentBindingId: null,
+          defaultExecutorType: "model-api",
           modelBaseUrl: "https://api.openai.com/v1",
           modelConfigured: false,
           modelName: "gpt-4.1-mini",
@@ -1645,6 +2896,17 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("Local bridge URL");
   });
 
+  it("lets the settings page fill the available shell width", () => {
+    const styles = readFileSync(
+      new URL("./styles.css", import.meta.url),
+      "utf8"
+    );
+    const settingsPageRule = styles.match(/\.settings-page\s*\{[^}]+\}/)?.[0];
+
+    expect(settingsPageRule).toContain("width: 100%");
+    expect(settingsPageRule).not.toContain("max-width");
+  });
+
   it("renders model settings behind a secondary navigation in model settings", () => {
     const markup = renderToStaticMarkup(
       <App initialPage="settings" initialSettingsSection="model" />
@@ -1658,10 +2920,114 @@ describe("App workbench layout", () => {
     expect(markup).toContain("settings-model-api-panel");
     expect(markup).toContain("Model base URL");
     expect(markup).toContain("API key");
+    expect(markup).toContain("Default executor");
+    expect(markup).toContain("Executor source");
+    expect(markup).toContain("No Agent Bindings");
+    expect(markup.indexOf("Default executor")).toBeLessThan(
+      markup.indexOf('aria-label="Model settings sections"')
+    );
     expect(markup).not.toContain("settings-agent-proxy-panel");
     expect(markup).not.toContain("forgecli bridge bind --server");
     expect(markup).not.toContain("CLI setup is not available in this build");
     expect(markup).not.toContain("Language");
+  });
+
+  it("renders editable decomposition result executor controls before Tasks are generated", () => {
+    const timestamp = "2026-06-15T08:30:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialDecompositionResults={[
+          {
+            createdAt: timestamp,
+            id: "dcr_exec",
+            items: [
+              {
+                body: "Implement executor assignment.",
+                dependsOn: [],
+                executorAgentBindingId: null,
+                executorLabel: "Model API",
+                executorType: "model-api",
+                id: "item_executor_assignment",
+                sortOrder: 0,
+                title: "Executor assignment"
+              }
+            ],
+            projectId: "proj_test",
+            requirementId: "req_exec",
+            summary: "Review the executor assignment before generating Tasks.",
+            updatedAt: timestamp
+          }
+        ]}
+        initialPage="requirements"
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Forge Ops",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Make generated Tasks editable.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_exec",
+            projectId: "proj_test",
+            status: "ready_to_generate_tasks",
+            title: "Editable executors",
+            updatedAt: timestamp,
+            workflowFileId: "wf_requirement"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Decomposition result");
+    expect(markup).toContain("Save decomposition");
+    expect(markup).toContain("Executor assignment");
+    expect(markup).toContain("Executor");
+    expect(markup).toContain("Model API");
+  });
+
+  it("renders a progress action for an async Requirement decomposition", () => {
+    const timestamp = "2026-06-15T08:30:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="requirements"
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Forge Ops",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Decompose through a selected agent.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_async",
+            projectId: "proj_test",
+            status: "decomposing",
+            title: "Async decomposition",
+            updatedAt: timestamp,
+            workflowFileId: "wf_requirement"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Decomposing");
+    expect(markup).toContain("View progress");
+    expect(markup).toContain("View decomposition progress");
   });
 
   it("renders local bridge as its own secondary page in model settings", () => {
@@ -1685,6 +3051,68 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("settings-model-api-panel");
     expect(markup).not.toContain("Model base URL");
     expect(markup).not.toContain("Language");
+  });
+
+  it("offers CLI download help from the local bridge setup path", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="settings"
+        initialSettingsSection="model"
+        initialModelSettingsSection="local-bridge"
+      />
+    );
+
+    expect(markup).toContain('aria-label="How to get forgecli"');
+    expect(markup).toContain('class="settings-help-button"');
+    expect(markup).not.toContain("Download forgecli");
+  });
+
+  it("shows CLI download options in a help dialog", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialCliDownloadHelpOpen
+        initialPage="settings"
+        initialSettingsSection="model"
+        initialModelSettingsSection="local-bridge"
+      />
+    );
+
+    expect(markup).toContain('id="cli-download-help-heading"');
+    expect(markup).toContain("Download forgecli");
+    expect(markup).toContain('href="/release/forgecli"');
+    expect(markup).toContain("/release/forgecli");
+    expect(markup).toContain("pnpm build:forgecli");
+    expect(markup).toContain("pnpm release");
+    expect(markup).toContain("apps/forgecli/dist/index.js bridge bind --server");
+  });
+
+  it("shows the local bridge agent naming step and registered Agent Bindings", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialAgentBindings={[
+          {
+            capabilities: ["cli"],
+            command: "codex exec",
+            connector: "cli",
+            errorMessage: null,
+            id: "agb_codex",
+            lastSeenAt: "2026-06-15T08:30:00.000Z",
+            name: "codex",
+            status: "online",
+            updatedAt: "2026-06-15T08:30:00.000Z"
+          }
+        ]}
+        initialPage="settings"
+        initialSettingsSection="model"
+        initialModelSettingsSection="local-bridge"
+      />
+    );
+
+    expect(markup).toContain("forgecli agent add &lt;name&gt;");
+    expect(markup).toContain("Registered Agent Bindings");
+    expect(markup).toContain("codex");
+    expect(markup).toContain("cli");
+    expect(markup).toContain("codex exec");
   });
 
   it("renders independent model API and local bridge actions", () => {
@@ -1714,6 +3142,8 @@ describe("App workbench layout", () => {
         initialExecutionSettings={{
           agentProxyConfigured: false,
           agentProxyUrl: "",
+          defaultExecutorAgentBindingId: null,
+          defaultExecutorType: "model-api",
           modelBaseUrl: "https://api.deepseek.com",
           modelConfigured: true,
           modelName: "deepseek-chat",

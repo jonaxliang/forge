@@ -29,7 +29,6 @@ nodes:
   - id: plan
     type: implementation-plan
     description: Turn the Task into a scoped implementation plan.
-    executor: agent:planner
     uses:
       - skill:planning
     inputs:
@@ -70,6 +69,21 @@ nodes:
     });
   });
 
+  it("rejects node-level executor declarations because executors are selected at runtime", () => {
+    expect(() =>
+      parseWorkflowFile(`
+name: Runtime executor workflow
+version: "1.1"
+nodes:
+  - id: code
+    type: code-change
+    executor: agent:coder
+    exit:
+      maxRetries: 1
+`)
+    ).toThrow(/executor/i);
+  });
+
   it("rejects workflow files without the current schema version", () => {
     expect(() =>
       parseWorkflowFile(`
@@ -78,7 +92,6 @@ scope: task
 nodes:
   - id: code
     type: code-change
-    executor: agent:coder
     exit:
       maxRetries: 2
 `)
@@ -94,7 +107,6 @@ version: "1"
 nodes:
   - id: code
     type: code-change
-    executor: agent:coder
     exit:
       maxRetries: 2
 `)
@@ -109,13 +121,11 @@ version: "1.1"
 nodes:
   - id: clarify
     type: requirement-analysis
-    executor: agent:planner
     exit:
       maxRetries: 0
   - id: split
     type: task-drafting
     dependsOn: clarify
-    executor: agent:planner
     exit:
       maxRetries: 1
 `;
@@ -133,7 +143,6 @@ version: "1.1"
 nodes:
   - id: analyze
     type: requirement-analysis
-    executor: skill:requirements
     outputs:
       - kind: file
         ref: analysis.md
@@ -143,7 +152,6 @@ nodes:
     type: coding
     dependsOn:
       - analyze
-    executor: skill:code
     outputs:
       - kind: file
         ref: diff.patch
@@ -178,12 +186,10 @@ version: "1.1"
 nodes:
   - id: a
     type: first
-    executor: skill:first
     exit:
       maxRetries: 0
   - id: b
     type: second
-    executor: skill:second
     exit:
       maxRetries: 0
   - id: c
@@ -191,7 +197,6 @@ nodes:
     dependsOn:
       - a
       - b
-    executor: skill:third
     exit:
       maxRetries: 1
 `);
@@ -208,13 +213,11 @@ version: "1.1"
 nodes:
   - id: a
     type: first
-    executor: skill:first
     exit:
       maxRetries: 0
   - id: c
     type: third
     after: a
-    executor: skill:third
     exit:
       maxRetries: 1
 `)
@@ -231,13 +234,11 @@ nodes:
   - id: a
     type: first
     dependsOn: b
-    executor: skill:first
     exit:
       maxRetries: 1
   - id: b
     type: second
     dependsOn: a
-    executor: skill:second
     exit:
       maxRetries: 1
 `)
@@ -255,7 +256,6 @@ nodes:
     type: coding
     dependsOn:
       - analyze
-    executor: skill:code
     exit:
       maxRetries: 1
 `)
@@ -276,7 +276,6 @@ skills:
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     exit:
       maxRetries: 1
 `)
@@ -292,7 +291,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     uses:
       - skill:planning
     exit:
@@ -310,7 +308,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     outputs:
       - artifact: plan
     exit:
@@ -328,7 +325,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     outputs:
       - artifact:plan
     exit:
@@ -344,7 +340,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     outputs:
       - artifact: "   "
     exit:
@@ -362,7 +357,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     outputs:
       - kind: file
         ref: " "
@@ -381,7 +375,6 @@ version: "1.1"
 nodes:
   - id: code
     type: code-change
-    executor: agent:coder
     inputs:
       - artifact:plan
     exit:
@@ -399,7 +392,6 @@ version: "1.1"
 nodes:
   - id: review
     type: code-review
-    executor: agent:reviewer
     humanReview:
       required: true
       reason: User approval is required.
@@ -418,7 +410,6 @@ version: "1.1"
 nodes:
   - id: review
     type: code-review
-    executor: agent:reviewer
     humanReview:
       required: true
       reason: User approval is required.
@@ -449,7 +440,6 @@ nodes:
             id: "code",
             type: "code-change",
             dependsOn: [],
-            executor: "agent:coder",
             outputs: [{ kind: "file", ref: "diff.patch" }],
             exit: {
               maxRetries: 2
@@ -471,7 +461,6 @@ nodes:
             id: "code",
             type: "code-change",
             dependsOn: [],
-            executor: "agent:coder",
             outputs: ["diff.patch"],
             exit: {
               maxRetries: 2
@@ -493,7 +482,6 @@ nodes:
             id: "code",
             type: "code-change",
             dependsOn: ["missing"],
-            executor: "agent:coder",
             exit: {
               maxRetries: 1
             }
@@ -523,7 +511,6 @@ nodes:
           {
             id: "plan",
             type: "implementation-plan",
-            executor: "agent:planner",
             exit: {
               maxRetries: 1
             }
