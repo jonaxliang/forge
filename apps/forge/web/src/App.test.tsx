@@ -10,6 +10,8 @@ import {
   getTaskRunOrder,
   getPathForPage,
   getVisibleTaskBoardTasks,
+  formatManagementTimestamp,
+  readStoredTaskBoardRequirementId,
   readStoredTaskWorkflowSelections,
   resolvePageFromPath
 } from "./App";
@@ -901,9 +903,11 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("Workflow File");
     expect(markup).not.toContain("Requirement workflow");
     expect(markup).toContain("Created");
-    expect(markup).toContain("2026-06-14 00:00");
+    expect(markup).toContain(formatManagementTimestamp(timestamp));
     expect(markup).toContain("Updated");
-    expect(markup).toContain("2026-06-15 08:30");
+    expect(markup).toContain(
+      formatManagementTimestamp("2026-06-15T08:30:00.000Z")
+    );
     expect(markup).toContain("Decomposition items");
     expect(markup).toContain("2 items");
     expect(markup).toContain("Linked Tasks");
@@ -1349,6 +1353,12 @@ describe("App workbench layout", () => {
     expect(getVisibleTaskBoardTasks(tasks, "req_missing")).toEqual([]);
   });
 
+  it("formats management timestamps in the requested local time zone", () => {
+    expect(
+      formatManagementTimestamp("2026-06-23T06:21:00.000Z", "Asia/Shanghai")
+    ).toBe("2026-06-23 14:21");
+  });
+
   it("applies realtime Task updates to the Task Board state", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const task = {
@@ -1498,6 +1508,109 @@ describe("App workbench layout", () => {
     expect(markup).toContain("Second Requirement");
   });
 
+  it("restores the Task Board Requirement filter from local storage after reload", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const originalWindow = globalThis.window;
+    const storage = {
+      getItem: (key: string) =>
+        key === "forge:task-board-requirement-id" ? "req_second" : null,
+      removeItem: () => undefined,
+      setItem: () => undefined
+    };
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage
+      }
+    });
+
+    try {
+      const markup = renderToStaticMarkup(
+        <App
+          initialProjects={[
+            {
+              artifactStorageMode: "local-only",
+              createdAt: timestamp,
+              dbStrategy: "sqlite",
+              id: "proj_test",
+              name: "Project",
+              updatedAt: timestamp
+            }
+          ]}
+          initialRequirements={[
+            {
+              body: "First body",
+              createdAt: timestamp,
+              deletedAt: null,
+              errorMessage: null,
+              id: "req_first",
+              projectId: "proj_test",
+              status: "init",
+              title: "First Requirement",
+              updatedAt: timestamp,
+              workflowFileId: "wf_1"
+            },
+            {
+              body: "Second body",
+              createdAt: timestamp,
+              deletedAt: null,
+              errorMessage: null,
+              id: "req_second",
+              projectId: "proj_test",
+              status: "init",
+              title: "Second Requirement",
+              updatedAt: timestamp,
+              workflowFileId: "wf_1"
+            }
+          ]}
+          initialTasks={[
+            {
+              body: "First task body",
+              createdAt: timestamp,
+              deletedAt: null,
+              dependsOn: [],
+              executorAgentBindingId: null,
+              executorLabel: "Model API",
+              executorType: "model-api",
+              id: "tsk_first",
+              projectId: "proj_test",
+              requirementId: "req_first",
+              sourceItemId: "item_first",
+              status: "init",
+              title: "First task",
+              updatedAt: timestamp
+            },
+            {
+              body: "Second task body",
+              createdAt: timestamp,
+              deletedAt: null,
+              dependsOn: [],
+              executorAgentBindingId: null,
+              executorLabel: "Model API",
+              executorType: "model-api",
+              id: "tsk_second",
+              projectId: "proj_test",
+              requirementId: "req_second",
+              sourceItemId: "item_second",
+              status: "init",
+              title: "Second task",
+              updatedAt: timestamp
+            }
+          ]}
+        />
+      );
+
+      expect(markup).toContain("Second task");
+      expect(markup).not.toContain("First task");
+    } finally {
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: originalWindow
+      });
+    }
+  });
+
   it("renders Node Run id and status in separate layout targets", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const markup = renderToStaticMarkup(
@@ -1580,6 +1693,118 @@ describe("App workbench layout", () => {
     expect(markup).toContain('class="node-run-status"');
   });
 
+  it("folds previous Workflow Runs while keeping the latest run expanded", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "init",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "init",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: "failed",
+                  id: "ndr_old",
+                  nodeId: "old-failed-node",
+                  output: null,
+                  sortOrder: 0,
+                  status: "failed",
+                  updatedAt: "2026-06-14T00:01:00.000Z",
+                  workflowRunId: "wfr_old"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_old",
+                status: "failed",
+                taskId: "tsk_a",
+                updatedAt: "2026-06-14T00:01:00.000Z",
+                workflowFileId: "wf_2"
+              }
+            },
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  id: "ndr_latest",
+                  nodeId: "latest-succeeded-node",
+                  output: "done",
+                  sortOrder: 0,
+                  status: "succeeded",
+                  updatedAt: "2026-06-14T00:02:00.000Z",
+                  workflowRunId: "wfr_latest"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_latest",
+                status: "succeeded",
+                taskId: "tsk_a",
+                updatedAt: "2026-06-14T00:02:00.000Z",
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(markup).toContain("Latest run");
+    expect(markup).toContain("History");
+    expect(markup).toContain("latest-succeeded-node");
+    expect(markup).not.toContain("old-failed-node");
+    expect(markup).toContain(
+      "Node details are folded. Open details to inspect this run."
+    );
+  });
+
   it("labels the action as rerunning the Workflow when a Task already has runs", () => {
     const timestamp = "2026-06-14T00:00:00.000Z";
     const markup = renderToStaticMarkup(
@@ -1621,7 +1846,7 @@ describe("App workbench layout", () => {
             projectId: "proj_a",
             requirementId: "req_a",
             sourceItemId: "item_a",
-            status: "pending_acceptance",
+            status: "failed",
             title: "Task",
             updatedAt: timestamp
           }
@@ -1681,6 +1906,212 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain(">Rerun Workflow</button>");
     expect(markup).not.toContain(">Start Run</button>");
+  });
+
+  it("shows Requirement acceptance as blocked until all linked Tasks finish", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "First task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_first",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_first",
+            status: "init",
+            title: "First task",
+            updatedAt: timestamp
+          },
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "pending_acceptance",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("1 Task unfinished");
+    expect(markup).not.toContain(">Accept</button>");
+    expect(markup).not.toContain(">Accept Task</button>");
+  });
+
+  it("reviews the final Task Artifact from Requirement acceptance", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialRequirementAcceptanceDialog="req_a"
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "First task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_first",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_first",
+            status: "pending_acceptance",
+            title: "First task",
+            updatedAt: timestamp
+          },
+          {
+            body: "Final task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_final",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_final",
+            status: "pending_acceptance",
+            title: "Final task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Artifact review workflow",
+              version: "1.1",
+              artifacts: [
+                {
+                  description: "Final acceptance packet",
+                  id: "final-packet",
+                  type: "markdown"
+                }
+              ],
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: { maxRetries: 1 },
+                  id: "produce",
+                  outputs: [{ artifact: "final-packet" }],
+                  type: "writing"
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Artifact review workflow",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_final: [
+            {
+              nodeRuns: [
+                {
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  id: "ndr_a",
+                  nodeId: "produce",
+                  output: "Final packet content",
+                  sortOrder: 0,
+                  status: "succeeded",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                }
+              ],
+              workflowRun: {
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "succeeded",
+                taskId: "tsk_final",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+      />
+    );
+
+    expect(markup).toContain(">Accept</button>");
+    expect(markup).toContain("Review final Artifact");
+    expect(markup).toContain("artifact:final-packet");
+    expect(markup).toContain("Final acceptance packet");
+    expect(markup).toContain("Final packet content");
+    expect(markup).toContain(">View node Artifacts</button>");
+    expect(markup).toContain(">Accept output</button>");
+    expect(markup).toContain(">Reject and rerun</button>");
+    expect(markup).not.toContain(">Accept Task</button>");
+    expect(markup).not.toContain("Task Workflow Template");
   });
 
   it("shows a run-all action for generated Tasks", () => {
@@ -2257,6 +2688,17 @@ describe("App workbench layout", () => {
     expect(readStoredTaskWorkflowSelections(storage)).toEqual({
       tsk_a: "wf_research"
     });
+  });
+
+  it("reads the stored Task Board Requirement filter from local storage", () => {
+    const storage = {
+      getItem: (key: string) =>
+        key === "forge:task-board-requirement-id" ? " req_second " : null,
+      removeItem: () => undefined,
+      setItem: () => undefined
+    };
+
+    expect(readStoredTaskBoardRequirementId(storage)).toBe("req_second");
   });
 
   it("offers default Workflow templates in the template manager", () => {

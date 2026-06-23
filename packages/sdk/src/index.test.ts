@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deleteSkill,
+  acceptRequirement,
   getServerHealth,
   listAgentBindings,
   listProjects,
   listSkills,
   retryTaskWorkflowNodeRun,
+  acceptTask,
   uploadSkill,
   updateSkillFromSource,
   updateProject
@@ -208,6 +210,37 @@ describe("Forge SDK API paths", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:3001/api/tasks/tsk_test/workflow-runs/wfr_test/node-runs/ndr_failed/retry",
+      {
+        method: "POST"
+      }
+    );
+  });
+
+  it("accepts a pending Task through the API namespace", async () => {
+    const fetchMock = stubJsonResponse({
+      task: { id: "tsk_test", status: "completed" }
+    });
+
+    await acceptTask("tsk_test", "http://localhost:3001");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3001/api/tasks/tsk_test/acceptance",
+      {
+        method: "POST"
+      }
+    );
+  });
+
+  it("accepts a Requirement through the API namespace", async () => {
+    const fetchMock = stubJsonResponse({
+      requirement: { id: "req_test", status: "completed" },
+      task: { id: "tsk_final", status: "completed" }
+    });
+
+    await acceptRequirement("req_test", "http://localhost:3001");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3001/api/requirements/req_test/acceptance",
       {
         method: "POST"
       }

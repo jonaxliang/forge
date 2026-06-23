@@ -2786,6 +2786,252 @@ nodes:
     });
   });
 
+  it("accepts a Task after it is pending acceptance", async () => {
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async ({ node }) => `completed ${node.id}`
+    } as never);
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Artifact review workflow
+scope: task
+version: "1.1"
+artifacts:
+  - id: final-packet
+    type: markdown
+    path: final-packet.md
+nodes:
+  - id: produce
+    type: writing
+    outputs:
+      - artifact: final-packet
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    await waitForTaskWorkflowRun(
+      app,
+      createdTask.task.id,
+      (run) => run.workflowRun.status === "succeeded"
+    );
+
+    await expect((await app.request("/api/tasks")).json()).resolves.toMatchObject({
+      tasks: [
+        expect.objectContaining({
+          id: createdTask.task.id,
+          status: "pending_acceptance"
+        })
+      ]
+    });
+
+    const eventsResponse = await app.request("/api/events");
+    const reader = eventsResponse.body!.getReader();
+
+    try {
+      const response = await app.request(
+        `/api/tasks/${createdTask.task.id}/acceptance`,
+        {
+          method: "POST"
+        }
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        task: {
+          id: createdTask.task.id,
+          status: "completed"
+        }
+      });
+      await expect(readSseEvent(reader, "task.updated")).resolves.toMatchObject({
+        task: {
+          id: createdTask.task.id,
+          status: "completed"
+        }
+      });
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+
+    await expect((await app.request("/api/tasks")).json()).resolves.toMatchObject({
+      tasks: [
+        expect.objectContaining({
+          id: createdTask.task.id,
+          status: "completed"
+        })
+      ]
+    });
+  });
+
+  it("accepts a Requirement only after all linked Tasks finished", async () => {
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async ({ node }) => `completed ${node.id}`
+    } as never);
+    await configureModel(app);
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: task
+version: "1.1"
+nodes:
+  - id: split
+    type: task-drafting
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Create two dependent tasks.",
+        title: "Accept requirement output",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+    const updateDecompositionResponse = await app.request(
+      `/api/decomposition-results/${decompositionBody.decompositionResult.id}`,
+      {
+        body: JSON.stringify({
+          tasks: [
+            {
+              body: "First task.",
+              dependsOn: [],
+              executorAgentBindingId: null,
+              executorLabel: "Model API",
+              executorType: "model-api",
+              id: "first",
+              sortOrder: 0,
+              title: "First task"
+            },
+            {
+              body: "Final task.",
+              dependsOn: [],
+              executorAgentBindingId: null,
+              executorLabel: "Model API",
+              executorType: "model-api",
+              id: "final",
+              sortOrder: 1,
+              title: "Final task"
+            }
+          ],
+          summary: "Two dependent tasks."
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "PATCH"
+      }
+    );
+    expect(updateDecompositionResponse.status).toBe(200);
+    const generatedBody = await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
+    const [firstTask, finalTask] = generatedBody.tasks;
+
+    await app.request(`/api/tasks/${finalTask!.id}/workflow-runs`, {
+      body: JSON.stringify({
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    await waitForTaskWorkflowRun(
+      app,
+      finalTask!.id,
+      (run) => run.workflowRun.status === "succeeded"
+    );
+
+    const blockedResponse = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/acceptance`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(blockedResponse.status).toBe(409);
+    await expect(blockedResponse.json()).resolves.toMatchObject({
+      error: expect.stringContaining("1")
+    });
+
+    await app.request(`/api/tasks/${firstTask!.id}/workflow-runs`, {
+      body: JSON.stringify({
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    await waitForTaskWorkflowRun(
+      app,
+      firstTask!.id,
+      (run) => run.workflowRun.status === "succeeded"
+    );
+
+    const response = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/acceptance`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      requirement: {
+        id: requirementBody.requirement.id,
+        status: "completed"
+      },
+      task: {
+        id: finalTask!.id,
+        status: "completed"
+      }
+    });
+  });
+
   it("recovers running Task status from existing Workflow Runs after restart", async () => {
     const workflowRunRepository = createInMemoryWorkflowRunRepository();
     const app = createPlanningApp({ workflowRunRepository });

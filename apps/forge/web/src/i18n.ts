@@ -282,6 +282,14 @@ type Messages = {
     sourceLabel: string;
     runWorkflowTemplateLabel: string;
     importTaskWorkflowTemplateFirst: string;
+    reviewFinalArtifact: string;
+    finalArtifactLabel: string;
+    finalArtifactUnavailable: string;
+    viewNodeArtifacts: string;
+    acceptRequirement: string;
+    acceptRequirementOutput: string;
+    rejectAndRerun: string;
+    requirementAcceptanceBlocked: (count: number) => string;
     chooseWorkflowRunExecutors: string;
     chooseWorkflowRunExecutorsHelp: string;
     workflowNodeExecutorLabel: string;
@@ -293,6 +301,9 @@ type Messages = {
     taskDependenciesLabel: string;
     taskDependenciesBlocked: string;
     workflowRun: string;
+    latestWorkflowRun: string;
+    historyWorkflowRun: string;
+    foldedWorkflowRunDetails: string;
     viewWorkflowRunDetails: string;
     retryWorkflowNode: string;
     retryingWorkflowNode: string;
@@ -485,6 +496,12 @@ type Messages = {
     ranAllTaskWorkflows: string;
     runAllTaskWorkflowsFailed: string;
     retryingWorkflowNode: string;
+    acceptingTask: string;
+    taskAccepted: string;
+    taskAcceptanceFailed: string;
+    acceptingRequirement: string;
+    requirementAccepted: string;
+    requirementAcceptanceFailed: string;
     workflowRunFailed: string;
     ready: string;
   };
@@ -844,6 +861,15 @@ const messages: Record<Locale, Messages> = {
       sourceLabel: "Source",
       runWorkflowTemplateLabel: "Task Workflow Template",
       importTaskWorkflowTemplateFirst: "Import a Task Workflow Template first",
+      reviewFinalArtifact: "Review final Artifact",
+      finalArtifactLabel: "Final Artifact",
+      finalArtifactUnavailable: "No final Artifact output captured.",
+      viewNodeArtifacts: "View node Artifacts",
+      acceptRequirement: "Accept",
+      acceptRequirementOutput: "Accept output",
+      rejectAndRerun: "Reject and rerun",
+      requirementAcceptanceBlocked: (count) =>
+        `${count} ${count === 1 ? "Task" : "Tasks"} unfinished`,
       chooseWorkflowRunExecutors: "Choose Workflow Run executors",
       chooseWorkflowRunExecutorsHelp:
         "Each Workflow Node uses the Project default executor unless you override it for this run.",
@@ -856,6 +882,10 @@ const messages: Record<Locale, Messages> = {
       taskDependenciesLabel: "Depends on",
       taskDependenciesBlocked: "Waiting for dependency Task completion.",
       workflowRun: "Task Workflow",
+      latestWorkflowRun: "Latest run",
+      historyWorkflowRun: "History",
+      foldedWorkflowRunDetails:
+        "Node details are folded. Open details to inspect this run.",
       viewWorkflowRunDetails: "View details",
       retryWorkflowNode: "Retry node",
       retryingWorkflowNode: "Retrying",
@@ -1066,6 +1096,12 @@ const messages: Record<Locale, Messages> = {
       ranAllTaskWorkflows: "All Task Workflows finished",
       runAllTaskWorkflowsFailed: "Run all failed",
       retryingWorkflowNode: "Retrying Workflow Node",
+      acceptingTask: "Accepting Task",
+      taskAccepted: "Task accepted",
+      taskAcceptanceFailed: "Task acceptance failed",
+      acceptingRequirement: "Accepting Requirement",
+      requirementAccepted: "Requirement accepted",
+      requirementAcceptanceFailed: "Requirement acceptance failed",
       workflowRunFailed: "Task Workflow failed",
       ready: "Ready"
     },
@@ -1400,6 +1436,14 @@ const messages: Record<Locale, Messages> = {
       sourceLabel: "来源",
       runWorkflowTemplateLabel: "Task Workflow Template",
       importTaskWorkflowTemplateFirst: "请先导入 Task Workflow Template",
+      reviewFinalArtifact: "验收最终产物",
+      finalArtifactLabel: "最终产物",
+      finalArtifactUnavailable: "尚未捕获最终产物输出。",
+      viewNodeArtifacts: "查看子任务产物",
+      acceptRequirement: "验收",
+      acceptRequirementOutput: "验收通过",
+      rejectAndRerun: "拒绝重跑",
+      requirementAcceptanceBlocked: (count) => `还有 ${count} 个任务未完成`,
       chooseWorkflowRunExecutors: "选择任务工作流执行方",
       chooseWorkflowRunExecutorsHelp:
         "每个 Workflow Node 默认使用项目默认执行方，也可以只为本次运行单独覆盖。",
@@ -1412,6 +1456,9 @@ const messages: Record<Locale, Messages> = {
       taskDependenciesLabel: "前置依赖",
       taskDependenciesBlocked: "正在等待前置任务完成。",
       workflowRun: "任务工作流",
+      latestWorkflowRun: "最新运行",
+      historyWorkflowRun: "历史运行",
+      foldedWorkflowRunDetails: "节点明细已折叠，可打开详情查看本次运行。",
       viewWorkflowRunDetails: "查看详情",
       retryWorkflowNode: "重试节点",
       retryingWorkflowNode: "重试中",
@@ -1617,6 +1664,12 @@ const messages: Record<Locale, Messages> = {
       ranAllTaskWorkflows: "全部任务工作流已完成",
       runAllTaskWorkflowsFailed: "运行全部失败",
       retryingWorkflowNode: "正在重试 Workflow Node",
+      acceptingTask: "正在验收任务",
+      taskAccepted: "任务已验收",
+      taskAcceptanceFailed: "任务验收失败",
+      acceptingRequirement: "正在验收需求",
+      requirementAccepted: "需求已验收",
+      requirementAcceptanceFailed: "需求验收失败",
       workflowRunFailed: "任务工作流失败",
       ready: "就绪"
     },

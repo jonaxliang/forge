@@ -708,6 +708,37 @@ function createRealtimeWorkflowRunRepository(
   };
 }
 
+function isTaskExecutionFinished(task: Task) {
+  return task.status === "pending_acceptance" || task.status === "completed";
+}
+
+function getFinalTaskForRequirement(tasks: Task[]) {
+  const pendingTasks = new Map(tasks.map((task) => [task.id, task]));
+  const orderedTaskIds: string[] = [];
+
+  while (pendingTasks.size > 0) {
+    const nextTask = tasks.find(
+      (task) =>
+        pendingTasks.has(task.id) &&
+        task.dependsOn.every((dependencyId) => !pendingTasks.has(dependencyId))
+    );
+
+    if (!nextTask) {
+      orderedTaskIds.push(...pendingTasks.keys());
+      break;
+    }
+
+    orderedTaskIds.push(nextTask.id);
+    pendingTasks.delete(nextTask.id);
+  }
+
+  const finalTaskId = orderedTaskIds.at(-1);
+
+  return finalTaskId
+    ? tasks.find((task) => task.id === finalTaskId) ?? null
+    : null;
+}
+
 type RequirementPlanner = (input: {
   requirement: {
     id: string;
@@ -1646,6 +1677,69 @@ export function createApp({
     }
   });
 
+  api.post("/requirements/:id/acceptance", async (c) => {
+    const requirementId = c.req.param("id");
+
+    try {
+      const requirement = (await requirements.listRequirements()).find(
+        (candidate) => candidate.id === requirementId
+      );
+
+      if (!requirement) {
+        return c.json({ error: "Requirement not found" }, 404);
+      }
+
+      const linkedTasks = (await tasks.listTasks()).filter(
+        (task) => task.requirementId === requirement.id
+      );
+
+      if (linkedTasks.length === 0) {
+        return c.json({ error: "Requirement has no linked Tasks" }, 409);
+      }
+
+      const unfinishedTaskCount = linkedTasks.filter(
+        (task) => !isTaskExecutionFinished(task)
+      ).length;
+
+      if (unfinishedTaskCount > 0) {
+        return c.json(
+          {
+            error: `${unfinishedTaskCount} linked Task${
+              unfinishedTaskCount === 1 ? "" : "s"
+            } unfinished`
+          },
+          409
+        );
+      }
+
+      const finalTask = getFinalTaskForRequirement(linkedTasks);
+
+      if (!finalTask) {
+        return c.json({ error: "Final Task not found" }, 409);
+      }
+
+      const acceptedTask =
+        finalTask.status === "completed"
+          ? finalTask
+          : await tasks.updateTaskStatus({
+              id: finalTask.id,
+              status: "completed"
+            });
+      const acceptedRequirement = await requirements.updateRequirementStatus({
+        errorMessage: null,
+        id: requirement.id,
+        status: "completed"
+      });
+
+      return c.json({
+        requirement: acceptedRequirement,
+        task: acceptedTask
+      });
+    } catch (error) {
+      return c.json({ error: getErrorMessage(error) }, 400);
+    }
+  });
+
   api.delete("/requirements/:id", async (c) => {
     const requirementId = c.req.param("id");
 
@@ -1871,6 +1965,29 @@ export function createApp({
     return c.json({
       tasks: await listTasksWithRecoveredWorkflowStatus(tasks, workflowRuns)
     });
+  });
+
+  api.post("/tasks/:id/acceptance", async (c) => {
+    try {
+      const task = await tasks.getTask(c.req.param("id"));
+
+      if (!task) {
+        return c.json({ error: "Task not found" }, 404);
+      }
+
+      if (task.status !== "pending_acceptance") {
+        return c.json({ error: "Task is not pending acceptance" }, 409);
+      }
+
+      const acceptedTask = await tasks.updateTaskStatus({
+        id: task.id,
+        status: "completed"
+      });
+
+      return c.json({ task: acceptedTask });
+    } catch (error) {
+      return c.json({ error: getErrorMessage(error) }, 400);
+    }
   });
 
   api.post("/tasks/:id/workflow-runs", async (c) => {

@@ -1,4 +1,5 @@
 import {
+  acceptRequirement,
   createProject,
   createRequirement,
   createRequirementDecompositionResult,
@@ -166,6 +167,7 @@ type AppProps = {
   initialWorkflowTemplateDialog?: WorkflowTemplateDialog;
   initialEditingWorkflowId?: string;
   initialPreviewWorkflowId?: string;
+  initialRequirementAcceptanceDialog?: string;
   initialWorkflowRunDetailDialog?: WorkflowRunDetailDialogState;
   initialWorkflowRunsByTaskId?: Record<string, WorkflowRunWithNodes[]>;
   initialWorkflowFiles?: WorkflowFileMetadata[];
@@ -207,6 +209,7 @@ const idleStatusKeys = new Set<keyof Messages["status"]>([
   "taskBoardIdle"
 ]);
 const selectedProjectStorageKey = "forge:selected-project-id";
+const taskBoardRequirementStorageKey = "forge:task-board-requirement-id";
 const taskWorkflowSelectionStorageKey = "forge:task-workflow-selections";
 const configuredModelApiKeyMask = "••••••••••••";
 const pagePathByPage: Record<ActivePage, string> = {
@@ -275,6 +278,33 @@ export function saveStoredProjectId(
     }
   } catch {
     // Ignore storage failures so project switching still works in restricted browsers.
+  }
+}
+
+export function readStoredTaskBoardRequirementId(
+  storage?: ProjectSelectionStorage
+) {
+  try {
+    return storage?.getItem(taskBoardRequirementStorageKey)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveStoredTaskBoardRequirementId(
+  storage: ProjectSelectionStorage | undefined,
+  requirementId: string
+) {
+  try {
+    const normalizedRequirementId = requirementId.trim();
+
+    if (normalizedRequirementId) {
+      storage?.setItem(taskBoardRequirementStorageKey, normalizedRequirementId);
+    } else {
+      storage?.removeItem(taskBoardRequirementStorageKey);
+    }
+  } catch {
+    // Ignore storage failures so Task Board filtering still works in-session.
   }
 }
 
@@ -407,12 +437,31 @@ function getRequirementStatusLabel(t: Messages, status: string) {
   return labels[status] ?? status.replace(/_/g, " ");
 }
 
-function formatManagementTimestamp(value: string) {
+export function formatManagementTimestamp(value: string, timeZone?: string) {
   if (!value) {
     return "-";
   }
 
-  return value.slice(0, 16).replace("T", " ");
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 16).replace("T", " ");
+  }
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    month: "2-digit",
+    timeZone,
+    year: "numeric"
+  }).formatToParts(date);
+  const partByType = Object.fromEntries(
+    parts.map((part) => [part.type, part.value])
+  );
+
+  return `${partByType.year}-${partByType.month}-${partByType.day} ${partByType.hour}:${partByType.minute}`;
 }
 
 function canPlanRequirementStatus(status: string) {
@@ -613,6 +662,24 @@ function shouldRunTaskInRunAll(task: Task) {
   return !["completed", "pending_acceptance", "running"].includes(task.status);
 }
 
+function isTaskExecutionFinished(task: Pick<Task, "status">) {
+  return task.status === "pending_acceptance" || task.status === "completed";
+}
+
+function getRequirementUnfinishedTaskCount(tasks: Array<Pick<Task, "status">>) {
+  return tasks.filter((task) => !isTaskExecutionFinished(task)).length;
+}
+
+function getRequirementFinalTask<T extends Pick<Task, "dependsOn" | "id">>(
+  tasks: T[]
+) {
+  const finalTaskId = getTaskRunOrder(tasks).at(-1);
+
+  return finalTaskId
+    ? tasks.find((task) => task.id === finalTaskId) ?? null
+    : null;
+}
+
 function waitFor(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -623,6 +690,23 @@ function createRealtimeEventSource(baseUrl = "") {
 
 function getOrderedNodeRuns(run: WorkflowRunWithNodes) {
   return [...run.nodeRuns].sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
+function getWorkflowRunSortTimestamp(run: WorkflowRunWithNodes) {
+  return Date.parse(run.workflowRun.updatedAt || run.workflowRun.createdAt);
+}
+
+function getOrderedWorkflowRuns(runs: WorkflowRunWithNodes[]) {
+  return [...runs].sort((left, right) => {
+    const timestampDifference =
+      getWorkflowRunSortTimestamp(right) - getWorkflowRunSortTimestamp(left);
+
+    if (timestampDifference !== 0) {
+      return timestampDifference;
+    }
+
+    return right.workflowRun.id.localeCompare(left.workflowRun.id);
+  });
 }
 
 function getWorkflowRunFocusNodeRun(run: WorkflowRunWithNodes) {
@@ -658,6 +742,56 @@ function getWorkflowRunProgress(
   const current = (workflowIndex >= 0 ? workflowIndex : nodeRunIndex) + 1;
 
   return { current, focusNodeRun, total };
+}
+
+function getWorkflowArtifactDescription(
+  artifact: WorkflowFile["artifacts"][number] | undefined
+) {
+  const description = (artifact as { description?: unknown } | undefined)
+    ?.description;
+
+  return typeof description === "string" && description.trim()
+    ? description.trim()
+    : artifact?.path ?? "";
+}
+
+function getWorkflowRunAcceptanceArtifact(
+  run: WorkflowRunWithNodes,
+  workflowFile: WorkflowFileMetadata | undefined
+) {
+  const workflow = workflowFile
+    ? parseWorkflowDefinition(workflowFile.definition)
+    : null;
+  const orderedNodeRuns = getOrderedNodeRuns(run);
+  const finalOutputNodeRun =
+    [...orderedNodeRuns]
+      .reverse()
+      .find((nodeRun) => nodeRun.status === "succeeded" && nodeRun.output) ??
+    [...orderedNodeRuns].reverse().find((nodeRun) => nodeRun.status === "succeeded") ??
+    orderedNodeRuns.at(-1) ??
+    null;
+  const nodeDefinition = finalOutputNodeRun
+    ? workflow?.nodes.find((node) => node.id === finalOutputNodeRun.nodeId)
+    : null;
+  const primaryOutput = nodeDefinition?.outputs.at(-1);
+  const artifactId =
+    primaryOutput && typeof primaryOutput !== "string" && "artifact" in primaryOutput
+      ? primaryOutput.artifact
+      : "";
+  const artifact = artifactId
+    ? workflow?.artifacts.find((candidate) => candidate.id === artifactId)
+    : undefined;
+
+  return {
+    description: getWorkflowArtifactDescription(artifact),
+    label: primaryOutput
+      ? getWorkflowOutputLabel(primaryOutput)
+      : finalOutputNodeRun?.nodeId ?? workflowFile?.name ?? "",
+    output:
+      typeof finalOutputNodeRun?.output === "string"
+        ? finalOutputNodeRun.output
+        : ""
+  };
 }
 
 function getWorkflowRunNoProcessDetailsMessage(
@@ -1433,6 +1567,7 @@ export function App({
   initialWorkflowTemplateDialog = null,
   initialEditingWorkflowId = "",
   initialPreviewWorkflowId = "",
+  initialRequirementAcceptanceDialog = "",
   initialWorkflowRunDetailDialog = null,
   initialWorkflowRunsByTaskId = {},
   initialWorkflowFiles = []
@@ -1594,7 +1729,7 @@ export function App({
   >({});
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [selectedTaskBoardRequirementId, setSelectedTaskBoardRequirementId] =
-    useState("");
+    useState(() => readStoredTaskBoardRequirementId(getBrowserStorage()));
   const [workflowRunsByTaskId, setWorkflowRunsByTaskId] = useState<
     Record<string, WorkflowRunWithNodes[]>
   >(initialWorkflowRunsByTaskId);
@@ -1643,6 +1778,10 @@ export function App({
     useState<WorkflowRunExecutorDialogState>(null);
   const [workflowRunDetailDialog, setWorkflowRunDetailDialog] =
     useState<WorkflowRunDetailDialogState>(initialWorkflowRunDetailDialog);
+  const [
+    requirementAcceptanceDialogRequirementId,
+    setRequirementAcceptanceDialogRequirementId
+  ] = useState(initialRequirementAcceptanceDialog);
   const [retryingNodeRunIds, setRetryingNodeRunIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -2939,9 +3078,18 @@ export function App({
     );
   }
 
-  function handleOpenWorkflowRunExecutorDialog(taskId: string) {
+  function handleSelectTaskBoardRequirement(requirementId: string) {
+    setSelectedTaskBoardRequirementId(requirementId);
+    saveStoredTaskBoardRequirementId(getBrowserStorage(), requirementId);
+  }
+
+  function handleOpenWorkflowRunExecutorDialog(
+    taskId: string,
+    workflowFileIdOverride?: string
+  ) {
     setWorkflowRunExecutorError("");
-    const selectedTaskWorkflowId = getSelectedTaskWorkflowId(taskId);
+    const selectedTaskWorkflowId =
+      workflowFileIdOverride ?? getSelectedTaskWorkflowId(taskId);
 
     if (!selectedTaskWorkflowId) {
       setTaskBoardStatus({ kind: "status", key: "importTaskWorkflowFirst" });
@@ -3217,6 +3365,40 @@ export function App({
         return nextIds;
       });
     }
+  }
+
+  async function handleAcceptRequirement(requirementId: string) {
+    setTaskBoardStatus({ kind: "status", key: "acceptingRequirement" });
+
+    try {
+      const result = await acceptRequirement(requirementId);
+
+      setTasks((currentTasks) =>
+        currentTasks.map((task) =>
+          task.id === result.task.id ? result.task : task
+        )
+      );
+      setRequirements((currentRequirements) =>
+        currentRequirements.map((requirement) =>
+          requirement.id === result.requirement.id
+            ? result.requirement
+            : requirement
+        )
+      );
+      setRequirementAcceptanceDialogRequirementId("");
+      setTaskBoardStatus({ kind: "status", key: "requirementAccepted" });
+    } catch (error) {
+      setTaskBoardStatus(
+        error instanceof Error
+          ? { kind: "error", message: error.message }
+          : { kind: "status", key: "requirementAcceptanceFailed" }
+      );
+    }
+  }
+
+  function handleRejectRequirementAcceptance(task: Task, run: WorkflowRunWithNodes) {
+    setRequirementAcceptanceDialogRequirementId("");
+    handleOpenWorkflowRunExecutorDialog(task.id, run.workflowRun.workflowFileId);
   }
 
   async function handleSaveModelSettings(event: FormEvent<HTMLFormElement>) {
@@ -4069,6 +4251,39 @@ export function App({
   const activeWorkflowRunDetailTemplate = activeWorkflowRunDetailFile
     ? parseWorkflowDefinition(activeWorkflowRunDetailFile.definition)
     : null;
+  const activeRequirementAcceptanceRequirement =
+    requirementAcceptanceDialogRequirementId
+      ? requirements.find(
+          (requirement) =>
+            requirement.id === requirementAcceptanceDialogRequirementId
+        )
+      : undefined;
+  const activeRequirementAcceptanceTasks = activeRequirementAcceptanceRequirement
+    ? projectTasks.filter(
+        (task) => task.requirementId === activeRequirementAcceptanceRequirement.id
+      )
+    : [];
+  const activeRequirementAcceptanceFinalTask = getRequirementFinalTask(
+    activeRequirementAcceptanceTasks
+  );
+  const activeRequirementAcceptanceRun = activeRequirementAcceptanceFinalTask
+    ? getOrderedWorkflowRuns(
+        workflowRunsByTaskId[activeRequirementAcceptanceFinalTask.id] ?? []
+      ).find((run) => run.workflowRun.status === "succeeded")
+    : undefined;
+  const activeRequirementAcceptanceWorkflowFile = activeRequirementAcceptanceRun
+    ? workflowFiles.find(
+        (workflowFile) =>
+          workflowFile.id ===
+          activeRequirementAcceptanceRun.workflowRun.workflowFileId
+      )
+    : undefined;
+  const activeRequirementAcceptanceArtifact = activeRequirementAcceptanceRun
+    ? getWorkflowRunAcceptanceArtifact(
+        activeRequirementAcceptanceRun,
+        activeRequirementAcceptanceWorkflowFile
+      )
+    : null;
 
   function renderWorkflowRunExecutorDialog() {
     if (!workflowRunExecutorDialog || !activeWorkflowRunTemplate) {
@@ -4146,6 +4361,101 @@ export function App({
               <button type="submit">{t.workspace.startRun}</button>
             </div>
           </form>
+        </MotionModalPanel>
+      </MotionModalBackdrop>
+    );
+  }
+
+  function renderRequirementAcceptanceDialog() {
+    if (
+      !activeRequirementAcceptanceRequirement ||
+      !activeRequirementAcceptanceFinalTask
+    ) {
+      return null;
+    }
+
+    return (
+      <MotionModalBackdrop>
+        <MotionModalPanel
+          aria-labelledby="requirement-acceptance-dialog-title"
+          aria-modal="true"
+          className="modal-panel workflow-run-detail-modal"
+          role="dialog"
+        >
+          <div className="modal-heading-row workflow-run-detail-header">
+            <div>
+              <p className="eyebrow">{t.workspace.acceptRequirement}</p>
+              <h2 id="requirement-acceptance-dialog-title">
+                {t.workspace.reviewFinalArtifact}
+              </h2>
+              <p>{activeRequirementAcceptanceRequirement.title}</p>
+            </div>
+            <button
+              className="button-secondary modal-close"
+              onClick={() => setRequirementAcceptanceDialogRequirementId("")}
+              type="button"
+            >
+              {t.workbench.close}
+            </button>
+          </div>
+
+          <div className="task-acceptance-panel requirement-acceptance-panel">
+            <div className="task-acceptance-heading">
+              <span>{activeRequirementAcceptanceFinalTask.title}</span>
+              <strong>
+                {activeRequirementAcceptanceArtifact?.label ||
+                  t.workspace.finalArtifactLabel}
+              </strong>
+            </div>
+            {activeRequirementAcceptanceArtifact?.description ? (
+              <p>{activeRequirementAcceptanceArtifact.description}</p>
+            ) : null}
+            <p className="task-acceptance-output">
+              {activeRequirementAcceptanceArtifact?.output ||
+                t.workspace.finalArtifactUnavailable}
+            </p>
+            <div className="task-acceptance-actions">
+              {activeRequirementAcceptanceRun ? (
+                <button
+                  className="button-secondary"
+                  onClick={() =>
+                    setWorkflowRunDetailDialog({
+                      taskId: activeRequirementAcceptanceFinalTask.id,
+                      workflowRunId:
+                        activeRequirementAcceptanceRun.workflowRun.id
+                    })
+                  }
+                  type="button"
+                >
+                  {t.workspace.viewNodeArtifacts}
+                </button>
+              ) : null}
+              {activeRequirementAcceptanceRun ? (
+                <button
+                  className="button-secondary"
+                  onClick={() =>
+                    handleRejectRequirementAcceptance(
+                      activeRequirementAcceptanceFinalTask,
+                      activeRequirementAcceptanceRun
+                    )
+                  }
+                  type="button"
+                >
+                  {t.workspace.rejectAndRerun}
+                </button>
+              ) : null}
+              <button
+                onClick={() => {
+                  void handleAcceptRequirement(
+                    activeRequirementAcceptanceRequirement.id
+                  );
+                }}
+                type="button"
+              >
+                {t.workspace.acceptRequirementOutput}
+              </button>
+            </div>
+          </div>
         </MotionModalPanel>
       </MotionModalBackdrop>
     );
@@ -4772,6 +5082,12 @@ export function App({
     ) {
       return t.workspace.nextActionGenerateTasks;
     }
+    if (
+      linkedTasks.length > 0 &&
+      getRequirementUnfinishedTaskCount(linkedTasks) === 0
+    ) {
+      return t.workspace.acceptRequirement;
+    }
     if (linkedTasks.length > 0 || requirement.status === "tasks_generated") {
       return t.workspace.nextActionTrackTasks;
     }
@@ -5302,6 +5618,7 @@ export function App({
         {renderClarificationDialog()}
         {renderRequirementNameDialog()}
         {renderWorkflowRunExecutorDialog()}
+        {renderRequirementAcceptanceDialog()}
         {renderWorkflowRunDetailDialog()}
       </AnimatePresence>
       <header className="studio-hero">
@@ -6689,6 +7006,12 @@ export function App({
                     (task) => task.requirementId === requirement.id
                   );
                   const hasTasks = linkedTasks.length > 0;
+                  const unfinishedTaskCount =
+                    getRequirementUnfinishedTaskCount(linkedTasks);
+                  const canAcceptRequirement =
+                    hasTasks &&
+                    unfinishedTaskCount === 0 &&
+                    requirement.status !== "completed";
                   const clarificationPrompt =
                     getRequirementClarificationPrompt(requirement);
 
@@ -6785,6 +7108,30 @@ export function App({
                                 {t.workspace.generateTasks}
                               </button>
                             ) : null}
+                            {hasTasks && unfinishedTaskCount > 0 ? (
+                              <button
+                                className="button-secondary"
+                                disabled
+                                type="button"
+                              >
+                                {t.workspace.requirementAcceptanceBlocked(
+                                  unfinishedTaskCount
+                                )}
+                              </button>
+                            ) : null}
+                            {canAcceptRequirement ? (
+                              <button
+                                className="button-secondary"
+                                onClick={() =>
+                                  setRequirementAcceptanceDialogRequirementId(
+                                    requirement.id
+                                  )
+                                }
+                                type="button"
+                              >
+                                {t.workspace.acceptRequirement}
+                              </button>
+                            ) : null}
                             <button
                               className="button-secondary"
                               aria-label={`${t.workspace.editRequirement} ${requirement.title}`}
@@ -6836,7 +7183,7 @@ export function App({
                   <button
                     aria-pressed={activeTaskBoardRequirementId === ""}
                     className="button-secondary"
-                    onClick={() => setSelectedTaskBoardRequirementId("")}
+                    onClick={() => handleSelectTaskBoardRequirement("")}
                     type="button"
                   >
                     {t.workspace.taskBoardFilterAll}
@@ -6847,7 +7194,7 @@ export function App({
                       aria-label={t.workspace.taskBoardRequirementFilterLabel}
                       disabled={projectRequirements.length === 0}
                       onChange={(event) =>
-                        setSelectedTaskBoardRequirementId(event.target.value)
+                        handleSelectTaskBoardRequirement(event.target.value)
                       }
                       value={activeTaskBoardRequirementId}
                     >
@@ -6903,7 +7250,9 @@ export function App({
                           const sourceRequirement = projectRequirements.find(
                             (requirement) => requirement.id === task.requirementId
                           );
-                          const runs = workflowRunsByTaskId[task.id] ?? [];
+                          const runs = getOrderedWorkflowRuns(
+                            workflowRunsByTaskId[task.id] ?? []
+                          );
                           const dependencyLabels = getTaskDependencyLabels(
                             task,
                             projectTasks
@@ -6913,7 +7262,11 @@ export function App({
                               task,
                               workflowRunsByTaskId
                             );
-                          const canStartTaskWorkflow = task.status !== "running";
+                          const canStartTaskWorkflow = ![
+                            "completed",
+                            "pending_acceptance",
+                            "running"
+                          ].includes(task.status);
                           const selectedTaskWorkflowId =
                             getSelectedTaskWorkflowId(task.id);
 
@@ -7002,74 +7355,95 @@ export function App({
                                     {t.workspace.noRunsForTask}
                                   </MascotLaneEmpty>
                                 ) : (
-                                  runs.map((run) => (
-                                    <div
-                                      className="run-group"
-                                      key={run.workflowRun.id}
-                                    >
-                                      <div className="run-group-header">
-                                        <div className="run-group-summary">
-                                          <span
-                                            aria-hidden="true"
-                                            className={`status-dot status-${getNodeRunTone(
-                                              run.workflowRun.status
-                                            )}`}
-                                          />
-                                          <div className="run-group-title">
-                                            <span>{t.workspace.workflowRun}</span>
-                                            <strong>{run.workflowRun.status}</strong>
-                                          </div>
-                                        </div>
-                                        <div className="run-group-meta">
-                                          <span className="run-group-timestamp">
-                                            {t.workspace.workflowRunUpdatedAtLabel}{" "}
-                                            {formatManagementTimestamp(
-                                              run.workflowRun.updatedAt
-                                            )}
-                                          </span>
-                                          <button
-                                            className="button-secondary run-detail-button"
-                                            onClick={() =>
-                                              setWorkflowRunDetailDialog({
-                                                taskId: task.id,
-                                                workflowRunId: run.workflowRun.id
-                                              })
-                                            }
-                                            type="button"
-                                          >
-                                            {t.workspace.viewWorkflowRunDetails}
-                                          </button>
-                                        </div>
-                                      </div>
-                                      <div className="node-run-list">
-                                        {run.nodeRuns.map((nodeRun) => {
-                                          const tone = getNodeRunTone(
-                                            nodeRun.status
-                                          );
+                                  runs.map((run, runIndex) => {
+                                    const isLatestRun = runIndex === 0;
 
-                                          return (
-                                            <div
-                                              className="node-run-row"
-                                              key={nodeRun.id}
-                                            >
-                                              <span
-                                                className={`status-dot status-${tone}`}
-                                              />
-                                              <span
-                                                className="node-run-id"
-                                                title={nodeRun.nodeId}
-                                              >
-                                                {nodeRun.nodeId}
-                                              </span>
-                                              <strong className="node-run-status">
-                                                {nodeRun.status}
+                                    return (
+                                      <div
+                                        className={`run-group ${
+                                          isLatestRun
+                                            ? "run-group-latest"
+                                            : "run-group-history"
+                                        }`}
+                                        key={run.workflowRun.id}
+                                      >
+                                        <div className="run-group-header">
+                                          <div className="run-group-summary">
+                                            <span
+                                              aria-hidden="true"
+                                              className={`status-dot status-${getNodeRunTone(
+                                                run.workflowRun.status
+                                              )}`}
+                                            />
+                                            <div className="run-group-title">
+                                              <span>{t.workspace.workflowRun}</span>
+                                              <strong>
+                                                {run.workflowRun.status}
                                               </strong>
                                             </div>
-                                          );
-                                        })}
+                                            <span className="run-group-scope">
+                                              {isLatestRun
+                                                ? t.workspace.latestWorkflowRun
+                                                : t.workspace.historyWorkflowRun}
+                                            </span>
+                                          </div>
+                                          <div className="run-group-meta">
+                                            <span className="run-group-timestamp">
+                                              {t.workspace.workflowRunUpdatedAtLabel}{" "}
+                                              {formatManagementTimestamp(
+                                                run.workflowRun.updatedAt
+                                              )}
+                                            </span>
+                                            <button
+                                              className="button-secondary run-detail-button"
+                                              onClick={() =>
+                                                setWorkflowRunDetailDialog({
+                                                  taskId: task.id,
+                                                  workflowRunId: run.workflowRun.id
+                                                })
+                                              }
+                                              type="button"
+                                            >
+                                              {t.workspace.viewWorkflowRunDetails}
+                                            </button>
+                                          </div>
+                                        </div>
+                                        {isLatestRun ? (
+                                          <div className="node-run-list">
+                                            {run.nodeRuns.map((nodeRun) => {
+                                              const tone = getNodeRunTone(
+                                                nodeRun.status
+                                              );
+
+                                              return (
+                                                <div
+                                                  className="node-run-row"
+                                                  key={nodeRun.id}
+                                                >
+                                                  <span
+                                                    className={`status-dot status-${tone}`}
+                                                  />
+                                                  <span
+                                                    className="node-run-id"
+                                                    title={nodeRun.nodeId}
+                                                  >
+                                                    {nodeRun.nodeId}
+                                                  </span>
+                                                  <strong className="node-run-status">
+                                                    {nodeRun.status}
+                                                  </strong>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : (
+                                          <p className="run-group-folded-note">
+                                            {t.workspace.foldedWorkflowRunDetails}
+                                          </p>
+                                        )}
                                       </div>
-                                    </div>
-                                  ))
+                                    );
+                                  })
                                 )}
                               </div>
                             </article>
