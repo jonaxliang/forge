@@ -62,7 +62,6 @@ artifacts:
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     uses:
       - skill:planning
     inputs:
@@ -78,7 +77,6 @@ nodes:
   - id: implement
     type: code-change
     dependsOn: plan
-    executor: agent:coder
     uses:
       - skill:coding
     inputs:
@@ -94,7 +92,6 @@ nodes:
   - id: verify
     type: test-and-typecheck
     dependsOn: implement
-    executor: agent:tester
     uses:
       - skill:verification
     inputs:
@@ -110,7 +107,6 @@ nodes:
   - id: review
     type: code-review
     dependsOn: verify
-    executor: agent:reviewer
     uses:
       - skill:review
     inputs:
@@ -127,7 +123,6 @@ nodes:
   - id: handoff
     type: delivery-handoff
     dependsOn: review
-    executor: agent:planner
     uses:
       - skill:planning
     inputs:
@@ -180,7 +175,6 @@ artifacts:
 nodes:
   - id: research
     type: research
-    executor: agent:researcher
     uses:
       - skill:research
     inputs:
@@ -196,7 +190,6 @@ nodes:
   - id: outline
     type: writing-outline
     dependsOn: research
-    executor: agent:writer
     uses:
       - skill:writing
     inputs:
@@ -212,7 +205,6 @@ nodes:
   - id: draft
     type: writing-draft
     dependsOn: outline
-    executor: agent:writer
     uses:
       - skill:writing
     inputs:
@@ -228,7 +220,6 @@ nodes:
   - id: edit
     type: editorial-review
     dependsOn: draft
-    executor: agent:editor
     uses:
       - skill:editorial-review
     inputs:
@@ -279,7 +270,6 @@ artifacts:
 nodes:
   - id: outline
     type: creative-outline
-    executor: agent:writer
     uses:
       - skill:drafting
     inputs:
@@ -295,7 +285,6 @@ nodes:
   - id: draft
     type: creative-draft
     dependsOn: outline
-    executor: agent:writer
     uses:
       - skill:drafting
     inputs:
@@ -311,7 +300,6 @@ nodes:
   - id: revise
     type: creative-revision
     dependsOn: draft
-    executor: agent:editor
     uses:
       - skill:revision
     inputs:
@@ -327,7 +315,6 @@ nodes:
   - id: approve
     type: creative-approval
     dependsOn: revise
-    executor: agent:reviewer
     uses:
       - skill:editorial-review
     inputs:

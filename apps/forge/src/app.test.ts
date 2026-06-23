@@ -1,8 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { createApp } from "./app";
+import {
+  createInMemoryBridgeRepository,
+  createInMemoryWorkflowRunRepository,
+  createInMemoryWorkflowFileRepository
+} from "@forge/db";
+import { buildRequirementPlanningRequest, createApp } from "./app";
 
 const temporaryDirectories: string[] = [];
 
@@ -31,6 +36,71 @@ async function createWebAssetsRoot(files: Record<string, string>) {
   return directory;
 }
 
+function createZipArchiveBase64(files: Array<{ content: string; path: string }>) {
+  let offset = 0;
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+
+  for (const file of files) {
+    const fileName = Buffer.from(file.path);
+    const content = Buffer.from(file.content);
+    const localHeaderOffset = offset;
+    const localHeader = Buffer.alloc(30);
+
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt32LE(0, 10);
+    localHeader.writeUInt32LE(0, 14);
+    localHeader.writeUInt32LE(content.length, 18);
+    localHeader.writeUInt32LE(content.length, 22);
+    localHeader.writeUInt16LE(fileName.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, fileName, content);
+    offset += localHeader.length + fileName.length + content.length;
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt32LE(0, 12);
+    centralHeader.writeUInt32LE(0, 16);
+    centralHeader.writeUInt32LE(content.length, 20);
+    centralHeader.writeUInt32LE(content.length, 24);
+    centralHeader.writeUInt16LE(fileName.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(localHeaderOffset, 42);
+    centralParts.push(centralHeader, fileName);
+  }
+
+  const centralDirectoryOffset = offset;
+  const centralDirectorySize = centralParts.reduce(
+    (total, part) => total + part.length,
+    0
+  );
+  const endOfCentralDirectory = Buffer.alloc(22);
+
+  endOfCentralDirectory.writeUInt32LE(0x06054b50, 0);
+  endOfCentralDirectory.writeUInt16LE(0, 4);
+  endOfCentralDirectory.writeUInt16LE(0, 6);
+  endOfCentralDirectory.writeUInt16LE(files.length, 8);
+  endOfCentralDirectory.writeUInt16LE(files.length, 10);
+  endOfCentralDirectory.writeUInt32LE(centralDirectorySize, 12);
+  endOfCentralDirectory.writeUInt32LE(centralDirectoryOffset, 16);
+  endOfCentralDirectory.writeUInt16LE(0, 20);
+
+  return Buffer.concat([
+    ...localParts,
+    ...centralParts,
+    endOfCentralDirectory
+  ]).toString("base64");
+}
+
 async function configureModel(app: ReturnType<typeof createApp>) {
   await app.request("/api/execution-settings", {
     body: JSON.stringify({
@@ -46,6 +116,7 @@ async function configureModel(app: ReturnType<typeof createApp>) {
 function createPlanningApp(options: Parameters<typeof createApp>[0] = {}) {
   return createApp({
     requirementPlanner: async ({ requirement }) => ({
+      kind: "tasks",
       items: [
         {
           body: `Planned from requirement: ${requirement.body}`,
@@ -70,10 +141,103 @@ async function createDecompositionResultForRequirement(
     }
   );
 
-  return (await response.json()) as {
-    decompositionResult: { id: string; requirementId: string };
-    requirement: { id: string; status: string };
-  };
+  expect(response.status).toBe(202);
+  await expect(response.json()).resolves.toMatchObject({
+    decompositionResult: null,
+    requirement: {
+      id: requirementId,
+      status: "decomposing"
+    }
+  });
+
+  return waitForDecompositionResult(app, requirementId);
+}
+
+async function waitForDecompositionResult(
+  app: ReturnType<typeof createApp>,
+  requirementId: string
+) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const resultsBody = (await (
+      await app.request("/api/decomposition-results")
+    ).json()) as {
+      decompositionResults: Array<{ id: string; requirementId: string }>;
+    };
+    const decompositionResult = resultsBody.decompositionResults.find(
+      (result) => result.requirementId === requirementId
+    );
+
+    if (decompositionResult) {
+      const requirementBody = (await (
+        await app.request("/api/requirements")
+      ).json()) as {
+        requirements: Array<{ id: string; status: string }>;
+      };
+
+      return {
+        decompositionResult,
+        requirement: requirementBody.requirements.find(
+          (requirement) => requirement.id === requirementId
+        )!
+      };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error(`Timed out waiting for decomposition result: ${requirementId}`);
+}
+
+async function waitForRequirementStatus(
+  app: ReturnType<typeof createApp>,
+  requirementId: string,
+  status: string
+) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const body = (await (
+      await app.request("/api/requirements")
+    ).json()) as {
+      requirements: Array<{ errorMessage: string | null; id: string; status: string }>;
+    };
+    const requirement = body.requirements.find((item) => item.id === requirementId);
+
+    if (requirement?.status === status) {
+      return requirement;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error(`Timed out waiting for Requirement ${status}: ${requirementId}`);
+}
+
+async function waitForTaskWorkflowRun(
+  app: ReturnType<typeof createApp>,
+  taskId: string,
+  predicate: (run: {
+    nodeRuns: Array<{ nodeId: string; status: string }>;
+    workflowRun: { status: string };
+  }) => boolean
+) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const body = (await (
+      await app.request(`/api/tasks/${taskId}/workflow-runs`)
+    ).json()) as {
+      workflowRuns: Array<{
+        nodeRuns: Array<{ nodeId: string; status: string }>;
+        workflowRun: { status: string };
+      }>;
+    };
+    const run = body.workflowRuns[0];
+
+    if (run && predicate(run)) {
+      return run;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error(`Timed out waiting for Task Workflow Run: ${taskId}`);
 }
 
 async function generateTasksFromDecompositionResult(
@@ -107,7 +271,7 @@ describe("GET /api/health", () => {
 });
 
 describe("Web console assets", () => {
-  it("serves the bundled Web console from the server root", async () => {
+  it("redirects the server root to the main Web console route", async () => {
     const webAssetsRoot = await createWebAssetsRoot({
       "index.html": "<html><body><div id=\"root\">Forge Web</div></body></html>"
     });
@@ -115,9 +279,8 @@ describe("Web console assets", () => {
 
     const response = await app.request("/");
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/html");
-    await expect(response.text()).resolves.toContain("Forge Web");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/main");
   });
 
   it("serves nested Web asset files without intercepting API routes", async () => {
@@ -142,7 +305,7 @@ describe("Web console assets", () => {
     });
     const app = createApp({ webAssetsRoot });
 
-    const response = await app.request("/control-room");
+    const response = await app.request("/main");
 
     expect(response.status).toBe(200);
     await expect(response.text()).resolves.toContain("Forge Web");
@@ -166,6 +329,24 @@ describe("Web console assets", () => {
       error: "API route not found"
     });
   });
+
+  it("serves the forgecli release download without exposing it through the Web console fallback", async () => {
+    const releaseAssetsRoot = await createWebAssetsRoot({
+      "forgecli-macos-arm64/forgecli": "#!/usr/bin/env sh\necho forgecli\n"
+    });
+    const webAssetsRoot = await createWebAssetsRoot({
+      "index.html": "<html><body>Forge Web</body></html>"
+    });
+    const app = createApp({ releaseAssetsRoot, webAssetsRoot });
+
+    const downloadResponse = await app.request("/release/forgecli");
+    const missingResponse = await app.request("/release/missing");
+
+    expect(downloadResponse.status).toBe(200);
+    await expect(downloadResponse.text()).resolves.toContain("echo forgecli");
+    expect(missingResponse.status).toBe(404);
+    await expect(missingResponse.text()).resolves.not.toContain("Forge Web");
+  });
 });
 
 describe("Project API", () => {
@@ -176,6 +357,8 @@ describe("Project API", () => {
       body: JSON.stringify({
         artifactStorageMode: "cloud",
         dbStrategy: "mysql",
+        defaultExecutorAgentBindingId: "agb_planner",
+        defaultExecutorType: "agent-binding",
         name: "Forge"
       }),
       headers: {
@@ -188,6 +371,8 @@ describe("Project API", () => {
     await expect(createResponse.json()).resolves.toMatchObject({
       artifactStorageMode: "cloud",
       dbStrategy: "mysql",
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
       name: "Forge"
     });
 
@@ -199,6 +384,8 @@ describe("Project API", () => {
         {
           artifactStorageMode: "cloud",
           dbStrategy: "mysql",
+          defaultExecutorAgentBindingId: "agb_planner",
+          defaultExecutorType: "agent-binding",
           name: "Forge"
         }
       ]
@@ -289,6 +476,39 @@ describe("Project API", () => {
           name: "Forge Ops"
         }
       ]
+    });
+  });
+
+  it("updates project default executors", async () => {
+    const app = createApp();
+    const createResponse = await app.request("/api/projects", {
+      body: JSON.stringify({
+        name: "Forge"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const project = await createResponse.json();
+
+    const updateResponse = await app.request(`/api/projects/${project.id}`, {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: "agb_planner",
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
+      id: project.id,
+      name: "Forge"
     });
   });
 });
@@ -474,7 +694,6 @@ version: "1.1"
 nodes:
   - id: analyze
     type: requirement-analysis
-    executor: skill:requirements
     outputs:
       - kind: file
         ref: analysis.md
@@ -483,7 +702,6 @@ nodes:
   - id: implement
     type: coding
     dependsOn: analyze
-    executor: skill:code
     outputs:
       - kind: file
         ref: diff.patch
@@ -556,7 +774,6 @@ artifacts:
 nodes:
   - id: plan
     type: implementation-plan
-    executor: agent:planner
     uses:
       - skill:planning
     inputs:
@@ -635,7 +852,6 @@ version: "1.1"
 nodes:
   - id: implement
     type: coding
-    executor: skill:code
     outputs:
       - kind: file
         ref: diff.patch
@@ -679,7 +895,6 @@ version: "1.1"
 nodes:
   - id: implement
     type: coding
-    executor: skill:code
     outputs:
       - kind: file
         ref: diff.patch
@@ -750,8 +965,7 @@ ${nodeIds
   .map(
     (nodeId, index) => `  - id: ${nodeId}
     type: ${index === 0 ? "implementation-plan" : "code-change"}
-    ${index === 0 ? "" : `dependsOn: ${nodeIds[index - 1]}\n    `}executor: agent:planner
-    outputs:
+    ${index === 0 ? "" : `dependsOn: ${nodeIds[index - 1]}\n    `}outputs:
       - kind: file
         ref: ${nodeId}.md
     exit:
@@ -820,7 +1034,6 @@ version: "1.1"
 nodes:
   - id: draft
     type: writing
-    executor: agent:writer
     outputs:
       - kind: file
         ref: draft.md
@@ -847,7 +1060,7 @@ nodes:
     });
   });
 
-  it("renames the autonomous travel guide test Workflow template by concrete purpose", async () => {
+  it("upgrades the autonomous travel guide test Workflow template into a prompted guide workflow", async () => {
     const app = createApp();
 
     await app.request("/api/workflow-files/import", {
@@ -859,7 +1072,6 @@ version: "1.1"
 nodes:
   - id: write_travel_guide
     type: coding
-    executor: agent:autonomous-test-agent
     outputs:
       - kind: file
         ref: travel-guide.md
@@ -879,18 +1091,81 @@ nodes:
     expect(listResponse.status).toBe(200);
     expect(listBody.workflowFiles).toHaveLength(1);
     expect(listBody.workflowFiles[0]).toMatchObject({
-      name: "旅行指南编写测试模板",
-      nodeCount: 1
+      name: "旅行攻略模板",
+      nodeCount: 4
     });
     expect(JSON.parse(listBody.workflowFiles[0].definition)).toMatchObject({
-      name: "旅行指南编写测试模板",
+      name: "旅行攻略模板",
       nodes: [
         expect.objectContaining({
-          id: "write_travel_guide",
-          type: "coding"
+          id: "clarify-trip",
+          instruction: expect.objectContaining({
+            text: expect.stringContaining("目的地")
+          })
+        }),
+        expect.objectContaining({
+          id: "design-itinerary",
+          instruction: expect.objectContaining({
+            text: expect.stringContaining("每日行程")
+          })
+        }),
+        expect.objectContaining({
+          id: "localize-guide",
+          instruction: expect.objectContaining({
+            text: expect.stringContaining("交通")
+          })
+        }),
+        expect.objectContaining({
+          id: "polish-guide",
+          instruction: expect.objectContaining({
+            text: expect.stringContaining("旅行攻略")
+          })
         })
       ],
     });
+  });
+
+  it("upgrades one-node travel guide Workflow templates that already use the current name", async () => {
+    const app = createApp();
+
+    await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: 旅行攻略模板
+scope: task
+version: "1.1"
+nodes:
+  - id: write_travel_guide
+    type: coding
+    outputs:
+      - kind: file
+        ref: travel-guide.md
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+
+    const listBody = (await (
+      await app.request("/api/workflow-files")
+    ).json()) as {
+      workflowFiles: Array<{ definition: string; name: string; nodeCount: number }>;
+    };
+
+    expect(listBody.workflowFiles[0]).toMatchObject({
+      name: "旅行攻略模板",
+      nodeCount: 4
+    });
+    expect(JSON.parse(listBody.workflowFiles[0].definition).nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "clarify-trip" }),
+        expect.objectContaining({ id: "design-itinerary" }),
+        expect.objectContaining({ id: "localize-guide" }),
+        expect.objectContaining({ id: "polish-guide" })
+      ])
+    );
   });
 
   it("returns a clear validation error for invalid workflow files", async () => {
@@ -906,7 +1181,6 @@ nodes:
   - id: implement
     type: coding
     dependsOn: missing
-    executor: skill:code
     exit:
       maxRetries: 1
 `
@@ -924,7 +1198,505 @@ nodes:
   });
 });
 
+describe("Skill API", () => {
+  it("uploads and lists Project Skill definitions", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const app = createApp({ skillStorageRoot: storageRoot });
+
+    const response = await app.request("/api/skills", {
+      body: JSON.stringify({
+        archive: {
+          contentBase64: createZipArchiveBase64([
+            {
+              content:
+                "---\nname: code-review\ndescription: Reviews code changes before handoff.\n---\n# Code Review\n\nReview changes for behavioral regressions.",
+              path: "SKILL.md"
+            }
+          ]),
+          name: "code-review.zip"
+        },
+        projectId: "proj_test"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      skill: {
+        body: "# Code Review\n\nReview changes for behavioral regressions.",
+        description: "Reviews code changes before handoff.",
+        files: [
+          {
+            path: "SKILL.md"
+          }
+        ],
+        name: "code-review",
+        projectId: "proj_test",
+        ref: "skill:code-review",
+        storagePath: join(storageRoot, "proj_test", "code-review")
+      }
+    });
+    await expect(
+      readFile(join(storageRoot, "proj_test", "code-review", "SKILL.md"), "utf8")
+    ).resolves.toContain("Review changes for behavioral regressions.");
+
+    const listResponse = await app.request("/api/skills?projectId=proj_test");
+
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      skills: [
+        {
+          name: "code-review",
+          projectId: "proj_test",
+          ref: "skill:code-review",
+          storagePath: join(storageRoot, "proj_test", "code-review")
+        }
+      ]
+    });
+  });
+
+  it("lists only system and selected Project Skill definitions", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const app = createApp({ skillStorageRoot: storageRoot });
+    const uploadSkill = (name: string, projectId?: string) =>
+      app.request("/api/skills", {
+        body: JSON.stringify({
+          archive: {
+            contentBase64: createZipArchiveBase64([
+              {
+                content: `---\nname: ${name}\ndescription: ${name} description.\n---\n# ${name}`,
+                path: "SKILL.md"
+              }
+            ]),
+            name: `${name}.zip`
+          },
+          ...(projectId ? { projectId } : {})
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      });
+
+    await uploadSkill("system-skill");
+    await uploadSkill("project-skill", "proj_test");
+    await uploadSkill("other-project-skill", "proj_other");
+
+    const projectListResponse = await app.request("/api/skills?projectId=proj_test");
+    const systemListResponse = await app.request("/api/skills");
+
+    expect(projectListResponse.status).toBe(200);
+    await expect(projectListResponse.json()).resolves.toMatchObject({
+      skills: [
+        { name: "system-skill", projectId: null },
+        { name: "project-skill", projectId: "proj_test" }
+      ]
+    });
+    await expect(systemListResponse.json()).resolves.toMatchObject({
+      skills: [{ name: "system-skill", projectId: null }]
+    });
+  });
+
+  it("accepts Skill zip archives with a single top-level folder", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const app = createApp({ skillStorageRoot: storageRoot });
+
+    const response = await app.request("/api/skills", {
+      body: JSON.stringify({
+        archive: {
+          contentBase64: createZipArchiveBase64([
+            {
+              content:
+                "---\nname: folder-skill\ndescription: Loaded from a top-level folder.\n---\n# Folder Skill",
+              path: "folder-skill/SKILL.md"
+            },
+            {
+              content: "Folder reference.",
+              path: "folder-skill/references/checklist.md"
+            }
+          ]),
+          name: "folder-skill.zip"
+        },
+        projectId: "proj_test"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      skill: {
+        files: [
+          {
+            path: "SKILL.md"
+          },
+          {
+            path: "references/checklist.md"
+          }
+        ],
+        name: "folder-skill",
+        ref: "skill:folder-skill"
+      }
+    });
+    await expect(
+      readFile(join(storageRoot, "proj_test", "folder-skill", "SKILL.md"), "utf8")
+    ).resolves.toContain("Folder Skill");
+  });
+
+  it("imports Skills from GitHub directory URLs", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const fetchSkillSource = async (url: string) => {
+      expect(url).toBe(
+        "https://codeload.github.com/acme/forge-skills/zip/refs/heads/main"
+      );
+
+      return new Response(
+        Buffer.from(
+          createZipArchiveBase64([
+            {
+              content:
+                "---\nname: github-review\ndescription: Loaded from GitHub.\n---\n# GitHub Review",
+              path: "forge-skills-main/code-review/SKILL.md"
+            },
+            {
+              content: "Use repository context.",
+              path: "forge-skills-main/code-review/references/context.md"
+            }
+          ]),
+          "base64"
+        ),
+        { status: 200 }
+      );
+    };
+    const app = createApp({ fetchSkillSource, skillStorageRoot: storageRoot });
+
+    const response = await app.request("/api/skills", {
+      body: JSON.stringify({
+        projectId: "proj_test",
+        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      skill: {
+        description: "Loaded from GitHub.",
+        files: [
+          {
+            path: "SKILL.md"
+          },
+          {
+            path: "references/context.md"
+          }
+        ],
+        name: "github-review",
+        ref: "skill:github-review",
+        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review",
+        storagePath: join(storageRoot, "proj_test", "github-review")
+      }
+    });
+    await expect(
+      readFile(join(storageRoot, "proj_test", "github-review", "SKILL.md"), "utf8")
+    ).resolves.toContain("GitHub Review");
+  });
+
+  it("updates a linked Skill from its saved source URL", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    let fetchCount = 0;
+    const fetchSkillSource = async (url: string) => {
+      expect(url).toBe(
+        "https://codeload.github.com/acme/forge-skills/zip/refs/heads/main"
+      );
+      fetchCount += 1;
+
+      return new Response(
+        Buffer.from(
+          createZipArchiveBase64([
+            {
+              content:
+                fetchCount === 1
+                  ? "---\nname: github-review\ndescription: Old GitHub Skill.\n---\n# Old GitHub Review"
+                  : "---\nname: github-review\ndescription: Updated GitHub Skill.\n---\n# Updated GitHub Review",
+              path: "forge-skills-main/code-review/SKILL.md"
+            }
+          ]),
+          "base64"
+        ),
+        { status: 200 }
+      );
+    };
+    const app = createApp({ fetchSkillSource, skillStorageRoot: storageRoot });
+
+    const uploadResponse = await app.request("/api/skills", {
+      body: JSON.stringify({
+        projectId: "proj_test",
+        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const uploadBody = await uploadResponse.json() as {
+      skill: { id: string };
+    };
+
+    const updateResponse = await app.request(
+      `/api/skills/${uploadBody.skill.id}/update-from-source`,
+      { method: "POST" }
+    );
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      skill: {
+        body: "# Updated GitHub Review",
+        description: "Updated GitHub Skill.",
+        name: "github-review",
+        ref: "skill:github-review",
+        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review"
+      }
+    });
+    await expect(
+      readFile(join(storageRoot, "proj_test", "github-review", "SKILL.md"), "utf8")
+    ).resolves.toContain("Updated GitHub Review");
+  });
+
+  it("rejects source updates for uploaded zip Skills", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const app = createApp({ skillStorageRoot: storageRoot });
+
+    const uploadResponse = await app.request("/api/skills", {
+      body: JSON.stringify({
+        archive: {
+          contentBase64: createZipArchiveBase64([
+            {
+              content:
+                "---\nname: zip-skill\ndescription: Zip only.\n---\n# Zip Skill",
+              path: "SKILL.md"
+            }
+          ]),
+          name: "zip-skill.zip"
+        },
+        projectId: "proj_test"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const uploadBody = await uploadResponse.json() as {
+      skill: { id: string };
+    };
+
+    const updateResponse = await app.request(
+      `/api/skills/${uploadBody.skill.id}/update-from-source`,
+      { method: "POST" }
+    );
+
+    expect(updateResponse.status).toBe(400);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      error: expect.stringContaining("source URL")
+    });
+  });
+
+  it("rejects remote Skill sources that do not include a valid SKILL.md", async () => {
+    const fetchSkillSource = async () =>
+      new Response(
+        Buffer.from(
+          createZipArchiveBase64([
+            {
+              content: "# Missing Skill metadata",
+              path: "forge-skills-main/README.md"
+            }
+          ]),
+          "base64"
+        ),
+        { status: 200 }
+      );
+    const app = createApp({ fetchSkillSource });
+
+    const response = await app.request("/api/skills", {
+      body: JSON.stringify({
+        projectId: "proj_test",
+        sourceUrl: "https://github.com/acme/forge-skills/archive/refs/heads/main.zip"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("SKILL.md")
+    });
+  });
+
+  it("deletes uploaded Skill definitions", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "forge-skills-"));
+    temporaryDirectories.push(storageRoot);
+    const app = createApp({ skillStorageRoot: storageRoot });
+    const uploadResponse = await app.request("/api/skills", {
+      body: JSON.stringify({
+        archive: {
+          contentBase64: createZipArchiveBase64([
+            {
+              content:
+                "---\nname: verification\ndescription: Verifies task output.\n---\n# Verification",
+              path: "SKILL.md"
+            }
+          ]),
+          name: "verification.zip"
+        },
+        projectId: "proj_test",
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const uploadBody = await uploadResponse.json() as {
+      skill: { id: string };
+    };
+
+    const deleteResponse = await app.request(
+      `/api/skills/${uploadBody.skill.id}`,
+      { method: "DELETE" }
+    );
+
+    expect(deleteResponse.status).toBe(204);
+    await expect(
+      stat(join(storageRoot, "proj_test", "verification"))
+    ).rejects.toThrow();
+    await expect(
+      (await app.request("/api/skills?projectId=proj_test")).json()
+    ).resolves.toEqual({ skills: [] });
+  });
+
+  it("rejects uploads that do not include a valid SKILL.md", async () => {
+    const app = createApp();
+
+    const response = await app.request("/api/skills", {
+      body: JSON.stringify({
+        archive: {
+          contentBase64: createZipArchiveBase64([
+            { content: "# Missing metadata", path: "README.md" }
+          ]),
+          name: "invalid-skill.zip"
+        },
+        projectId: "proj_test"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("SKILL.md")
+    });
+  });
+});
+
 describe("Requirement API", () => {
+  it("builds decomposition instructions that preserve named targets", () => {
+    const request = buildRequirementPlanningRequest({
+      requirement: {
+        body: "写一份 LLM Wiki 的材料",
+        title: "LLM Wiki 材料"
+      },
+      workflowFile: {
+        name: "调研写作模板"
+      }
+    });
+
+    expect(request.prompt).toContain('"title":"LLM Wiki 材料"');
+    expect(request.prompt).toContain('"body":"写一份 LLM Wiki 的材料"');
+    expect(request.system).toContain("Treat capitalized or quoted names as proper nouns");
+    expect(request.system).toContain("Do not reinterpret a named target");
+    expect(request.system).toContain("Ask clarification questions");
+    expect(request.system).not.toContain("LLM Wiki");
+    expect(request.system).not.toContain("LLM history");
+  });
+
+  it("records clarification questions instead of creating decomposition items", async () => {
+    const app = createPlanningApp({
+      requirementPlanner: async () => ({
+        kind: "clarification",
+        questions: [
+          "What specific target should the material cover?",
+          "Who is the intended audience?"
+        ]
+      })
+    });
+    const workflowFile = await importRequirementWorkflow(app);
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "写一份内部代号材料",
+        title: "内部材料",
+        workflowFileId: workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+
+    await configureModel(app);
+
+    const planResponse = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/decomposition-result`,
+      {
+        method: "POST"
+      }
+    );
+    const clarificationRequirement = await waitForRequirementStatus(
+      app,
+      requirementBody.requirement.id,
+      "decomposition_failed"
+    );
+    const decompositionResultsBody = (await (
+      await app.request("/api/decomposition-results")
+    ).json()) as {
+      decompositionResults: Array<{ requirementId: string }>;
+    };
+
+    expect(planResponse.status).toBe(202);
+    expect(clarificationRequirement.errorMessage).toContain(
+      "Requirement needs clarification"
+    );
+    expect(clarificationRequirement.errorMessage).toContain(
+      "What specific target should the material cover?"
+    );
+    expect(clarificationRequirement.errorMessage).toContain(
+      "Who is the intended audience?"
+    );
+    expect(decompositionResultsBody.decompositionResults).not.toContainEqual(
+      expect.objectContaining({
+        requirementId: requirementBody.requirement.id
+      })
+    );
+  });
+
   async function importRequirementWorkflow(app: ReturnType<typeof createApp>) {
     const workflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
@@ -935,7 +1707,6 @@ version: "1.1"
 nodes:
   - id: split
     type: task-drafting
-    executor: skill:requirements
     exit:
       maxRetries: 1
 `
@@ -1091,8 +1862,22 @@ nodes:
 
     expect(requirementResponse.status).toBe(201);
     expect(requirementBody.decompositionResult).toBeNull();
-    expect(planResponse.status).toBe(201);
+    expect(planResponse.status).toBe(202);
     await expect(planResponse.json()).resolves.toMatchObject({
+      decompositionResult: null,
+      estimatedSeconds: expect.any(Number),
+      requirement: {
+        id: requirementBody.requirement.id,
+        status: "decomposing"
+      }
+    });
+
+    const planned = await waitForDecompositionResult(
+      app,
+      requirementBody.requirement.id
+    );
+
+    expect(planned).toMatchObject({
       decompositionResult: {
         items: [
           {
@@ -1116,6 +1901,262 @@ nodes:
         {
           requirementId: requirementBody.requirement.id,
           summary: "Split LLM Wiki research report into executable tasks."
+        }
+      ]
+    });
+  });
+
+  it("assigns the default executor to decomposition items and preserves user edits on generated Tasks", async () => {
+    const app = createPlanningApp();
+    const workflowFile = await importRequirementWorkflow(app);
+    const registerResponse = await app.request("/api/bridges/register", {
+      body: JSON.stringify({
+        agents: [
+          {
+            capabilities: ["planning", "coding"],
+            command: "forge-agent run",
+            connector: "cli",
+            name: "Local planner"
+          }
+        ],
+        bridgeId: "bridge_local"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string; name: string }>;
+    };
+    const agent = registerBody.agents[0]!;
+
+    const projectResponse = await app.request("/api/projects", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: agent.id,
+        defaultExecutorType: "agent-binding",
+        name: "Forge Ops"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const projectBody = await projectResponse.json() as {
+      id: string;
+    };
+
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Ship default executor assignment.",
+        projectId: projectBody.id,
+        title: "Executor assignment",
+        workflowFileId: workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+    const planResponse = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/decomposition-result`,
+      {
+        method: "POST"
+      }
+    );
+    const planBody = (await planResponse.json()) as {
+      decompositionResult: null;
+      estimatedSeconds: number;
+      requirement: { status: string };
+    };
+
+    expect(planResponse.status).toBe(202);
+    expect(planBody).toMatchObject({
+      decompositionResult: null,
+      requirement: {
+        status: "decomposing"
+      }
+    });
+
+    const nextJobResponse = await app.request("/api/bridges/bridge_local/jobs/next");
+    const nextJobBody = (await nextJobResponse.json()) as {
+      job: { id: string; requirement: { id: string }; type: string };
+    };
+
+    expect(nextJobBody).toMatchObject({
+      job: {
+        requirement: {
+          id: requirementBody.requirement.id
+        },
+        type: "requirement-decomposition"
+      }
+    });
+
+    const completeResponse = await app.request(
+      `/api/bridges/bridge_local/jobs/${nextJobBody.job.id}/complete`,
+      {
+        body: JSON.stringify({
+          output: JSON.stringify({
+            summary: "Split Executor assignment with a local agent.",
+            tasks: [
+              {
+                body: "Use the model API for this task.",
+                title: "Model-backed task"
+              }
+            ]
+          }),
+          status: "succeeded"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(completeResponse.status).toBe(200);
+    const planned = await waitForDecompositionResult(
+      app,
+      requirementBody.requirement.id
+    );
+
+    const updateResponse = await app.request(
+      `/api/decomposition-results/${planned.decompositionResult.id}`,
+      {
+        body: JSON.stringify({
+          summary: "Edited executor assignment",
+          tasks: [
+            {
+              body: "Use the model API for this task.",
+              executorAgentBindingId: null,
+              executorLabel: "Model API",
+              executorType: "model-api",
+              title: "Model-backed task"
+            }
+          ]
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "PATCH"
+      }
+    );
+
+    expect(updateResponse.status).toBe(200);
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      decompositionResult: {
+        items: [
+          {
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            title: "Model-backed task"
+          }
+        ]
+      }
+    });
+
+    const generateResponse = await app.request(
+      `/api/decomposition-results/${planned.decompositionResult.id}/generate-tasks`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(generateResponse.status).toBe(201);
+    await expect(generateResponse.json()).resolves.toMatchObject({
+      tasks: [
+        {
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
+          title: "Model-backed task"
+        }
+      ]
+    });
+  });
+
+  it("marks async Requirement decomposition failed when an agent returns invalid output", async () => {
+    const app = createPlanningApp();
+    const workflowFile = await importRequirementWorkflow(app);
+    const registerResponse = await app.request("/api/bridges/register", {
+      body: JSON.stringify({
+        agents: [
+          {
+            capabilities: ["planning"],
+            command: "forge-agent run",
+            connector: "cli",
+            name: "Local planner"
+          }
+        ],
+        bridgeId: "bridge_local"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string }>;
+    };
+    const agent = registerBody.agents[0]!;
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Return invalid output.",
+        title: "Invalid async decomposition",
+        workflowFileId: workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+
+    await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/decomposition-result`,
+      {
+        body: JSON.stringify({
+          executorAgentBindingId: agent.id,
+          executorType: "agent-binding"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    const nextJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as {
+      job: { id: string };
+    };
+    const completeResponse = await app.request(
+      `/api/bridges/bridge_local/jobs/${nextJobBody.job.id}/complete`,
+      {
+        body: JSON.stringify({
+          output: "not-json",
+          status: "succeeded"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(completeResponse.status).toBe(200);
+    await expect((await app.request("/api/requirements")).json()).resolves.toMatchObject({
+      requirements: [
+        {
+          errorMessage: expect.stringContaining("invalid output"),
+          id: requirementBody.requirement.id,
+          status: "decomposition_failed"
         }
       ]
     });
@@ -1165,7 +2206,69 @@ nodes:
     });
   });
 
-  it("renames a requirement and rejects duplicate names in the same Project", async () => {
+  it("resets a requirement to decomposition-ready state and hides generated work", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+    const workflowFile = await importRequirementWorkflow(app);
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Create work then reset it.",
+        title: "Resettable requirement",
+        workflowFileId: workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+
+    await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
+
+    const resetResponse = await app.request(
+      `/api/requirements/${requirementBody.requirement.id}/reset`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(resetResponse.status).toBe(200);
+    await expect(resetResponse.json()).resolves.toMatchObject({
+      requirement: {
+        errorMessage: null,
+        id: requirementBody.requirement.id,
+        status: "init"
+      }
+    });
+    await expect((await app.request("/api/tasks")).json()).resolves.toEqual({
+      tasks: []
+    });
+    await expect(
+      (await app.request("/api/decomposition-results")).json()
+    ).resolves.toEqual({
+      decompositionResults: []
+    });
+
+    const retriedDecompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+
+    expect(retriedDecompositionBody.decompositionResult.id).not.toBe(
+      decompositionBody.decompositionResult.id
+    );
+  });
+
+  it("updates a requirement and rejects duplicate names in the same Project", async () => {
     const app = createApp();
 
     const projectResponse = await app.request("/api/projects", {
@@ -1213,6 +2316,7 @@ nodes:
       `/api/requirements/${firstBody.requirement.id}`,
       {
         body: JSON.stringify({
+          body: "Updated requirement details.",
           title: "Renamed requirement"
         }),
         headers: {
@@ -1225,6 +2329,7 @@ nodes:
       `/api/requirements/${firstBody.requirement.id}`,
       {
         body: JSON.stringify({
+          body: "Duplicate requirement details.",
           title: "Existing requirement"
         }),
         headers: {
@@ -1238,6 +2343,7 @@ nodes:
     expect(secondResponse.status).toBe(201);
     expect(renameResponse.status).toBe(200);
     await expect(renameResponse.json()).resolves.toMatchObject({
+      body: "Updated requirement details.",
       title: "Renamed requirement"
     });
     expect(duplicateResponse.status).toBe(409);
@@ -1261,7 +2367,6 @@ version: "1.1"
 nodes:
   - id: split
     type: task-drafting
-    executor: skill:requirements
     exit:
       maxRetries: 1
 `
@@ -1390,7 +2495,6 @@ version: "1.1"
 nodes:
   - id: split
     type: task-drafting
-    executor: skill:requirements
     exit:
       maxRetries: 1
 `
@@ -1456,13 +2560,11 @@ version: "1.1"
 nodes:
   - id: plan
     type: planning
-    executor: skill:plan
     exit:
       maxRetries: 1
   - id: code
     type: coding
     dependsOn: plan
-    executor: skill:code
     exit:
       maxRetries: 1
 `
@@ -1506,9 +2608,21 @@ nodes:
         status: "running",
         taskId: createdTask.task.id,
         workflowFileId: taskWorkflowBody.workflowFile.id
+      },
+      task: {
+        id: createdTask.task.id,
+        status: "running"
       }
     });
     expect(agentProxyRequests).toHaveLength(1);
+    await expect((await app.request("/api/tasks")).json()).resolves.toMatchObject({
+      tasks: [
+        expect.objectContaining({
+          id: createdTask.task.id,
+          status: "running"
+        })
+      ]
+    });
 
     const runsResponse = await app.request(
       `/api/tasks/${createdTask.task.id}/workflow-runs`
@@ -1536,10 +2650,124 @@ nodes:
     });
   });
 
-  it("rejects task workflow starts until local execution is configured", async () => {
-    const app = createPlanningApp();
+  it("recovers running Task status from existing Workflow Runs after restart", async () => {
+    const workflowRunRepository = createInMemoryWorkflowRunRepository();
+    const app = createPlanningApp({ workflowRunRepository });
     await configureModel(app);
     const createdTask = await createTask(app);
+
+    await workflowRunRepository.createWorkflowRun({
+      taskId: createdTask.task.id,
+      workflowFileId: "wff_existing"
+    });
+
+    await expect((await app.request("/api/tasks")).json()).resolves.toMatchObject({
+      tasks: [
+        expect.objectContaining({
+          id: createdTask.task.id,
+          status: "running"
+        })
+      ]
+    });
+  });
+
+  it("resumes existing running Model API Workflow Nodes when Tasks are listed", async () => {
+    const workflowRunRepository = createInMemoryWorkflowRunRepository();
+    const workflowFileRepository = createInMemoryWorkflowFileRepository();
+    const executedNodeIds: string[] = [];
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async ({ node }) => {
+        executedNodeIds.push(node.id);
+        return `completed ${node.id}`;
+      },
+      workflowFileRepository,
+      workflowRunRepository
+    } as never);
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const workflowFile = await workflowFileRepository.createWorkflowFileMetadata({
+      definition: JSON.stringify({
+        name: "Existing travel guide",
+        version: "1.1",
+        nodes: [
+          {
+            dependsOn: [],
+            exit: { maxRetries: 1 },
+            id: "clarify-trip",
+            type: "research"
+          },
+          {
+            dependsOn: ["clarify-trip"],
+            exit: { maxRetries: 1 },
+            id: "design-itinerary",
+            type: "writing"
+          }
+        ]
+      }),
+      name: "Existing travel guide",
+      nodeCount: 2,
+      templateType: "custom"
+    });
+    const workflowRun = await workflowRunRepository.createWorkflowRun({
+      taskId: createdTask.task.id,
+      workflowFileId: workflowFile.id
+    });
+    await workflowRunRepository.createNodeRun({
+      dependsOn: [],
+      nodeId: "clarify-trip",
+      sortOrder: 0,
+      status: "running",
+      workflowRunId: workflowRun.id
+    });
+    await workflowRunRepository.createNodeRun({
+      dependsOn: ["clarify-trip"],
+      nodeId: "design-itinerary",
+      sortOrder: 1,
+      status: "queued",
+      workflowRunId: workflowRun.id
+    });
+
+    await app.request("/api/tasks");
+
+    await expect(
+      waitForTaskWorkflowRun(
+        app,
+        createdTask.task.id,
+        (run) => run.workflowRun.status === "succeeded"
+      )
+    ).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "clarify-trip", status: "succeeded" },
+        { nodeId: "design-itinerary", status: "succeeded" }
+      ],
+      workflowRun: {
+        status: "succeeded"
+      }
+    });
+    expect(executedNodeIds).toEqual(["clarify-trip", "design-itinerary"]);
+  });
+
+  it("rejects task workflow starts until local execution is configured", async () => {
+    const bridgeRepository = createInMemoryBridgeRepository();
+    const agent = await bridgeRepository.upsertAgentBinding({
+      command: "offline-agent run",
+      connector: "cli",
+      name: "offline-agent",
+      status: "offline"
+    });
+    const app = createPlanningApp({ bridgeRepository });
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: agent.id,
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
     const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
         source: `
@@ -1549,7 +2777,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: planning
-    executor: skill:plan
     exit:
       maxRetries: 1
 `
@@ -1582,6 +2809,413 @@ nodes:
     });
   });
 
+  it("executes Model API Task Workflow nodes and advances dependencies", async () => {
+    const executedNodeIds: string[] = [];
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async ({ node }) => {
+        executedNodeIds.push(node.id);
+        return `completed ${node.id}`;
+      }
+    } as never);
+    await configureModel(app);
+    const createdTask = await createTask(app);
+
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: "agb_missing",
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Model-only task workflow
+scope: task
+version: "1.1"
+nodes:
+  - id: collect
+    type: research
+    exit:
+      maxRetries: 1
+  - id: analyze
+    type: analysis
+    dependsOn: collect
+    exit:
+      maxRetries: 1
+  - id: brief
+    type: writing
+    dependsOn: analyze
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          nodeExecutorAssignments: ["collect", "analyze", "brief"].map((nodeId) => ({
+            executorType: "model-api",
+            nodeId
+          })),
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    const startBody = await response.json();
+
+    expect(response.status, JSON.stringify(startBody)).toBe(201);
+    expect(startBody).toMatchObject({
+      nodeRuns: [
+        { nodeId: "collect", status: "running" },
+        { nodeId: "analyze", status: "queued" },
+        { nodeId: "brief", status: "queued" }
+      ],
+      workflowRun: {
+        status: "running"
+      }
+    });
+
+    await expect(
+      waitForTaskWorkflowRun(
+        app,
+        createdTask.task.id,
+        (run) => run.workflowRun.status === "succeeded"
+      )
+    ).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "collect", status: "succeeded" },
+        { nodeId: "analyze", status: "succeeded" },
+        { nodeId: "brief", status: "succeeded" }
+      ],
+      workflowRun: {
+        status: "succeeded"
+      }
+    });
+    expect(executedNodeIds).toEqual(["collect", "analyze", "brief"]);
+  });
+
+  it("retries a failed Model API Workflow Node without rerunning succeeded dependencies", async () => {
+    const attemptsByNodeId = new Map<string, number>();
+    const executedNodeIds: string[] = [];
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async ({ node }) => {
+        executedNodeIds.push(node.id);
+        attemptsByNodeId.set(node.id, (attemptsByNodeId.get(node.id) ?? 0) + 1);
+
+        if (node.id === "analyze" && attemptsByNodeId.get(node.id) === 1) {
+          throw new Error("analysis failed");
+        }
+
+        return `completed ${node.id}`;
+      }
+    } as never);
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Retryable model workflow
+scope: task
+version: "1.1"
+nodes:
+  - id: collect
+    type: research
+    exit:
+      maxRetries: 1
+  - id: analyze
+    type: analysis
+    dependsOn: collect
+    exit:
+      maxRetries: 1
+  - id: brief
+    type: writing
+    dependsOn: analyze
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const startResponse = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          nodeExecutorAssignments: ["collect", "analyze", "brief"].map((nodeId) => ({
+            executorType: "model-api",
+            nodeId
+          })),
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    expect(startResponse.status).toBe(201);
+
+    const failedRun = await waitForTaskWorkflowRun(
+      app,
+      createdTask.task.id,
+      (run) => run.workflowRun.status === "failed"
+    );
+    const failedNodeRun = failedRun.nodeRuns.find(
+      (nodeRun) => nodeRun.nodeId === "analyze"
+    );
+    expect(failedNodeRun).toMatchObject({
+      status: "failed"
+    });
+
+    const retryResponse = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs/${failedRun.workflowRun.id}/node-runs/${failedNodeRun!.id}/retry`,
+      {
+        method: "POST"
+      }
+    );
+
+    expect(retryResponse.status).toBe(200);
+    await expect(retryResponse.json()).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "collect", status: "succeeded" },
+        { nodeId: "analyze", status: "running" },
+        { nodeId: "brief", status: "queued" }
+      ],
+      task: {
+        id: createdTask.task.id,
+        status: "running"
+      },
+      workflowRun: {
+        id: failedRun.workflowRun.id,
+        status: "running"
+      }
+    });
+
+    await expect(
+      waitForTaskWorkflowRun(
+        app,
+        createdTask.task.id,
+        (run) => run.workflowRun.status === "succeeded"
+      )
+    ).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "collect", status: "succeeded" },
+        { nodeId: "analyze", status: "succeeded" },
+        { nodeId: "brief", status: "succeeded" }
+      ],
+      workflowRun: {
+        status: "succeeded"
+      }
+    });
+    expect(executedNodeIds).toEqual(["collect", "analyze", "analyze", "brief"]);
+  });
+
+  it("starts legacy stored task workflow files with Model API executors", async () => {
+    const workflowFileRepository = createInMemoryWorkflowFileRepository();
+    const workflowFile =
+      await workflowFileRepository.createWorkflowFileMetadata({
+        definition: JSON.stringify({
+          name: "Legacy research workflow",
+          nodes: [
+            {
+              dependsOn: [],
+              executor: "skill:research",
+              exit: { maxRetries: 1 },
+              id: "collect",
+              outputs: ["research-notes.md"],
+              type: "research-collection"
+            },
+            {
+              dependsOn: ["collect"],
+              executor: "agent:analyst",
+              exit: { maxRetries: 1 },
+              id: "analyze",
+              outputs: ["analysis.md"],
+              type: "research-analysis"
+            }
+          ],
+          scope: "task"
+        }),
+        name: "Legacy research workflow",
+        nodeCount: 2
+      });
+    const app = createPlanningApp({ workflowFileRepository });
+    await configureModel(app);
+    const createdTask = await createTask(app);
+
+    const response = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          nodeExecutorAssignments: ["collect", "analyze"].map((nodeId) => ({
+            executorType: "model-api",
+            nodeId
+          })),
+          workflowFileId: workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "collect", status: "running" },
+        { nodeId: "analyze", status: "queued" }
+      ],
+      workflowRun: {
+        status: "running"
+      }
+    });
+  });
+
+  it("rejects task workflow starts while dependency tasks are unfinished", async () => {
+    const app = createPlanningApp({
+      requirementPlanner: async ({ requirement }) => ({
+        kind: "tasks",
+        items: [
+          {
+            body: "Create the model first.",
+            id: "item_model",
+            sortOrder: 0,
+            title: `Model: ${requirement.title}`
+          },
+          {
+            body: "Build the UI after the model exists.",
+            dependsOn: ["item_model"],
+            id: "item_ui",
+            sortOrder: 1,
+            title: `UI: ${requirement.title}`
+          }
+        ],
+        summary: "Split into ordered tasks."
+      })
+    });
+    await configureModel(app);
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        agentProxyUrl: "http://127.0.0.1:8787"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+    const requirementWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Requirement split
+scope: task
+version: "1.1"
+nodes:
+  - id: split
+    type: task-drafting
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementWorkflowBody = (await requirementWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Turn this into ordered tasks.",
+        title: "Ordered work",
+        workflowFileId: requirementWorkflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+    const generatedBody = await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+version: "1.1"
+nodes:
+  - id: plan
+    type: planning
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/api/tasks/${generatedBody.tasks[1]!.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(generatedBody.tasks[1]).toMatchObject({
+      dependsOn: [generatedBody.tasks[0]!.id]
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/dependency/i)
+    });
+  });
+
   it("queues task workflow work for an online local bridge", async () => {
     const app = createPlanningApp();
     await configureModel(app);
@@ -1605,7 +3239,11 @@ nodes:
     });
 
     expect(registerResponse.status).toBe(200);
-    await expect(registerResponse.json()).resolves.toMatchObject({
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string; connector: string; name: string; status: string }>;
+      bridgeId: string;
+    };
+    expect(registerBody).toMatchObject({
       agents: [
         {
           connector: "cli",
@@ -1614,6 +3252,16 @@ nodes:
         }
       ],
       bridgeId: "bridge_local"
+    });
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: registerBody.agents[0].id,
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
     });
 
     const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
@@ -1625,7 +3273,6 @@ version: "1.1"
 nodes:
   - id: implement
     type: coding
-    executor: agent:coco
     exit:
       maxRetries: 1
 `
@@ -1670,12 +3317,146 @@ nodes:
     });
   });
 
+  it("allows workflow run payloads to override the executor per Workflow Node", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+    const createdTask = await createTask(app);
+
+    const registerResponse = await app.request("/api/bridges/register", {
+      body: JSON.stringify({
+        agents: [
+          {
+            command: "default-agent run",
+            connector: "cli",
+            name: "default-agent"
+          },
+          {
+            command: "review-agent run",
+            connector: "cli",
+            name: "review-agent"
+          }
+        ],
+        bridgeId: "bridge_local"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string; name: string }>;
+    };
+    const defaultAgent = registerBody.agents.find(
+      (agent) => agent.name === "default-agent"
+    )!;
+    const reviewAgent = registerBody.agents.find(
+      (agent) => agent.name === "review-agent"
+    )!;
+
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: defaultAgent.id,
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+version: "1.1"
+nodes:
+  - id: implement
+    type: coding
+    exit:
+      maxRetries: 1
+  - id: review
+    type: review
+    dependsOn: implement
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const runResponse = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          nodeExecutorAssignments: [
+            {
+              executorAgentBindingId: reviewAgent.id,
+              executorType: "agent-binding",
+              nodeId: "review"
+            }
+          ],
+          workflowFileId: taskWorkflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(runResponse.status).toBe(201);
+
+    const firstJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as {
+      job: { agentName: string; id: string; nodeRun: { nodeId: string } };
+    };
+    expect(firstJobBody.job).toMatchObject({
+      agentName: "default-agent",
+      nodeRun: { nodeId: "implement" }
+    });
+
+    const blockedSecondJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as { job: unknown };
+    expect(blockedSecondJobBody.job).toBeNull();
+
+    await app.request(
+      `/api/bridges/bridge_local/jobs/${firstJobBody.job.id}/complete`,
+      {
+        body: JSON.stringify({
+          output: "implemented",
+          status: "succeeded"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    const secondJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as { job: { agentName: string; nodeRun: { nodeId: string } } };
+    expect(secondJobBody.job).toMatchObject({
+      agentName: "review-agent",
+      nodeRun: { nodeId: "review" }
+    });
+  });
+
   it("updates Node Run state when a local bridge completes a job", async () => {
     const app = createPlanningApp();
     await configureModel(app);
     const createdTask = await createTask(app);
 
-    await app.request("/api/bridges/register", {
+    const registerResponse = await app.request("/api/bridges/register", {
       body: JSON.stringify({
         agents: [
           {
@@ -1691,6 +3472,20 @@ nodes:
       },
       method: "POST"
     });
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string }>;
+    };
+
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: registerBody.agents[0]!.id,
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
 
     const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
       body: JSON.stringify({
@@ -1701,7 +3496,6 @@ version: "1.1"
 nodes:
   - id: implement
     type: coding
-    executor: agent:coco
     exit:
       maxRetries: 1
 `
@@ -1770,6 +3564,155 @@ nodes:
     });
   });
 
+  it("advances local bridge Task Workflow nodes only after dependencies complete", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+    const createdTask = await createTask(app);
+
+    const registerResponse = await app.request("/api/bridges/register", {
+      body: JSON.stringify({
+        agents: [
+          {
+            command: "coco run",
+            connector: "cli",
+            name: "coco"
+          }
+        ],
+        bridgeId: "bridge_local"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const registerBody = (await registerResponse.json()) as {
+      agents: Array<{ id: string }>;
+    };
+
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        defaultExecutorAgentBindingId: registerBody.agents[0]!.id,
+        defaultExecutorType: "agent-binding"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+
+    const taskWorkflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Task implementation
+scope: task
+version: "1.1"
+nodes:
+  - id: clarify
+    type: research
+    exit:
+      maxRetries: 1
+  - id: write
+    type: writing
+    dependsOn: clarify
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const taskWorkflowBody = (await taskWorkflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    await app.request(`/api/tasks/${createdTask.task.id}/workflow-runs`, {
+      body: JSON.stringify({
+        workflowFileId: taskWorkflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    const firstJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as {
+      job: {
+        id: string;
+        nodeRun: { nodeId: string };
+      } | null;
+    };
+    expect(firstJobBody.job).toMatchObject({
+      nodeRun: { nodeId: "clarify" }
+    });
+
+    const noSecondJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as { job: unknown };
+    expect(noSecondJobBody.job).toBeNull();
+
+    await app.request(
+      `/api/bridges/bridge_local/jobs/${firstJobBody.job!.id}/complete`,
+      {
+        body: JSON.stringify({
+          output: "clarified",
+          status: "succeeded"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    const secondJobBody = (await (
+      await app.request("/api/bridges/bridge_local/jobs/next")
+    ).json()) as {
+      job: {
+        id: string;
+        nodeRun: { nodeId: string };
+        workflowRun: { id: string };
+      } | null;
+    };
+    expect(secondJobBody.job).toMatchObject({
+      nodeRun: { nodeId: "write" }
+    });
+
+    await app.request(
+      `/api/bridges/bridge_local/jobs/${secondJobBody.job!.id}/complete`,
+      {
+        body: JSON.stringify({
+          output: "written",
+          status: "succeeded"
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    await expect(
+      waitForTaskWorkflowRun(
+        app,
+        createdTask.task.id,
+        (run) => run.workflowRun.status === "succeeded"
+      )
+    ).resolves.toMatchObject({
+      nodeRuns: [
+        { nodeId: "clarify", status: "succeeded" },
+        { nodeId: "write", status: "succeeded" }
+      ],
+      workflowRun: {
+        id: secondJobBody.job!.workflowRun.id,
+        status: "succeeded"
+      }
+    });
+  });
+
   it("rejects importing legacy requirement-scoped workflow files", async () => {
     const app = createPlanningApp();
 
@@ -1782,7 +3725,6 @@ version: "1.1"
 nodes:
   - id: split
     type: task-drafting
-    executor: skill:requirements
     exit:
       maxRetries: 1
 `
@@ -1810,7 +3752,6 @@ version: "1.1"
 nodes:
   - id: plan
     type: planning
-    executor: skill:plan
     exit:
       maxRetries: 1
 `

@@ -10,7 +10,6 @@ const workflow: WorkflowFile = {
   nodes: [
     {
       dependsOn: [],
-      executor: "skill:plan",
       exit: {
         criteria: [],
         maxRetries: 1,
@@ -25,7 +24,6 @@ const workflow: WorkflowFile = {
     },
     {
       dependsOn: ["plan"],
-      executor: "skill:code",
       exit: {
         criteria: [],
         maxRetries: 1,
@@ -40,7 +38,6 @@ const workflow: WorkflowFile = {
     },
     {
       dependsOn: ["code"],
-      executor: "skill:review",
       exit: {
         criteria: [],
         maxRetries: 1,

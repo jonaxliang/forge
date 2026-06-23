@@ -8,10 +8,12 @@ import {
   createInMemoryBridgeRepository,
   createInMemoryDecompositionResultRepository,
   createInMemoryProjectRepository,
+  createInMemorySkillRepository,
   createInMemoryRequirementRepository,
   createInMemoryTaskRepository,
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
+  createSqliteBridgeRepository,
   createSqliteWorkflowFileRepository
 } from "./index";
 
@@ -22,12 +24,16 @@ describe("ProjectRepository", () => {
     const project = await repository.createProject({
       artifactStorageMode: "cloud",
       dbStrategy: "postgres",
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
       name: "Forge"
     });
 
     expect(project).toMatchObject({
       artifactStorageMode: "cloud",
       dbStrategy: "postgres",
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
       name: "Forge"
     });
     expect(project.id).toMatch(/^proj_/);
@@ -43,6 +49,8 @@ describe("ProjectRepository", () => {
 
     expect(project.artifactStorageMode).toBe("local-only");
     expect(project.dbStrategy).toBe("sqlite");
+    expect(project.defaultExecutorAgentBindingId).toBeNull();
+    expect(project.defaultExecutorType).toBe("model-api");
   });
 
   it("rejects duplicate project names", async () => {
@@ -84,6 +92,33 @@ describe("ProjectRepository", () => {
     await expect(
       repository.updateProject({ id: project.id, name: "Forge Board" })
     ).rejects.toThrow(/already exists/i);
+  });
+
+  it("updates a project default executor independently from the project name", async () => {
+    const repository = createInMemoryProjectRepository();
+    const project = await repository.createProject({ name: "Forge" });
+
+    const updated = await repository.updateProject({
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
+      id: project.id
+    });
+
+    expect(updated).toMatchObject({
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
+      id: project.id,
+      name: "Forge"
+    });
+    await expect(
+      repository.updateProject({
+        defaultExecutorType: "model-api",
+        id: project.id
+      })
+    ).resolves.toMatchObject({
+      defaultExecutorAgentBindingId: null,
+      defaultExecutorType: "model-api"
+    });
   });
 });
 
@@ -212,6 +247,133 @@ describe("WorkflowFileRepository", () => {
   });
 });
 
+describe("SkillRepository", () => {
+  it("persists uploaded Skill definitions", async () => {
+    const repository = createInMemorySkillRepository();
+
+    const skill = await repository.createSkill({
+      body: "# Code Review\n\nReview changes for behavioral regressions.",
+      description: "Reviews code changes before handoff.",
+      files: [
+        {
+          content: "# Code Review\n\nReview changes for behavioral regressions.",
+          path: "SKILL.md"
+        }
+      ],
+      name: "Code Review",
+      projectId: "proj_test",
+      ref: "skill:code-review",
+      storagePath: "/tmp/forge-skills/proj_test/code-review"
+    });
+
+    expect(skill).toMatchObject({
+      body: "# Code Review\n\nReview changes for behavioral regressions.",
+      description: "Reviews code changes before handoff.",
+      files: [
+        {
+          content: "# Code Review\n\nReview changes for behavioral regressions.",
+          path: "SKILL.md"
+        }
+      ],
+      name: "Code Review",
+      projectId: "proj_test",
+      ref: "skill:code-review",
+      storagePath: "/tmp/forge-skills/proj_test/code-review"
+    });
+    expect(skill.id).toMatch(/^skl_/);
+    expect(skill.createdAt).toEqual(skill.updatedAt);
+
+    await expect(repository.listSkills("proj_test")).resolves.toEqual([skill]);
+    await expect(repository.listSkills("proj_other")).resolves.toEqual([]);
+  });
+
+  it("lists Project Skills together with system Skills only", async () => {
+    const repository = createInMemorySkillRepository();
+    const systemSkill = await repository.createSkill({
+      body: "# System Skill",
+      name: "system-skill",
+      ref: "skill:system",
+      storagePath: "/tmp/forge-skills/system/system-skill"
+    });
+    const projectSkill = await repository.createSkill({
+      body: "# Project Skill",
+      name: "project-skill",
+      projectId: "proj_test",
+      ref: "skill:project",
+      storagePath: "/tmp/forge-skills/proj_test/project-skill"
+    });
+    await repository.createSkill({
+      body: "# Other Project Skill",
+      name: "other-project-skill",
+      projectId: "proj_other",
+      ref: "skill:other-project",
+      storagePath: "/tmp/forge-skills/proj_other/other-project-skill"
+    });
+
+    await expect(repository.listSkills("proj_test")).resolves.toEqual([
+      systemSkill,
+      projectSkill
+    ]);
+    await expect(repository.listSkills(null)).resolves.toEqual([systemSkill]);
+  });
+
+  it("updates a Skill from its source URL", async () => {
+    const repository = createInMemorySkillRepository();
+    const skill = await repository.createSkill({
+      body: "# Old Review",
+      files: [{ content: "# Old Review", path: "SKILL.md" }],
+      name: "code-review",
+      projectId: "proj_test",
+      ref: "skill:code-review",
+      sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review",
+      storagePath: "/tmp/forge-skills/proj_test/code-review"
+    });
+
+    const updatedSkill = await repository.updateSkill(skill.id, {
+      body: "# New Review",
+      description: "Reviews the latest code changes.",
+      files: [
+        {
+          content: "# New Review",
+          path: "SKILL.md"
+        }
+      ],
+      name: "code-review",
+      ref: "skill:code-review",
+      sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review",
+      storagePath: "/tmp/forge-skills/proj_test/code-review"
+    });
+
+    expect(updatedSkill).toMatchObject({
+      body: "# New Review",
+      description: "Reviews the latest code changes.",
+      sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review"
+    });
+    expect(new Date(updatedSkill.updatedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(skill.updatedAt).getTime()
+    );
+    await expect(repository.listSkills("proj_test")).resolves.toEqual([
+      updatedSkill
+    ]);
+  });
+
+  it("deletes uploaded Skill definitions", async () => {
+    const repository = createInMemorySkillRepository();
+    const skill = await repository.createSkill({
+      body: "# Verification",
+      files: [{ content: "# Verification", path: "SKILL.md" }],
+      name: "Verification",
+      projectId: "proj_test",
+      ref: "skill:verification",
+      storagePath: "/tmp/forge-skills/proj_test/verification"
+    });
+
+    await repository.deleteSkill(skill.id);
+
+    await expect(repository.listSkills("proj_test")).resolves.toEqual([]);
+  });
+});
+
 describe("ExecutionSettingsRepository", () => {
   it("persists model and local execution settings", async () => {
     const repository = createInMemoryExecutionSettingsRepository();
@@ -220,6 +382,8 @@ describe("ExecutionSettingsRepository", () => {
 
     expect(defaults).toMatchObject({
       agentProxyUrl: "",
+      defaultExecutorAgentBindingId: null,
+      defaultExecutorType: "model-api",
       id: "default",
       modelApiKey: "",
       modelBaseUrl: "https://api.openai.com/v1",
@@ -229,6 +393,8 @@ describe("ExecutionSettingsRepository", () => {
 
     const updated = await repository.updateExecutionSettings({
       agentProxyUrl: "http://127.0.0.1:8787",
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
       modelApiKey: "secret-key",
       modelBaseUrl: "https://models.example/v1",
       modelName: "planner-model"
@@ -236,6 +402,8 @@ describe("ExecutionSettingsRepository", () => {
 
     expect(updated).toMatchObject({
       agentProxyUrl: "http://127.0.0.1:8787",
+      defaultExecutorAgentBindingId: "agb_planner",
+      defaultExecutorType: "agent-binding",
       modelApiKey: "secret-key",
       modelBaseUrl: "https://models.example/v1",
       modelName: "planner-model"
@@ -308,6 +476,36 @@ describe("BridgeRepository", () => {
       status: "succeeded"
     });
   });
+
+  it("treats stale local Agent Binding heartbeats as offline", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "forge-db-bridge-"));
+    const sqlitePath = join(directory, "forge.sqlite");
+    const repository = createSqliteBridgeRepository(sqlitePath);
+
+    await repository.upsertAgentBinding({
+      capabilities: ["cli"],
+      command: "coco run",
+      connector: "cli",
+      name: "coco",
+      status: "online"
+    });
+
+    const staleLastSeenAt = new Date(Date.now() - 120_000).toISOString();
+    const sqlite = new Database(sqlitePath);
+    sqlite
+      .prepare("UPDATE agent_bindings SET last_seen_at = ? WHERE name = ?")
+      .run(staleLastSeenAt, "coco");
+    sqlite.close();
+
+    await expect(repository.listAgentBindings()).resolves.toMatchObject([
+      {
+        lastSeenAt: staleLastSeenAt,
+        name: "coco",
+        status: "offline"
+      }
+    ]);
+    await expect(repository.hasOnlineAgentBindings()).resolves.toBe(false);
+  });
 });
 
 describe("WorkflowRunRepository", () => {
@@ -335,11 +533,13 @@ describe("WorkflowRunRepository", () => {
 
     await repository.updateNodeRunStatus({
       id: firstNode.id,
+      output: "planned",
       status: "succeeded"
     });
     await repository.updateNodeRunStatus({
+      errorMessage: "Code failed",
       id: secondNode.id,
-      status: "succeeded"
+      status: "failed"
     });
     const completedRun = await repository.updateWorkflowRunStatus({
       id: workflowRun.id,
@@ -360,11 +560,13 @@ describe("WorkflowRunRepository", () => {
     await expect(repository.listNodeRuns(workflowRun.id)).resolves.toMatchObject([
       {
         nodeId: "plan",
+        output: "planned",
         status: "succeeded"
       },
       {
+        errorMessage: "Code failed",
         nodeId: "code",
-        status: "succeeded"
+        status: "failed"
       }
     ]);
   });
@@ -386,6 +588,9 @@ describe("RequirementRepository", () => {
       items: [
         {
           body: "Write the guide.",
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
           sortOrder: 0,
           title: "Write Ningbo guide"
         }
@@ -452,7 +657,7 @@ describe("RequirementRepository", () => {
     await expect(repository.listRequirements()).resolves.toEqual([]);
   });
 
-  it("updates requirement titles and keeps active project requirement names unique", async () => {
+  it("updates requirement details and keeps active project requirement names unique", async () => {
     const repository = createInMemoryRequirementRepository();
 
     const requirement = await repository.createRequirement({
@@ -475,18 +680,20 @@ describe("RequirementRepository", () => {
     });
 
     const updated = await repository.updateRequirement({
+      body: "Updated requirement body.",
       id: requirement.id,
       title: "Implementation plan"
     });
 
     expect(updated).toMatchObject({
-      body: "Original requirement body.",
+      body: "Updated requirement body.",
       id: requirement.id,
       title: "Implementation plan"
     });
     expect(updated.updatedAt).not.toBe(requirement.updatedAt);
     await expect(
       repository.updateRequirement({
+        body: "Still duplicate.",
         id: requirement.id,
         title: "Review work"
       })
@@ -533,6 +740,9 @@ describe("DecompositionResultRepository", () => {
       items: [
         {
           body: "Implement the minimum requirement workflow.",
+          executorAgentBindingId: "agb_planner",
+          executorLabel: "Planner Agent",
+          executorType: "agent-binding",
           sortOrder: 0,
           title: "Implement workflow"
         }
@@ -546,6 +756,9 @@ describe("DecompositionResultRepository", () => {
       items: [
         {
           body: "Implement the minimum requirement workflow.",
+          executorAgentBindingId: "agb_planner",
+          executorLabel: "Planner Agent",
+          executorType: "agent-binding",
           sortOrder: 0,
           title: "Implement workflow"
         }
@@ -567,6 +780,9 @@ describe("DecompositionResultRepository", () => {
       items: [
         {
           body: "First body",
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
           sortOrder: 0,
           title: "First"
         }
@@ -581,6 +797,9 @@ describe("DecompositionResultRepository", () => {
         items: [
           {
             body: "Second body",
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
             sortOrder: 0,
             title: "Second"
           }
@@ -591,6 +810,9 @@ describe("DecompositionResultRepository", () => {
       items: [
         {
           body: "Second body",
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
           sortOrder: 0,
           title: "Second"
         }
@@ -607,6 +829,9 @@ describe("TaskRepository", () => {
       items: [
         {
           body: "Generated task body",
+          executorAgentBindingId: "agb_executor",
+          executorLabel: "Executor Agent",
+          executorType: "agent-binding",
           sortOrder: 0,
           title: "Generated task"
         }
@@ -617,6 +842,9 @@ describe("TaskRepository", () => {
 
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({
+      executorAgentBindingId: "agb_executor",
+      executorLabel: "Executor Agent",
+      executorType: "agent-binding",
       requirementId: "req_requirement",
       status: "init",
       title: "Generated task"
@@ -626,12 +854,129 @@ describe("TaskRepository", () => {
     await expect(repository.getTask("tsk_missing")).resolves.toBeNull();
   });
 
+  it("maps decomposition item dependencies to generated task dependencies", async () => {
+    const repository = createInMemoryTaskRepository();
+    const tasks = await repository.createTasksFromDecompositionResult({
+      items: [
+        {
+          body: "Create the data model first.",
+          dependsOn: [],
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
+          id: "item_model",
+          sortOrder: 0,
+          title: "Model tasks"
+        },
+        {
+          body: "Build the UI after the model exists.",
+          dependsOn: ["item_model"],
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
+          id: "item_ui",
+          sortOrder: 1,
+          title: "Build UI"
+        }
+      ],
+      projectId: null,
+      requirementId: "req_requirement"
+    });
+
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]).toMatchObject({
+      dependsOn: [],
+      sourceItemId: "item_model"
+    });
+    expect(tasks[1]).toMatchObject({
+      dependsOn: [tasks[0]!.id],
+      sourceItemId: "item_ui"
+    });
+    await expect(repository.listTasks()).resolves.toMatchObject([
+      {
+        dependsOn: [],
+        sourceItemId: "item_model"
+      },
+      {
+        dependsOn: [tasks[0]!.id],
+        sourceItemId: "item_ui"
+      }
+    ]);
+  });
+
+  it("updates task status", async () => {
+    const repository = createInMemoryTaskRepository();
+    const [task] = await repository.createTasksFromDecompositionResult({
+      items: [
+        {
+          body: "Run the task.",
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
+          sortOrder: 0,
+          title: "Runnable task"
+        }
+      ],
+      projectId: null,
+      requirementId: "req_requirement"
+    });
+
+    const updatedTask = await repository.updateTaskStatus({
+      id: task!.id,
+      status: "running"
+    });
+
+    expect(updatedTask).toMatchObject({
+      id: task!.id,
+      status: "running"
+    });
+    await expect(repository.getTask(task!.id)).resolves.toMatchObject({
+      status: "running"
+    });
+  });
+
+  it("rejects cyclic decomposition item dependencies", async () => {
+    const repository = createInMemoryTaskRepository();
+
+    await expect(
+      repository.createTasksFromDecompositionResult({
+        items: [
+          {
+            body: "First task.",
+            dependsOn: ["item_b"],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "item_a",
+            sortOrder: 0,
+            title: "First"
+          },
+          {
+            body: "Second task.",
+            dependsOn: ["item_a"],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "item_b",
+            sortOrder: 1,
+            title: "Second"
+          }
+        ],
+        projectId: null,
+        requirementId: "req_requirement"
+      })
+    ).rejects.toThrow(/cycle/i);
+  });
+
   it("soft deletes tasks associated with a requirement", async () => {
     const repository = createInMemoryTaskRepository();
     const [task] = await repository.createTasksFromDecompositionResult({
       items: [
         {
           body: "Generated task body",
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api",
           sortOrder: 0,
           title: "Generated task"
         }

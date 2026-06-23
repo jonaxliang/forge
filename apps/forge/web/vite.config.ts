@@ -9,6 +9,13 @@ export default defineConfig({
   plugins: [react()],
   root: webRoot,
   build: {
-    outDir: "dist"
+    outDir: "dist",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          return id.includes("node_modules") ? "vendor" : undefined;
+        }
+      }
+    }
   }
 });

@@ -24,6 +24,8 @@ export type Project = {
   name: string;
   artifactStorageMode: ArtifactStorageMode;
   dbStrategy: DbStrategy;
+  defaultExecutorType: ExecutorType;
+  defaultExecutorAgentBindingId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -32,10 +34,14 @@ export type CreateProjectRequest = {
   name: string;
   artifactStorageMode: ArtifactStorageMode;
   dbStrategy: DbStrategy;
+  defaultExecutorType?: ExecutorType;
+  defaultExecutorAgentBindingId?: string | null;
 };
 
 export type UpdateProjectRequest = {
-  name: string;
+  name?: string;
+  defaultExecutorType?: ExecutorType;
+  defaultExecutorAgentBindingId?: string | null;
 };
 
 export type WorkflowVersion = CoreWorkflowVersion;
@@ -60,6 +66,32 @@ export type WorkflowFileMetadata = {
   createdAt: string;
 };
 
+export type Skill = {
+  id: string;
+  projectId: string | null;
+  name: string;
+  ref: string;
+  description: string;
+  body: string;
+  files: Array<{
+    path: string;
+    content: string;
+  }>;
+  sourceUrl: string | null;
+  storagePath: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UploadSkillRequest = {
+  projectId?: string | null;
+  archive?: {
+    name: string;
+    contentBase64: string;
+  };
+  sourceUrl?: string;
+};
+
 export type RequirementStatus =
   | "init"
   | "decomposing"
@@ -74,6 +106,7 @@ export type TaskStatus =
   | "pending_acceptance"
   | "completed"
   | "cancelled";
+export type ExecutorType = "model-api" | "agent-binding";
 
 export type Requirement = {
   id: string;
@@ -89,9 +122,14 @@ export type Requirement = {
 };
 
 export type DecompositionResultItem = {
+  id: string;
   title: string;
   body: string;
   sortOrder: number;
+  dependsOn: string[];
+  executorType: ExecutorType;
+  executorAgentBindingId: string | null;
+  executorLabel: string;
 };
 
 export type DecompositionResult = {
@@ -108,8 +146,13 @@ export type Task = {
   id: string;
   projectId: string | null;
   requirementId: string;
+  sourceItemId: string;
   title: string;
   body: string;
+  dependsOn: string[];
+  executorType: ExecutorType;
+  executorAgentBindingId: string | null;
+  executorLabel: string;
   status: TaskStatus;
   deletedAt: string | null;
   createdAt: string;
@@ -133,6 +176,7 @@ export type WorkflowRun = {
   id: string;
   taskId: string;
   workflowFileId: string;
+  executorAssignments: Record<string, unknown>;
   status: WorkflowRunStatus;
   createdAt: string;
   updatedAt: string;
@@ -145,6 +189,8 @@ export type NodeRun = {
   dependsOn: string[];
   status: NodeStatus;
   sortOrder: number;
+  output: string | null;
+  errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -152,6 +198,14 @@ export type NodeRun = {
 export type WorkflowRunWithNodes = {
   workflowRun: WorkflowRun;
   nodeRuns: NodeRun[];
+};
+
+export type StartedWorkflowRunWithTask = WorkflowRunWithNodes & {
+  task: Task;
+};
+
+export type RetriedWorkflowRunWithTask = WorkflowRunWithNodes & {
+  task: Task;
 };
 
 export type AgentConnectorType = "cli" | "mcp";
@@ -182,6 +236,8 @@ export type ModelProviderKind =
   | "lmstudio";
 
 export type ExecutionSettings = {
+  defaultExecutorType: ExecutorType;
+  defaultExecutorAgentBindingId: string | null;
   modelProvider: ModelProviderKind;
   modelBaseUrl: string;
   modelName: string;
@@ -192,6 +248,8 @@ export type ExecutionSettings = {
 };
 
 export type UpdateExecutionSettingsRequest = Partial<{
+  defaultExecutorType: ExecutorType;
+  defaultExecutorAgentBindingId: string | null;
   modelProvider: ModelProviderKind;
   modelBaseUrl: string;
   modelName: string;
@@ -214,6 +272,7 @@ export type CreateRequirementRequest = {
 };
 
 export type UpdateRequirementRequest = {
+  body: string;
   title: string;
 };
 
@@ -224,9 +283,30 @@ export type UpdateWorkflowFileRequest = {
 export type UpdateDecompositionResultRequest = {
   summary: string;
   tasks: Array<{
+    id?: string;
     title: string;
     body: string;
+    dependsOn?: string[];
+    executorType?: ExecutorType;
+    executorAgentBindingId?: string | null;
+    executorLabel?: string;
   }>;
+};
+
+export type CreateDecompositionResultRequest = {
+  executorAgentBindingId?: string | null;
+  executorType?: ExecutorType;
+};
+
+export type NodeExecutorAssignmentRequest = {
+  executorAgentBindingId?: string | null;
+  executorType: ExecutorType;
+  nodeId: string;
+};
+
+export type StartTaskWorkflowRunRequest = {
+  nodeExecutorAssignments?: NodeExecutorAssignmentRequest[];
+  workflowFileId: string;
 };
 
 export type CreateRequirementResponse = {
@@ -237,6 +317,12 @@ export type CreateRequirementResponse = {
 export type CreateDecompositionResultResponse = {
   decompositionResult: DecompositionResult | null;
   error?: string;
+  estimatedSeconds?: number;
+  executor?: {
+    executorAgentBindingId: string | null;
+    executorLabel: string;
+    executorType: ExecutorType;
+  };
   planning?: {
     reason: "model_not_configured";
     status: "blocked";
@@ -249,6 +335,10 @@ export type GenerateTasksResponse = {
   tasks: Task[];
 };
 
+export type ResetRequirementResponse = {
+  requirement: Requirement;
+};
+
 export type ImportWorkflowFileResponse = {
   workflow: WorkflowFile;
   workflowFile: WorkflowFileMetadata;
@@ -256,6 +346,14 @@ export type ImportWorkflowFileResponse = {
 
 export type UpdateWorkflowFileResponse = {
   workflowFile: WorkflowFileMetadata;
+};
+
+export type UploadSkillResponse = {
+  skill: Skill;
+};
+
+export type UpdateSkillFromSourceResponse = {
+  skill: Skill;
 };
 
 function apiUrl(baseUrl: string, path: string) {
@@ -463,6 +561,84 @@ export async function updateWorkflowFile(
   return body.workflowFile;
 }
 
+export async function listSkills(
+  projectId = "",
+  baseUrl = ""
+): Promise<Skill[]> {
+  const query = projectId.trim()
+    ? `?projectId=${encodeURIComponent(projectId.trim())}`
+    : "";
+  const response = await fetch(apiUrl(baseUrl, `/skills${query}`));
+
+  if (!response.ok) {
+    throw new Error(`Skill list failed with status ${response.status}`);
+  }
+
+  const body = (await response.json()) as { skills: Skill[] };
+
+  return body.skills;
+}
+
+export async function uploadSkill(
+  input: UploadSkillRequest,
+  baseUrl = ""
+): Promise<Skill> {
+  const response = await fetch(apiUrl(baseUrl, "/skills"), {
+    body: JSON.stringify(input),
+    headers: {
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Skill upload failed");
+  }
+
+  const body = (await response.json()) as UploadSkillResponse;
+
+  return body.skill;
+}
+
+export async function updateSkillFromSource(
+  id: string,
+  baseUrl = ""
+): Promise<Skill> {
+  const response = await fetch(
+    apiUrl(baseUrl, `/skills/${id}/update-from-source`),
+    {
+      method: "POST"
+    }
+  );
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Skill source update failed");
+  }
+
+  const body = (await response.json()) as UpdateSkillFromSourceResponse;
+
+  return body.skill;
+}
+
+export async function deleteSkill(
+  id: string,
+  baseUrl = ""
+): Promise<void> {
+  const response = await fetch(apiUrl(baseUrl, `/skills/${id}`), {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Skill deletion failed");
+  }
+}
+
 export async function listRequirements(baseUrl = ""): Promise<Requirement[]> {
   const response = await fetch(apiUrl(baseUrl, "/requirements"));
 
@@ -498,11 +674,27 @@ export async function createRequirement(
 
 export async function createRequirementDecompositionResult(
   id: string,
+  baseUrl?: string
+): Promise<CreateDecompositionResultResponse>;
+export async function createRequirementDecompositionResult(
+  id: string,
+  input?: CreateDecompositionResultRequest,
+  baseUrl?: string
+): Promise<CreateDecompositionResultResponse>;
+export async function createRequirementDecompositionResult(
+  id: string,
+  inputOrBaseUrl: CreateDecompositionResultRequest | string = {},
   baseUrl = ""
 ): Promise<CreateDecompositionResultResponse> {
+  const input =
+    typeof inputOrBaseUrl === "string" ? {} : inputOrBaseUrl;
+  const resolvedBaseUrl =
+    typeof inputOrBaseUrl === "string" ? inputOrBaseUrl : baseUrl;
   const response = await fetch(
-    apiUrl(baseUrl, `/requirements/${id}/decomposition-result`),
+    apiUrl(resolvedBaseUrl, `/requirements/${id}/decomposition-result`),
     {
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
       method: "POST"
     }
   );
@@ -529,6 +721,23 @@ export async function deleteRequirement(
 
     throw new Error(body.error ?? "Requirement deletion failed");
   }
+}
+
+export async function resetRequirement(
+  id: string,
+  baseUrl = ""
+): Promise<ResetRequirementResponse> {
+  const response = await fetch(apiUrl(baseUrl, `/requirements/${id}/reset`), {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    const body = (await response.json()) as { error?: string };
+
+    throw new Error(body.error ?? "Requirement reset failed");
+  }
+
+  return response.json() as Promise<ResetRequirementResponse>;
 }
 
 export async function updateRequirement(
@@ -632,10 +841,11 @@ export async function listTasks(baseUrl = ""): Promise<Task[]> {
 export async function startTaskWorkflowRun(
   taskId: string,
   workflowFileId: string,
+  request: Omit<StartTaskWorkflowRunRequest, "workflowFileId"> = {},
   baseUrl = ""
-): Promise<WorkflowRunWithNodes> {
+): Promise<StartedWorkflowRunWithTask> {
   const response = await fetch(apiUrl(baseUrl, `/tasks/${taskId}/workflow-runs`), {
-    body: JSON.stringify({ workflowFileId }),
+    body: JSON.stringify({ ...request, workflowFileId }),
     headers: {
       "content-type": "application/json"
     },
@@ -648,7 +858,7 @@ export async function startTaskWorkflowRun(
     throw new Error(body.error ?? "Workflow run start failed");
   }
 
-  return response.json() as Promise<WorkflowRunWithNodes>;
+  return response.json() as Promise<StartedWorkflowRunWithTask>;
 }
 
 export async function listTaskWorkflowRuns(
@@ -666,4 +876,31 @@ export async function listTaskWorkflowRuns(
   };
 
   return body.workflowRuns;
+}
+
+export async function retryTaskWorkflowNodeRun(
+  taskId: string,
+  workflowRunId: string,
+  nodeRunId: string,
+  baseUrl = ""
+): Promise<RetriedWorkflowRunWithTask> {
+  const response = await fetch(
+    apiUrl(
+      baseUrl,
+      `/tasks/${taskId}/workflow-runs/${workflowRunId}/node-runs/${nodeRunId}/retry`
+    ),
+    {
+      method: "POST"
+    }
+  );
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+
+    throw new Error(body?.error ?? "Workflow Node retry failed");
+  }
+
+  return response.json() as Promise<RetriedWorkflowRunWithTask>;
 }

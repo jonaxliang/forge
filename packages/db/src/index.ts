@@ -2,448 +2,64 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const artifactStorageModes = ["local-only", "cloud"] as const;
-export const dbStrategies = ["sqlite", "postgres", "mysql"] as const;
-export const requirementStatuses = [
-  "init",
-  "decomposing",
-  "decomposition_failed",
-  "ready_to_generate_tasks",
-  "tasks_generated",
-  "completed"
-] as const;
-export const taskStatuses = [
-  "init",
-  "running",
-  "failed",
-  "pending_acceptance",
-  "completed",
-  "cancelled"
-] as const;
-export const workflowRunStatuses = ["running", "succeeded", "failed"] as const;
-export const agentConnectorTypes = ["cli", "mcp"] as const;
-export const agentBindingStatuses = ["online", "offline", "error"] as const;
-export const bridgeJobStatuses = [
-  "queued",
-  "claimed",
-  "succeeded",
-  "failed"
-] as const;
-export const modelProviderKinds = [
-  "openai-compatible",
-  "openai",
-  "anthropic",
-  "google",
-  "mistral",
-  "groq",
-  "deepseek",
-  "openrouter",
-  "ollama",
-  "lmstudio"
-] as const;
-export const nodeRunStatuses = [
-  "idle",
-  "queued",
-  "running",
-  "waiting",
-  "blocked",
-  "reviewing",
-  "failed",
-  "succeeded",
-  "skipped"
-] as const;
+export * from "./domain.js";
+export * from "./model-providers.js";
+export type * from "./contracts.js";
 
-export type ArtifactStorageMode = (typeof artifactStorageModes)[number];
-export type DbStrategy = (typeof dbStrategies)[number];
-export type RequirementStatus = (typeof requirementStatuses)[number];
-export type TaskStatus = (typeof taskStatuses)[number];
-export type WorkflowRunStatus = (typeof workflowRunStatuses)[number];
-export type NodeRunStatus = (typeof nodeRunStatuses)[number];
-export type AgentConnectorType = (typeof agentConnectorTypes)[number];
-export type AgentBindingStatus = (typeof agentBindingStatuses)[number];
-export type BridgeJobStatus = (typeof bridgeJobStatuses)[number];
-export type ModelProviderKind = (typeof modelProviderKinds)[number];
-
-export const modelProviderDefaults: Record<
+import { executorTypes } from "./domain.js";
+import { modelProviderDefaults } from "./model-providers.js";
+import type {
+  AgentBindingStatus,
+  AgentConnectorType,
+  ArtifactStorageMode,
+  BridgeJobStatus,
+  DbStrategy,
+  ExecutorType,
   ModelProviderKind,
-  {
-    baseUrl: string;
-    modelName: string;
-    requiresApiKey: boolean;
-  }
-> = {
-  anthropic: {
-    baseUrl: "https://api.anthropic.com/v1",
-    modelName: "claude-sonnet-4-20250514",
-    requiresApiKey: true
-  },
-  deepseek: {
-    baseUrl: "https://api.deepseek.com",
-    modelName: "deepseek-chat",
-    requiresApiKey: true
-  },
-  google: {
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    modelName: "gemini-2.5-flash",
-    requiresApiKey: true
-  },
-  groq: {
-    baseUrl: "https://api.groq.com/openai/v1",
-    modelName: "llama-3.3-70b-versatile",
-    requiresApiKey: true
-  },
-  lmstudio: {
-    baseUrl: "http://localhost:1234/v1",
-    modelName: "local-model",
-    requiresApiKey: false
-  },
-  mistral: {
-    baseUrl: "https://api.mistral.ai/v1",
-    modelName: "mistral-large-latest",
-    requiresApiKey: true
-  },
-  ollama: {
-    baseUrl: "http://127.0.0.1:11434/v1",
-    modelName: "llama3.1",
-    requiresApiKey: false
-  },
-  openai: {
-    baseUrl: "https://api.openai.com/v1",
-    modelName: "gpt-4.1-mini",
-    requiresApiKey: true
-  },
-  "openai-compatible": {
-    baseUrl: "https://api.openai.com/v1",
-    modelName: "gpt-4.1-mini",
-    requiresApiKey: true
-  },
-  openrouter: {
-    baseUrl: "https://openrouter.ai/api/v1",
-    modelName: "openai/gpt-4.1-mini",
-    requiresApiKey: true
-  }
-};
-
-export type DatabaseStatus = {
-  configured: boolean;
-  dialect: DbStrategy | "unconfigured";
-};
-
-export type Project = {
-  id: string;
-  name: string;
-  artifactStorageMode: ArtifactStorageMode;
-  dbStrategy: DbStrategy;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateProjectInput = {
-  name: string;
-  artifactStorageMode?: ArtifactStorageMode;
-  dbStrategy?: DbStrategy;
-};
-
-export type UpdateProjectInput = {
-  id: string;
-  name: string;
-};
-
-export type ProjectRepository = {
-  createProject(input: CreateProjectInput): Promise<Project>;
-  listProjects(): Promise<Project[]>;
-  updateProject(input: UpdateProjectInput): Promise<Project>;
-};
-
-export type WorkflowFileMetadata = {
-  id: string;
-  name: string;
-  nodeCount: number;
-  definition: string;
-  templateType: "builtin" | "custom";
-  createdAt: string;
-};
-
-export type CreateWorkflowFileMetadataInput = {
-  name: string;
-  nodeCount: number;
-  definition?: string;
-  templateType?: "builtin" | "custom";
-};
-
-export type UpdateWorkflowFileMetadataInput = {
-  id: string;
-  name: string;
-};
-
-export type WorkflowFileRepository = {
-  createWorkflowFileMetadata(
-    input: CreateWorkflowFileMetadataInput
-  ): Promise<WorkflowFileMetadata>;
-  deleteWorkflowFileMetadata(id: string): Promise<void>;
-  getWorkflowFileMetadata(id: string): Promise<WorkflowFileMetadata | null>;
-  listWorkflowFileMetadata(): Promise<WorkflowFileMetadata[]>;
-  updateWorkflowFileMetadata(
-    input: UpdateWorkflowFileMetadataInput
-  ): Promise<WorkflowFileMetadata>;
-};
-
-export type ExecutionSettings = {
-  id: "default";
-  modelProvider: ModelProviderKind;
-  modelBaseUrl: string;
-  modelName: string;
-  modelApiKey: string;
-  agentProxyUrl: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type UpdateExecutionSettingsInput = Partial<
-  Pick<
-    ExecutionSettings,
-    "agentProxyUrl" | "modelApiKey" | "modelBaseUrl" | "modelName" | "modelProvider"
-  >
->;
-
-export type ExecutionSettingsRepository = {
-  getExecutionSettings(): Promise<ExecutionSettings>;
-  updateExecutionSettings(
-    input: UpdateExecutionSettingsInput
-  ): Promise<ExecutionSettings>;
-};
-
-export type Requirement = {
-  id: string;
-  projectId: string | null;
-  title: string;
-  body: string;
-  workflowFileId: string;
-  status: RequirementStatus;
-  errorMessage: string | null;
-  deletedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateRequirementInput = {
-  projectId?: string | null;
-  title: string;
-  body: string;
-  workflowFileId: string;
-};
-
-export type UpdateRequirementStatusInput = {
-  id: string;
-  status: RequirementStatus;
-  errorMessage?: string | null;
-};
-
-export type UpdateRequirementInput = {
-  id: string;
-  title: string;
-};
-
-export type RequirementRepository = {
-  createRequirement(input: CreateRequirementInput): Promise<Requirement>;
-  deleteRequirement(id: string): Promise<void>;
-  listRequirements(): Promise<Requirement[]>;
-  updateRequirement(input: UpdateRequirementInput): Promise<Requirement>;
-  updateRequirementStatus(
-    input: UpdateRequirementStatusInput
-  ): Promise<Requirement>;
-};
-
-export type DecompositionResultItem = {
-  title: string;
-  body: string;
-  sortOrder: number;
-};
-
-export type DecompositionResult = {
-  id: string;
-  projectId: string | null;
-  requirementId: string;
-  summary: string;
-  items: DecompositionResultItem[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SaveDecompositionResultInput = {
-  projectId?: string | null;
-  requirementId: string;
-  summary: string;
-  items: DecompositionResultItem[];
-};
-
-export type UpdateDecompositionResultInput = {
-  id: string;
-  summary: string;
-  items: DecompositionResultItem[];
-};
-
-export type DecompositionResultRepository = {
-  getDecompositionResult(id: string): Promise<DecompositionResult | null>;
-  getDecompositionResultForRequirement(
-    requirementId: string
-  ): Promise<DecompositionResult | null>;
-  saveDecompositionResult(
-    input: SaveDecompositionResultInput
-  ): Promise<DecompositionResult>;
-  updateDecompositionResult(
-    input: UpdateDecompositionResultInput
-  ): Promise<DecompositionResult>;
-};
-
-export type CreateTasksFromDecompositionResultInput = Pick<
+  NodeRunStatus,
+  RequirementStatus,
+  TaskStatus,
+  WorkflowRunStatus
+} from "./domain.js";
+import type {
+  AgentBinding,
+  BridgeJob,
+  BridgeRepository,
+  DatabaseStatus,
   DecompositionResult,
-  "items" | "projectId" | "requirementId"
->;
+  DecompositionResultItem,
+  DecompositionResultItemInput,
+  DecompositionResultRepository,
+  ExecutionSettings,
+  ExecutionSettingsRepository,
+  NodeRun,
+  Project,
+  ProjectRepository,
+  Requirement,
+  RequirementRepository,
+  Skill,
+  SkillRepository,
+  Task,
+  TaskRepository,
+  WorkflowFileMetadata,
+  WorkflowFileRepository,
+  WorkflowRun,
+  WorkflowRunRepository
+} from "./contracts.js";
 
-export type Task = {
-  id: string;
-  projectId: string | null;
-  requirementId: string;
-  title: string;
-  body: string;
-  status: TaskStatus;
-  deletedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type TaskRepository = {
-  createTasksFromDecompositionResult(
-    input: CreateTasksFromDecompositionResultInput
-  ): Promise<Task[]>;
-  deleteTasksForRequirement(requirementId: string): Promise<void>;
-  getTask(id: string): Promise<Task | null>;
-  listTasks(): Promise<Task[]>;
-};
-
-export type WorkflowRun = {
-  id: string;
-  taskId: string;
-  workflowFileId: string;
-  status: WorkflowRunStatus;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type NodeRun = {
-  id: string;
-  workflowRunId: string;
-  nodeId: string;
-  dependsOn: string[];
-  status: NodeRunStatus;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateWorkflowRunInput = {
-  taskId: string;
-  workflowFileId: string;
-};
-
-export type CreateNodeRunInput = {
-  workflowRunId: string;
-  nodeId: string;
-  dependsOn: string[];
-  status: NodeRunStatus;
-  sortOrder: number;
-};
-
-export type UpdateWorkflowRunStatusInput = {
-  id: string;
-  status: WorkflowRunStatus;
-};
-
-export type UpdateNodeRunStatusInput = {
-  id: string;
-  status: NodeRunStatus;
-};
-
-export type WorkflowRunRepository = {
-  createWorkflowRun(input: CreateWorkflowRunInput): Promise<WorkflowRun>;
-  createNodeRun(input: CreateNodeRunInput): Promise<NodeRun>;
-  listWorkflowRuns(taskId?: string): Promise<WorkflowRun[]>;
-  listNodeRuns(workflowRunId: string): Promise<NodeRun[]>;
-  updateWorkflowRunStatus(
-    input: UpdateWorkflowRunStatusInput
-  ): Promise<WorkflowRun>;
-  updateNodeRunStatus(input: UpdateNodeRunStatusInput): Promise<NodeRun>;
-};
-
-export type AgentBinding = {
-  id: string;
-  name: string;
-  connector: AgentConnectorType;
-  command: string;
-  capabilities: string[];
-  status: AgentBindingStatus;
-  lastSeenAt: string | null;
-  errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type UpsertAgentBindingInput = {
-  name: string;
-  connector: AgentConnectorType;
-  command: string;
-  capabilities?: string[];
-  status?: AgentBindingStatus;
-  errorMessage?: string | null;
-};
-
-export type BridgeJob = {
-  id: string;
-  workflowRunId: string;
-  nodeRunId: string;
-  agentName: string;
-  bridgeId: string | null;
-  status: BridgeJobStatus;
-  payload: unknown;
-  output: string | null;
-  errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateBridgeJobInput = {
-  workflowRunId: string;
-  nodeRunId: string;
-  agentName: string;
-  payload: unknown;
-};
-
-export type CompleteBridgeJobInput = {
-  id: string;
-  status: Extract<BridgeJobStatus, "succeeded" | "failed">;
-  output?: string | null;
-  errorMessage?: string | null;
-};
-
-export type BridgeRepository = {
-  claimNextBridgeJob(bridgeId: string): Promise<BridgeJob | null>;
-  completeBridgeJob(input: CompleteBridgeJobInput): Promise<BridgeJob>;
-  createBridgeJob(input: CreateBridgeJobInput): Promise<BridgeJob>;
-  listAgentBindings(): Promise<AgentBinding[]>;
-  hasOnlineAgentBindings(): Promise<boolean>;
-  upsertAgentBinding(input: UpsertAgentBindingInput): Promise<AgentBinding>;
-};
+const agentBindingOnlineTtlMs = 30_000;
 
 const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   artifactStorageMode: text("artifact_storage_mode").notNull(),
   dbStrategy: text("db_strategy").notNull(),
+  defaultExecutorType: text("default_executor_type").notNull(),
+  defaultExecutorAgentBindingId: text("default_executor_agent_binding_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
 });
@@ -461,8 +77,26 @@ const workflowFiles = sqliteTable("workflow_files", {
 
 type WorkflowFileRow = typeof workflowFiles.$inferSelect;
 
+const skills = sqliteTable("skills", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id"),
+  name: text("name").notNull(),
+  ref: text("ref").notNull(),
+  description: text("description").notNull(),
+  body: text("body").notNull(),
+  files: text("files").notNull(),
+  sourceUrl: text("source_url"),
+  storagePath: text("storage_path").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+type SkillRow = typeof skills.$inferSelect;
+
 const executionSettings = sqliteTable("execution_settings", {
   id: text("id").primaryKey(),
+  defaultExecutorType: text("default_executor_type").notNull(),
+  defaultExecutorAgentBindingId: text("default_executor_agent_binding_id"),
   modelProvider: text("model_provider").notNull(),
   modelBaseUrl: text("model_base_url").notNull(),
   modelName: text("model_name").notNull(),
@@ -505,8 +139,13 @@ const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   projectId: text("project_id"),
   requirementId: text("requirement_id").notNull(),
+  sourceItemId: text("source_item_id").notNull(),
   title: text("title").notNull(),
   body: text("body").notNull(),
+  dependsOn: text("depends_on").notNull(),
+  executorType: text("executor_type").notNull(),
+  executorAgentBindingId: text("executor_agent_binding_id"),
+  executorLabel: text("executor_label").notNull(),
   status: text("status").notNull(),
   deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull(),
@@ -519,6 +158,7 @@ const workflowRuns = sqliteTable("workflow_runs", {
   id: text("id").primaryKey(),
   taskId: text("task_id").notNull(),
   workflowFileId: text("workflow_file_id").notNull(),
+  executorAssignments: text("executor_assignments").notNull(),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
@@ -533,6 +173,8 @@ const nodeRuns = sqliteTable("node_runs", {
   dependsOn: text("depends_on").notNull(),
   status: text("status").notNull(),
   sortOrder: integer("sort_order").notNull(),
+  output: text("output"),
+  errorMessage: text("error_message"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
 });
@@ -585,6 +227,10 @@ export function createInMemoryWorkflowFileRepository(): WorkflowFileRepository {
   return createWorkflowFileRepository(new Database(":memory:"));
 }
 
+export function createInMemorySkillRepository(): SkillRepository {
+  return createSkillRepository(new Database(":memory:"));
+}
+
 export function createInMemoryExecutionSettingsRepository(): ExecutionSettingsRepository {
   return createExecutionSettingsRepository(new Database(":memory:"));
 }
@@ -621,6 +267,13 @@ export function createSqliteWorkflowFileRepository(
 ): WorkflowFileRepository {
   mkdirSync(dirname(filename), { recursive: true });
   return createWorkflowFileRepository(new Database(filename));
+}
+
+export function createSqliteSkillRepository(
+  filename = ".forge/forge.sqlite"
+): SkillRepository {
+  mkdirSync(dirname(filename), { recursive: true });
+  return createSkillRepository(new Database(filename));
 }
 
 export function createSqliteExecutionSettingsRepository(
@@ -688,6 +341,11 @@ function createProjectRepository(sqlite: Database.Database): ProjectRepository {
         name,
         artifactStorageMode: input.artifactStorageMode ?? "local-only",
         dbStrategy: input.dbStrategy ?? "sqlite",
+        defaultExecutorAgentBindingId:
+          input.defaultExecutorType === "agent-binding"
+            ? input.defaultExecutorAgentBindingId?.trim() || null
+            : null,
+        defaultExecutorType: input.defaultExecutorType ?? "model-api",
         createdAt: now,
         updatedAt: now
       };
@@ -704,12 +362,6 @@ function createProjectRepository(sqlite: Database.Database): ProjectRepository {
     },
 
     async updateProject(input) {
-      const name = input.name.trim();
-
-      if (!name) {
-        throw new Error("Project name is required");
-      }
-
       const current = await db
         .select()
         .from(projects)
@@ -720,21 +372,43 @@ function createProjectRepository(sqlite: Database.Database): ProjectRepository {
         throw new Error(`Project not found: ${input.id}`);
       }
 
-      const existing = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.name, name))
-        .get();
+      const name = input.name === undefined ? current.name : input.name.trim();
 
-      if (existing && existing.id !== input.id) {
-        throw new Error(`Project already exists: ${name}`);
+      if (!name) {
+        throw new Error("Project name is required");
+      }
+
+      if (name !== current.name) {
+        const existing = await db
+          .select()
+          .from(projects)
+          .where(eq(projects.name, name))
+          .get();
+
+        if (existing && existing.id !== input.id) {
+          throw new Error(`Project already exists: ${name}`);
+        }
       }
 
       const updatedAt = createNextTimestamp(current.updatedAt);
+      const defaultExecutorType =
+        input.defaultExecutorType ??
+        (current.defaultExecutorType as ExecutorType | null) ??
+        "model-api";
+      const requestedDefaultExecutorAgentBindingId =
+        input.defaultExecutorAgentBindingId === undefined
+          ? current.defaultExecutorAgentBindingId
+          : input.defaultExecutorAgentBindingId?.trim() || null;
+      const defaultExecutorAgentBindingId =
+        defaultExecutorType === "agent-binding"
+          ? requestedDefaultExecutorAgentBindingId
+          : null;
 
       await db
         .update(projects)
         .set({
+          defaultExecutorAgentBindingId,
+          defaultExecutorType,
           name,
           updatedAt
         })
@@ -743,6 +417,8 @@ function createProjectRepository(sqlite: Database.Database): ProjectRepository {
 
       return {
         ...toProject(current),
+        defaultExecutorAgentBindingId,
+        defaultExecutorType,
         name,
         updatedAt
       };
@@ -768,10 +444,24 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       name TEXT NOT NULL,
       artifact_storage_mode TEXT NOT NULL,
       db_strategy TEXT NOT NULL,
+      default_executor_type TEXT NOT NULL DEFAULT 'model-api',
+      default_executor_agent_binding_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(
+    db,
+    "projects",
+    "default_executor_type",
+    "TEXT NOT NULL DEFAULT 'model-api'"
+  );
+  ensureSqliteColumn(
+    db,
+    "projects",
+    "default_executor_agent_binding_id",
+    "TEXT"
+  );
   db.run(`
     CREATE TABLE IF NOT EXISTS workflow_files (
       id TEXT PRIMARY KEY NOT NULL,
@@ -783,8 +473,28 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
     )
   `);
   db.run(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY NOT NULL,
+      project_id TEXT,
+      name TEXT NOT NULL,
+      ref TEXT NOT NULL,
+      description TEXT NOT NULL,
+      body TEXT NOT NULL,
+      files TEXT NOT NULL DEFAULT '[]',
+      source_url TEXT,
+      storage_path TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  ensureSqliteColumn(db, "skills", "files", "TEXT NOT NULL DEFAULT '[]'");
+  ensureSqliteColumn(db, "skills", "source_url", "TEXT");
+  ensureSqliteColumn(db, "skills", "storage_path", "TEXT NOT NULL DEFAULT ''");
+  db.run(`
     CREATE TABLE IF NOT EXISTS execution_settings (
       id TEXT PRIMARY KEY NOT NULL,
+      default_executor_type TEXT NOT NULL DEFAULT 'model-api',
+      default_executor_agent_binding_id TEXT,
       model_provider TEXT NOT NULL,
       model_base_url TEXT NOT NULL,
       model_name TEXT NOT NULL,
@@ -824,8 +534,13 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       id TEXT PRIMARY KEY NOT NULL,
       project_id TEXT,
       requirement_id TEXT NOT NULL,
+      source_item_id TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
       body TEXT NOT NULL,
+      depends_on TEXT NOT NULL DEFAULT '[]',
+      executor_type TEXT NOT NULL DEFAULT 'model-api',
+      executor_agent_binding_id TEXT,
+      executor_label TEXT NOT NULL DEFAULT 'Model API',
       status TEXT NOT NULL,
       deleted_at TEXT,
       created_at TEXT NOT NULL,
@@ -837,11 +552,18 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       id TEXT PRIMARY KEY NOT NULL,
       task_id TEXT NOT NULL,
       workflow_file_id TEXT NOT NULL,
+      executor_assignments TEXT NOT NULL DEFAULT '{}',
       status TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(
+    db,
+    "workflow_runs",
+    "executor_assignments",
+    "TEXT NOT NULL DEFAULT '{}'"
+  );
   db.run(`
     CREATE TABLE IF NOT EXISTS node_runs (
       id TEXT PRIMARY KEY NOT NULL,
@@ -850,10 +572,14 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       depends_on TEXT NOT NULL,
       status TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
+      output TEXT,
+      error_message TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(db, "node_runs", "output", "TEXT");
+  ensureSqliteColumn(db, "node_runs", "error_message", "TEXT");
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_bindings (
       id TEXT PRIMARY KEY NOT NULL,
@@ -883,10 +609,37 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       updated_at TEXT NOT NULL
     )
   `);
+  ensureSqliteColumn(
+    db,
+    "execution_settings",
+    "default_executor_type",
+    "TEXT NOT NULL DEFAULT 'model-api'"
+  );
+  ensureSqliteColumn(
+    db,
+    "execution_settings",
+    "default_executor_agent_binding_id",
+    "TEXT"
+  );
+  ensureSqliteColumn(
+    db,
+    "tasks",
+    "executor_type",
+    "TEXT NOT NULL DEFAULT 'model-api'"
+  );
+  ensureSqliteColumn(db, "tasks", "executor_agent_binding_id", "TEXT");
+  ensureSqliteColumn(
+    db,
+    "tasks",
+    "executor_label",
+    "TEXT NOT NULL DEFAULT 'Model API'"
+  );
   ensureSqliteColumn(db, "workflow_files", "template_type", "TEXT NOT NULL DEFAULT 'custom'");
   dropLegacyWorkflowFileScopeColumn(sqlite);
   ensureSqliteColumn(db, "requirements", "project_id", "TEXT");
   ensureSqliteColumn(db, "tasks", "project_id", "TEXT");
+  ensureSqliteColumn(db, "tasks", "source_item_id", "TEXT NOT NULL DEFAULT ''");
+  ensureSqliteColumn(db, "tasks", "depends_on", "TEXT NOT NULL DEFAULT '[]'");
   ensureSqliteColumn(db, "requirements", "deleted_at", "TEXT");
   ensureSqliteColumn(db, "tasks", "deleted_at", "TEXT");
   db.run("UPDATE requirements SET status = 'open' WHERE status = 'completed'");
@@ -989,6 +742,8 @@ async function ensureExecutionSettings(
   const settings: ExecutionSettings = {
     agentProxyUrl: "",
     createdAt: now,
+    defaultExecutorAgentBindingId: null,
+    defaultExecutorType: "model-api",
     id: "default",
     modelApiKey: "",
     modelBaseUrl: modelProviderDefaults["openai-compatible"].baseUrl,
@@ -1070,23 +825,173 @@ function createWorkflowFileRepository(
         throw new Error(`Workflow file not found: ${input.id}`);
       }
 
-      const definition = updateWorkflowDefinitionName(row.definition, name);
+      const definition = updateWorkflowDefinitionName(
+        input.definition ?? row.definition,
+        name
+      );
+      const nodeCount = input.nodeCount ?? row.nodeCount;
       const updated = {
         ...row,
         definition,
-        name
+        name,
+        nodeCount
       };
 
       await db
         .update(workflowFiles)
         .set({
           definition,
-          name
+          name,
+          nodeCount
         })
         .where(eq(workflowFiles.id, input.id))
         .run();
 
       return toWorkflowFileMetadata(updated);
+    }
+  };
+}
+
+function createSkillRepository(sqlite: Database.Database): SkillRepository {
+  const db = drizzle(sqlite);
+  initializeSqliteSchema(db, sqlite);
+
+  return {
+    async createSkill(input) {
+      const name = input.name.trim();
+      const ref = input.ref.trim();
+      const body = input.body.trim();
+
+      if (!name) {
+        throw new Error("Skill name is required");
+      }
+      if (!ref) {
+        throw new Error("Skill ref is required");
+      }
+      if (!body) {
+        throw new Error("Skill body is required");
+      }
+
+      const now = new Date().toISOString();
+      const skill: Skill = {
+        body,
+        createdAt: now,
+        description: input.description?.trim() ?? "",
+        files: input.files ?? [{ content: body, path: "SKILL.md" }],
+        id: `skl_${randomUUID()}`,
+        name,
+        projectId: input.projectId?.trim() || null,
+        ref,
+        sourceUrl: input.sourceUrl?.trim() || null,
+        storagePath: input.storagePath?.trim() ?? "",
+        updatedAt: now
+      };
+
+      await db.insert(skills).values({
+        ...skill,
+        files: JSON.stringify(skill.files)
+      }).run();
+
+      return skill;
+    },
+
+    async deleteSkill(id) {
+      const row = await db
+        .select()
+        .from(skills)
+        .where(eq(skills.id, id))
+        .get();
+
+      if (!row) {
+        throw new Error(`Skill not found: ${id}`);
+      }
+
+      await db.delete(skills).where(eq(skills.id, id)).run();
+    },
+
+    async listSkills(projectId) {
+      const query = db
+        .select()
+        .from(skills)
+        .orderBy(asc(skills.createdAt));
+      const normalizedProjectId =
+        typeof projectId === "string" ? projectId.trim() : projectId;
+      const rows =
+        normalizedProjectId === undefined
+          ? await query
+          : normalizedProjectId
+            ? await query.where(
+                or(
+                  isNull(skills.projectId),
+                  eq(skills.projectId, normalizedProjectId)
+                )
+              )
+            : await query.where(isNull(skills.projectId));
+
+      return rows.map(toSkill);
+    },
+
+    async updateSkill(id, input) {
+      const current = await db
+        .select()
+        .from(skills)
+        .where(eq(skills.id, id))
+        .get();
+
+      if (!current) {
+        throw new Error(`Skill not found: ${id}`);
+      }
+
+      const body = input.body.trim();
+      const name = input.name?.trim() || current.name;
+      const ref = input.ref?.trim() || current.ref;
+
+      if (!body) {
+        throw new Error("Skill body is required");
+      }
+      if (!name) {
+        throw new Error("Skill name is required");
+      }
+      if (!ref) {
+        throw new Error("Skill ref is required");
+      }
+
+      const updatedSkill: Skill = {
+        body,
+        createdAt: current.createdAt,
+        description: input.description?.trim() ?? current.description,
+        files: input.files ?? parseJsonArray(current.files).map((file) => ({
+          content: typeof file.content === "string" ? file.content : "",
+          path: typeof file.path === "string" ? file.path : "SKILL.md"
+        })),
+        id: current.id,
+        name,
+        projectId: current.projectId,
+        ref,
+        sourceUrl:
+          input.sourceUrl === undefined
+            ? current.sourceUrl
+            : input.sourceUrl?.trim() || null,
+        storagePath: input.storagePath?.trim() ?? current.storagePath,
+        updatedAt: createNextTimestamp(current.updatedAt)
+      };
+
+      await db
+        .update(skills)
+        .set({
+          body: updatedSkill.body,
+          description: updatedSkill.description,
+          files: JSON.stringify(updatedSkill.files),
+          name: updatedSkill.name,
+          ref: updatedSkill.ref,
+          sourceUrl: updatedSkill.sourceUrl,
+          storagePath: updatedSkill.storagePath,
+          updatedAt: updatedSkill.updatedAt
+        })
+        .where(eq(skills.id, id))
+        .run();
+
+      return updatedSkill;
     }
   };
 }
@@ -1106,6 +1011,12 @@ function createExecutionSettingsRepository(
       const current = await ensureExecutionSettings(db);
       const updatedAt = nextTimestamp(current.updatedAt);
       const nextModelApiKey = input.modelApiKey?.trim();
+      const defaultExecutorType =
+        input.defaultExecutorType ?? current.defaultExecutorType;
+      const requestedDefaultExecutorAgentBindingId =
+        input.defaultExecutorAgentBindingId === undefined
+          ? current.defaultExecutorAgentBindingId
+          : input.defaultExecutorAgentBindingId?.trim() || null;
       const modelProvider = input.modelProvider ?? current.modelProvider;
       const providerChanged =
         input.modelProvider !== undefined && input.modelProvider !== current.modelProvider;
@@ -1113,6 +1024,11 @@ function createExecutionSettingsRepository(
       const updated: ExecutionSettings = {
         ...current,
         agentProxyUrl: input.agentProxyUrl?.trim() ?? current.agentProxyUrl,
+        defaultExecutorAgentBindingId:
+          defaultExecutorType === "agent-binding"
+            ? requestedDefaultExecutorAgentBindingId
+            : null,
+        defaultExecutorType,
         modelApiKey: nextModelApiKey ? nextModelApiKey : current.modelApiKey,
         modelBaseUrl:
           input.modelBaseUrl?.trim() ??
@@ -1128,6 +1044,8 @@ function createExecutionSettingsRepository(
         .update(executionSettings)
         .set({
           agentProxyUrl: updated.agentProxyUrl,
+          defaultExecutorAgentBindingId: updated.defaultExecutorAgentBindingId,
+          defaultExecutorType: updated.defaultExecutorType,
           modelApiKey: updated.modelApiKey,
           modelBaseUrl: updated.modelBaseUrl,
           modelName: updated.modelName,
@@ -1216,9 +1134,13 @@ function createRequirementRepository(
 
     async updateRequirement(input) {
       const title = input.title.trim();
+      const body = input.body.trim();
 
       if (!title) {
         throw new Error("Requirement title is required");
+      }
+      if (!body) {
+        throw new Error("Requirement body is required");
       }
 
       const row = await db
@@ -1246,6 +1168,7 @@ function createRequirementRepository(
       await db
         .update(requirements)
         .set({
+          body,
           title,
           updatedAt
         })
@@ -1254,6 +1177,7 @@ function createRequirementRepository(
 
       return toRequirement({
         ...row,
+        body,
         title,
         updatedAt
       });
@@ -1313,12 +1237,86 @@ async function findActiveRequirementByProjectAndTitle(
     .get();
 }
 
-function normalizeDecompositionItems(items: DecompositionResultItem[]) {
-  return items.map((item, index) => ({
-    body: item.body.trim(),
-    sortOrder: item.sortOrder ?? index,
-    title: item.title.trim()
-  }));
+function normalizeDecompositionItems(items: DecompositionResultItemInput[]) {
+  const itemIds = items.map((item, index) => item.id?.trim() || `item_${index + 1}`);
+  const knownIds = new Set(itemIds);
+
+  const normalizedItems = items.map((item, index) => {
+    const id = itemIds[index]!;
+    const dependsOn = (item.dependsOn ?? []).map((dependency) => dependency.trim());
+    const unknownDependency = dependsOn.find((dependency) => !knownIds.has(dependency));
+
+    if (unknownDependency) {
+      throw new Error(
+        `Unknown decomposition item dependency "${unknownDependency}" for item "${id}"`
+      );
+    }
+
+    if (dependsOn.includes(id)) {
+      throw new Error(`Decomposition item "${id}" cannot depend on itself`);
+    }
+
+    return {
+      id,
+      body: item.body.trim(),
+      dependsOn,
+      executorAgentBindingId:
+        item.executorType === "agent-binding"
+          ? item.executorAgentBindingId?.trim() || null
+          : null,
+      executorLabel:
+        item.executorLabel?.trim() ||
+        (item.executorType === "agent-binding" ? "Agent Binding" : "Model API"),
+      executorType: executorTypes.includes(item.executorType)
+        ? item.executorType
+        : "model-api",
+      sortOrder: item.sortOrder ?? index,
+      title: item.title.trim()
+    };
+  });
+
+  assertNoDecompositionItemDependencyCycles(normalizedItems);
+
+  return normalizedItems;
+}
+
+function assertNoDecompositionItemDependencyCycles(
+  items: DecompositionResultItem[]
+) {
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(itemId: string, path: string[]) {
+    if (visiting.has(itemId)) {
+      throw new Error(
+        `Decomposition item dependency cycle detected: ${[...path, itemId].join(" -> ")}`
+      );
+    }
+
+    if (visited.has(itemId)) {
+      return;
+    }
+
+    const item = itemsById.get(itemId);
+
+    if (!item) {
+      return;
+    }
+
+    visiting.add(itemId);
+
+    for (const dependency of item.dependsOn) {
+      visit(dependency, [...path, itemId]);
+    }
+
+    visiting.delete(itemId);
+    visited.add(itemId);
+  }
+
+  for (const item of items) {
+    visit(item.id, []);
+  }
 }
 
 function createDecompositionResultRepository(
@@ -1328,6 +1326,13 @@ function createDecompositionResultRepository(
   initializeSqliteSchema(db, sqlite);
 
   return {
+    async deleteDecompositionResultForRequirement(requirementId) {
+      await db
+        .delete(decompositionResults)
+        .where(eq(decompositionResults.requirementId, requirementId))
+        .run();
+    },
+
     async getDecompositionResult(id) {
       const row = await db
         .select()
@@ -1425,12 +1430,21 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
   return {
     async createTasksFromDecompositionResult(input) {
       const now = new Date().toISOString();
-      const createdTasks = normalizeDecompositionItems(input.items).map((item) => ({
-        id: `tsk_${randomUUID()}`,
+      const normalizedItems = normalizeDecompositionItems(input.items);
+      const taskIdsByItemId = new Map(
+        normalizedItems.map((item) => [item.id, `tsk_${randomUUID()}`])
+      );
+      const createdTasks = normalizedItems.map((item) => ({
+        id: taskIdsByItemId.get(item.id)!,
         projectId: input.projectId,
         requirementId: input.requirementId,
+        sourceItemId: item.id,
         title: item.title,
         body: item.body,
+        dependsOn: item.dependsOn.map((dependency) => taskIdsByItemId.get(dependency)!),
+        executorAgentBindingId: item.executorAgentBindingId,
+        executorLabel: item.executorLabel,
+        executorType: item.executorType,
         status: "init" as const,
         deletedAt: null,
         createdAt: now,
@@ -1438,7 +1452,15 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
       }));
 
       if (createdTasks.length > 0) {
-        await db.insert(tasks).values(createdTasks).run();
+        await db
+          .insert(tasks)
+          .values(
+            createdTasks.map((task) => ({
+              ...task,
+              dependsOn: JSON.stringify(task.dependsOn)
+            }))
+          )
+          .run();
       }
 
       return createdTasks;
@@ -1475,6 +1497,37 @@ function createTaskRepository(sqlite: Database.Database): TaskRepository {
         .orderBy(asc(tasks.createdAt));
 
       return rows.map(toTask);
+    },
+
+    async updateTaskStatus(input) {
+      const updatedAt = new Date().toISOString();
+
+      const row = await db
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.id, input.id), isNull(tasks.deletedAt)))
+        .get();
+
+      if (!row) {
+        throw new Error(`Task not found: ${input.id}`);
+      }
+
+      const updated = {
+        ...row,
+        status: input.status,
+        updatedAt
+      };
+
+      await db
+        .update(tasks)
+        .set({
+          status: input.status,
+          updatedAt
+        })
+        .where(eq(tasks.id, input.id))
+        .run();
+
+      return toTask(updated);
     }
   };
 }
@@ -1492,12 +1545,19 @@ function createWorkflowRunRepository(
         id: `wfr_${randomUUID()}`,
         taskId: input.taskId,
         workflowFileId: input.workflowFileId,
+        executorAssignments: input.executorAssignments ?? {},
         status: "running",
         createdAt: now,
         updatedAt: now
       };
 
-      await db.insert(workflowRuns).values(workflowRun).run();
+      await db
+        .insert(workflowRuns)
+        .values({
+          ...workflowRun,
+          executorAssignments: JSON.stringify(workflowRun.executorAssignments)
+        })
+        .run();
 
       return workflowRun;
     },
@@ -1511,6 +1571,8 @@ function createWorkflowRunRepository(
         dependsOn: input.dependsOn,
         status: input.status,
         sortOrder: input.sortOrder,
+        output: null,
+        errorMessage: null,
         createdAt: now,
         updatedAt: now
       };
@@ -1588,12 +1650,17 @@ function createWorkflowRunRepository(
       const updated = {
         ...row,
         status: input.status,
+        output: input.output === undefined ? row.output : input.output,
+        errorMessage:
+          input.errorMessage === undefined ? row.errorMessage : input.errorMessage,
         updatedAt: nextTimestamp(row.updatedAt)
       };
 
       await db
         .update(nodeRuns)
         .set({
+          errorMessage: updated.errorMessage,
+          output: updated.output,
           status: updated.status,
           updatedAt: updated.updatedAt
         })
@@ -1610,13 +1677,23 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
   initializeSqliteSchema(db, sqlite);
 
   return {
-    async claimNextBridgeJob(bridgeId) {
-      const row = await db
+    async claimNextBridgeJob(bridgeId, eligibleNodeRunIds) {
+      const rows = await db
         .select()
         .from(bridgeJobs)
         .where(eq(bridgeJobs.status, "queued"))
         .orderBy(asc(bridgeJobs.createdAt))
-        .get();
+        .all();
+      const eligibleNodeRunIdSet = eligibleNodeRunIds
+        ? new Set(eligibleNodeRunIds)
+        : null;
+      const row = eligibleNodeRunIdSet
+        ? rows.find(
+            (job) =>
+              job.nodeRunId.startsWith("requirement:") ||
+              eligibleNodeRunIdSet.has(job.nodeRunId)
+          )
+        : rows[0];
 
       if (!row) {
         return null;
@@ -1698,13 +1775,15 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
     },
 
     async hasOnlineAgentBindings() {
-      const row = await db
+      const rows = await db
         .select()
         .from(agentBindings)
         .where(eq(agentBindings.status, "online"))
-        .get();
+        .all();
 
-      return Boolean(row);
+      const now = Date.now();
+
+      return rows.some((row) => isFreshAgentBinding(row.lastSeenAt, now));
     },
 
     async listAgentBindings() {
@@ -1712,8 +1791,9 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
         .select()
         .from(agentBindings)
         .orderBy(asc(agentBindings.name));
+      const now = Date.now();
 
-      return rows.map(toAgentBinding);
+      return rows.map((row) => toAgentBinding(row, now));
     },
 
     async upsertAgentBinding(input) {
@@ -1780,6 +1860,8 @@ function toProject(row: ProjectRow): Project {
     name: row.name,
     artifactStorageMode: row.artifactStorageMode as ArtifactStorageMode,
     dbStrategy: row.dbStrategy as DbStrategy,
+    defaultExecutorAgentBindingId: row.defaultExecutorAgentBindingId,
+    defaultExecutorType: row.defaultExecutorType as ExecutorType,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -1796,10 +1878,53 @@ function toWorkflowFileMetadata(row: WorkflowFileRow): WorkflowFileMetadata {
   };
 }
 
+function toSkill(row: SkillRow): Skill {
+  return {
+    body: row.body,
+    createdAt: row.createdAt,
+    description: row.description,
+    files: parseJsonArray(row.files).map((file) => ({
+      content: typeof file.content === "string" ? file.content : "",
+      path: typeof file.path === "string" ? file.path : "SKILL.md"
+    })),
+    id: row.id,
+    name: row.name,
+    projectId: row.projectId,
+    ref: row.ref,
+    sourceUrl: row.sourceUrl,
+    storagePath: row.storagePath,
+    updatedAt: row.updatedAt
+  };
+}
+
+function parseJsonArray(value: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseStringList(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function toExecutionSettings(row: ExecutionSettingsRow): ExecutionSettings {
   return {
     agentProxyUrl: row.agentProxyUrl,
     createdAt: row.createdAt,
+    defaultExecutorAgentBindingId: row.defaultExecutorAgentBindingId,
+    defaultExecutorType: row.defaultExecutorType as ExecutorType,
     id: "default",
     modelApiKey: row.modelApiKey,
     modelBaseUrl: row.modelBaseUrl,
@@ -1832,7 +1957,7 @@ function toDecompositionResult(
     projectId: row.projectId,
     requirementId: row.requirementId,
     summary: row.summary,
-    items: JSON.parse(row.items) as DecompositionResultItem[],
+    items: normalizeDecompositionItems(JSON.parse(row.items) as DecompositionResultItem[]),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -1845,6 +1970,11 @@ function toTask(row: TaskRow): Task {
     requirementId: row.requirementId,
     title: row.title,
     body: row.body,
+    dependsOn: parseStringList(row.dependsOn),
+    executorAgentBindingId: row.executorAgentBindingId,
+    executorLabel: row.executorLabel,
+    executorType: row.executorType as ExecutorType,
+    sourceItemId: row.sourceItemId || row.id,
     status: row.status as TaskStatus,
     deletedAt: row.deletedAt,
     createdAt: row.createdAt,
@@ -1857,6 +1987,10 @@ function toWorkflowRun(row: WorkflowRunRow): WorkflowRun {
     id: row.id,
     taskId: row.taskId,
     workflowFileId: row.workflowFileId,
+    executorAssignments: JSON.parse(row.executorAssignments || "{}") as Record<
+      string,
+      unknown
+    >,
     status: row.status as WorkflowRunStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -1869,14 +2003,21 @@ function toNodeRun(row: NodeRunRow): NodeRun {
     workflowRunId: row.workflowRunId,
     nodeId: row.nodeId,
     dependsOn: JSON.parse(row.dependsOn) as string[],
+    errorMessage: row.errorMessage,
     status: row.status as NodeRunStatus,
+    output: row.output,
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
 }
 
-function toAgentBinding(row: AgentBindingRow): AgentBinding {
+function toAgentBinding(row: AgentBindingRow, now = Date.now()): AgentBinding {
+  const status =
+    row.status === "online" && !isFreshAgentBinding(row.lastSeenAt, now)
+      ? "offline"
+      : row.status;
+
   return {
     capabilities: JSON.parse(row.capabilities) as string[],
     command: row.command,
@@ -1886,9 +2027,22 @@ function toAgentBinding(row: AgentBindingRow): AgentBinding {
     id: row.id,
     lastSeenAt: row.lastSeenAt,
     name: row.name,
-    status: row.status as AgentBindingStatus,
+    status: status as AgentBindingStatus,
     updatedAt: row.updatedAt
   };
+}
+
+function isFreshAgentBinding(lastSeenAt: string | null, now = Date.now()) {
+  if (!lastSeenAt) {
+    return false;
+  }
+
+  const lastSeenTime = Date.parse(lastSeenAt);
+
+  return (
+    Number.isFinite(lastSeenTime) &&
+    lastSeenTime >= now - agentBindingOnlineTtlMs
+  );
 }
 
 function toBridgeJob(row: BridgeJobRow): BridgeJob {

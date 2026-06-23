@@ -98,7 +98,6 @@ export const workflowNodeSchema = z
     type: z.string().trim().min(1),
     description: z.string().trim().optional(),
     dependsOn: stringListSchema.default([]),
-    executor: z.string().trim().min(1),
     uses: stringListSchema.default([]),
     inputs: stringListSchema.default([]),
     instruction: workflowInstructionSchema.optional(),
@@ -109,7 +108,6 @@ export const workflowNodeSchema = z
   .strict()
   .transform((node) => ({
     dependsOn: node.dependsOn,
-    executor: node.executor,
     exit: node.exit,
     id: node.id,
     inputs: node.inputs,
@@ -186,6 +184,7 @@ function stripLegacyWorkflowScope(value: unknown) {
   }
 
   const { scope: _legacyScope, ...workflow } = value as Record<string, unknown>;
+  void _legacyScope;
 
   return workflow;
 }
