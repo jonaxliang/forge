@@ -1,14 +1,10 @@
-<p align="center">
-  <img src="./docs/assets/forge-product-intro.png" alt="Forge product introduction with the Forge cat mascot and orchestration control plane" width="100%" />
-</p>
-
 <div align="center">
   <img src="./apps/forge/web/public/brand/forge-cat-logo-256.png" alt="Forge logo" width="88" />
   <h1>Forge</h1>
-  <p><strong>The control plane for agentic work loops.</strong></p>
+  <p><strong>AI work orchestration control plane.</strong></p>
   <p>
-    Turn a Requirement into a governed loop of Tasks, Workflow Runs, Agent execution,
-    Artifacts, review, retry, and acceptance.
+    Turn a Requirement into Tasks, Task Workflow Runs, Artifacts, review, retry,
+    and explicit acceptance without losing the work history around each run.
   </p>
   <p>
     <a href="./README.md">English</a> ·
@@ -23,58 +19,77 @@
   </p>
 </div>
 
-![Forge Control Room](./docs/assets/forge-control-room.png)
+![Forge Control Room in English](./docs/assets/forge-control-room-en.png)
 
-Forge is not another chat window, execution surface, or agent runtime. It is the
-missing operating layer around local and remote agents: Projects, Requirements,
-Tasks, `.wf` Workflow Files, Agent Bindings, Node Runs, Artifacts, and explicit
-human acceptance.
+![Forge Artifacts page in English](./docs/assets/forge-artifacts-en.png)
 
-## The Loop
+Forge is not an IDE, a chat window, or an agent runtime. Forge is the control
+plane around agentic work: it keeps Projects, Requirements, Tasks, Workflow
+Files, Workflow Runs, Node Runs, Artifacts, and acceptance decisions connected
+in one operational surface.
 
-Most agent tools optimize a single run. Forge manages the loop around every run.
+The Harness owns execution. Local or remote agents keep their own tools,
+credentials, workspaces, and commands. Forge owns orchestration, state,
+inspection, retry, artifact review, and human acceptance.
+
+## Current Feature Review
+
+The current product path is now coherent end to end:
+
+1. Create or select a Project.
+2. Create a Requirement from the goal description.
+3. Generate and edit the Decomposition Result.
+4. Generate Tasks from the approved decomposition.
+5. Choose a task-scope `.wf` Workflow File and run Task Workflow Runs.
+6. Inspect Node Runs, process output, and produced Artifacts.
+7. Accept or rerun Task output.
+8. Accept the Requirement once linked Tasks are finished.
+9. Review final Requirement Artifacts on the dedicated Artifacts page.
+
+Recent functional cleanup:
+
+- Requirement acceptance now completes all linked finished Tasks, not just the
+  final Task.
+- Completed Requirements show `No next action` instead of an action-like review
+  prompt.
+- Requirement Artifacts moved out of the home workspace and into the Artifacts
+  page.
+- The home progress ribbon now includes an Artifacts count that links to the
+  Artifacts page.
+- Markdown Artifact preview uses an internal scroll area that can reach the
+  bottom of long documents.
+- English and Chinese README screenshots are captured from matching routes,
+  viewport sizes, and project state.
+
+## Core Loop
 
 ```text
 Requirement
   -> Decomposition Result
   -> Tasks
-  -> Workflow Run
+  -> Task Workflow Runs
   -> Node Runs
-  -> Artifact Versions
+  -> Artifacts
   -> review / retry / accept
-  -> next run with history intact
 ```
 
-| Loop layer | Forge keeps track of | Why it matters |
+| Layer | Forge tracks | Why it matters |
 | --- | --- | --- |
-| Intent | Requirement and Decomposition Result | Work starts from a goal, not a lost prompt |
-| Plan | Tasks and dependencies | Generated work can be edited, ordered, and approved |
-| Execution | Workflow Run and Node Runs | Agent work is visible, retryable, and inspectable |
-| Evidence | Artifact Versions and logs | Outputs survive the chat or CLI session that made them |
-| Judgment | Exit Criteria and human review | Completion is an acceptance decision, not just a process exit |
-
-The Harness owns execution: model credentials, tools, files, commands,
-worktrees, and external services. Forge owns the control plane around that
-execution.
-
-## Why Forge Exists
-
-- **Chats do not preserve operations.** Forge keeps status, owners, retries,
-  artifacts, and acceptance decisions attached to a Project.
-- **Single agents do not make a workflow.** Forge turns reusable `.wf` Workflow
-  Files into DAG-based loops with node-local retries and review points.
-- **Local execution still needs coordination.** Forge can assign work to local
-  CLI or MCP agents without taking over their runtime or credentials.
-- **Outputs need a lifecycle.** Forge treats outputs as Artifacts with versions,
-  review state, and a path to acceptance.
+| Intent | Requirement | Work starts from a durable goal, not a lost prompt |
+| Planning | Decomposition Result and Tasks | Generated work can be edited before execution |
+| Execution | Task Workflow Runs and Node Runs | Agent work is visible, retryable, and inspectable |
+| Evidence | Artifacts | Outputs survive the chat or CLI session that created them |
+| Judgment | Review and acceptance | Completion is a user decision, not just a process exit |
 
 ## What You Get
 
-- A browser-based control plane for Requirements, Tasks, Workflow Files, Agent
-  Bindings, Skills, Artifacts, and settings.
-- A Task Board for scanning generated work and starting Task Workflow Runs.
-- A Control Room view for Node Run status, assigned agents, logs, artifacts,
-  retries, waiting states, and blocked work.
+- A browser control plane for Projects, Requirements, Tasks, Workflow Files,
+  Agent Bindings, Skills, Artifacts, and settings.
+- A Task Board for scanning generated work, dependency status, and Task Workflow
+  Runs.
+- A Workflow Run detail view for Node Run status, logs, process output,
+  artifacts, retries, and blocked states.
+- A dedicated Artifacts page for final Requirement outputs, grouped by format.
 - Local-first Bridge execution through `forgecli`.
 - Model execution settings for OpenAI, Anthropic, Google Gemini, Mistral, Groq,
   DeepSeek, OpenRouter, Ollama, LM Studio, and OpenAI-compatible endpoints via
@@ -159,9 +174,9 @@ be reviewed, retried, accepted, and audited.
 
 | Path | Purpose |
 | --- | --- |
-| `apps/forge` | Forge web console and API server |
+| `apps/forge` | Forge Web console and API server |
 | `apps/forgecli` | `forgecli` command-line entry point and Bridge commands |
-| `packages/core` | `.wf` parsing, DAG planning, and workflow domain logic |
+| `packages/core` | `.wf` parsing, DAG planning, artifact output normalization, and workflow domain logic |
 | `packages/db` | SQLite and Drizzle data access layer |
 | `packages/sdk` | TypeScript client SDK |
 | `packages/ui` | Shared React UI components |
@@ -206,29 +221,29 @@ pnpm release
 Focused checks:
 
 ```bash
-pnpm --filter @forge/forge test -- src/app.test.ts
+pnpm --filter @forge/forge test -- src/app.test.ts web/src/App.test.tsx
 pnpm --filter @forge/db test -- src/project-repository.test.ts
+pnpm --filter @forge/sdk test -- src/index.test.ts
 pnpm --filter @forge/forge typecheck
 pnpm --filter @forge/forge build
 ```
 
 ## Project Status
 
-Forge is early-stage software. The current implementation focuses on the core
-path:
+Forge is early-stage software. The implemented path covers Project setup,
+Requirement creation, decomposition, Task generation, task-scope Workflow Runs,
+Node Run inspection, Artifact preview, Task acceptance, Requirement acceptance,
+and final Requirement Artifact review.
 
-1. Create a Project.
-2. Import a requirement-scope `.wf` Workflow File.
-3. Create a Requirement and generate a Decomposition Result with a mock executor
-   or a configured OpenAI-compatible model endpoint.
-4. Edit the Decomposition Result and generate Tasks.
-5. Import a task-scope `.wf` Workflow File.
-6. Start a Task Workflow Run from the Task Board.
-7. Inspect Workflow Run and Node Run status in the Control Room.
+Still evolving:
 
-Full worktree lifecycle policy, Artifact Version storage, SSE event streaming,
-and complete Exit Criteria retry semantics are still being completed. APIs,
-storage shape, and UI details can still change.
+- full worktree lifecycle policy
+- cloud Artifact storage adapters
+- richer external Artifact publishing
+- complete local and remote Agent Connector coverage
+- broader Exit Criteria semantics beyond the current model-reviewed path
+
+APIs, storage shape, and UI details can still change.
 
 ## Security Notes
 
