@@ -234,10 +234,13 @@ describe("Forge SDK API paths", () => {
   it("accepts a Requirement through the API namespace", async () => {
     const fetchMock = stubJsonResponse({
       requirement: { id: "req_test", status: "completed" },
-      task: { id: "tsk_final", status: "completed" }
+      tasks: [
+        { id: "tsk_first", status: "completed" },
+        { id: "tsk_final", status: "completed" }
+      ]
     });
 
-    await acceptRequirement("req_test", "http://localhost:3001");
+    const result = await acceptRequirement("req_test", "http://localhost:3001");
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:3001/api/requirements/req_test/acceptance",
@@ -245,5 +248,9 @@ describe("Forge SDK API paths", () => {
         method: "POST"
       }
     );
+    expect(result.tasks).toEqual([
+      { id: "tsk_first", status: "completed" },
+      { id: "tsk_final", status: "completed" }
+    ]);
   });
 });

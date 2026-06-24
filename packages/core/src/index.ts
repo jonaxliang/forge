@@ -6,6 +6,8 @@ export function createHealthPayload() {
   } as const;
 }
 
+export { normalizeArtifactOutput } from "./artifact-output.js";
+
 export {
   parseWorkflowFile,
   readLegacyWorkflowScope,

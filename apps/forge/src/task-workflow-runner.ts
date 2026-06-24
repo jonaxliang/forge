@@ -20,11 +20,23 @@ export type ExecutorAssignment = {
 export type TaskWorkflowNodeExecutorInput = {
   node: WorkflowNode;
   nodeRun: NodeRun;
+  nodeRuns: NodeRun[];
   settings: ExecutionSettings;
   task: Task;
+  taskDependencyOutputs: TaskDependencyOutput[];
   workflow: WorkflowFile;
   workflowFile: WorkflowFileMetadata;
   workflowRun: WorkflowRun;
+};
+
+export type TaskDependencyOutput = {
+  outputs: Array<{
+    nodeId: string;
+    output: string;
+    workflowRunId: string;
+  }>;
+  taskId: string;
+  taskTitle: string;
 };
 
 export type TaskWorkflowNodeExecutor = (
@@ -208,6 +220,7 @@ export function createTaskWorkflowRunner({
 
     if (executor.executorType === "agent-binding") {
       const agentBindings = await bridges.listAgentBindings();
+      const taskDependencyOutputs = await collectTaskDependencyOutputs(input.task);
       await bridges.createBridgeJob({
         agentName: resolveAgentName(executor, agentBindings),
         nodeRunId: nextNodeRun.id,
@@ -215,7 +228,9 @@ export function createTaskWorkflowRunner({
           executor,
           executorAssignments: input.executorAssignments,
           nodeRun: nextNodeRun,
+          nodeRuns: currentNodeRuns,
           task: input.task,
+          taskDependencyOutputs,
           workflowFile: input.workflowFile,
           workflowRun: input.workflowRun
         },
@@ -228,12 +243,18 @@ export function createTaskWorkflowRunner({
       id: nextNodeRun.id,
       status: "running"
     });
+    const nextNodeRuns = currentNodeRuns.map((nodeRun) =>
+      nodeRun.id === runningNodeRun.id ? runningNodeRun : nodeRun
+    );
+    const taskDependencyOutputs = await collectTaskDependencyOutputs(input.task);
     const runInput = {
       executorAssignments: input.executorAssignments,
       node: nextNode,
       nodeRun: runningNodeRun,
+      nodeRuns: nextNodeRuns,
       settings: input.settings,
       task: input.task,
+      taskDependencyOutputs,
       workflow: input.workflow,
       workflowFile: input.workflowFile,
       workflowRun: input.workflowRun
@@ -243,9 +264,7 @@ export function createTaskWorkflowRunner({
       setTimeout(() => {
         void executeModelNodeAndAdvance(runInput);
       }, 0);
-      return currentNodeRuns.map((nodeRun) =>
-        nodeRun.id === runningNodeRun.id ? runningNodeRun : nodeRun
-      );
+      return nextNodeRuns;
     }
 
     await executeModelNodeAndAdvance(runInput);
@@ -333,6 +352,52 @@ export function createTaskWorkflowRunner({
     }
 
     return runnableNodeRunIds;
+  }
+
+  async function collectTaskDependencyOutputs(
+    task: Task
+  ): Promise<TaskDependencyOutput[]> {
+    const dependencyOutputs: TaskDependencyOutput[] = [];
+
+    for (const dependencyTaskId of task.dependsOn) {
+      const dependencyTask = await tasks.getTask(dependencyTaskId);
+
+      if (!dependencyTask) {
+        continue;
+      }
+
+      const succeededRuns = (await workflowRuns.listWorkflowRuns(dependencyTaskId))
+        .filter((workflowRun) => workflowRun.status === "succeeded")
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      const latestSucceededRun = succeededRuns.at(-1);
+
+      if (!latestSucceededRun) {
+        continue;
+      }
+
+      const outputs = (await workflowRuns.listNodeRuns(latestSucceededRun.id))
+        .filter(
+          (nodeRun) =>
+            nodeRun.status === "succeeded" &&
+            typeof nodeRun.output === "string" &&
+            nodeRun.output.trim().length > 0
+        )
+        .map((nodeRun) => ({
+          nodeId: nodeRun.nodeId,
+          output: nodeRun.output!,
+          workflowRunId: latestSucceededRun.id
+        }));
+
+      if (outputs.length > 0) {
+        dependencyOutputs.push({
+          outputs,
+          taskId: dependencyTask.id,
+          taskTitle: dependencyTask.title
+        });
+      }
+    }
+
+    return dependencyOutputs;
   }
 
   return {

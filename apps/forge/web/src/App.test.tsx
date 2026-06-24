@@ -109,6 +109,8 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain("<span>Workflow templates</span>");
     expect(markup).toContain("<strong>4</strong>");
+    expect(markup).toContain('class="progress-item progress-item-button"');
+    expect(markup).toContain("<span>Artifacts</span>");
     expect(markup).not.toContain("<span>Recipes</span>");
   });
 
@@ -914,6 +916,43 @@ describe("App workbench layout", () => {
     expect(markup).toContain("2 Tasks");
     expect(markup).toContain("Next action");
     expect(markup).toContain("Track generated Tasks");
+  });
+
+  it("shows no next action for a completed Requirement", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialPage="requirements"
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Accepted body.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_done",
+            projectId: "proj_test",
+            status: "completed",
+            title: "Accepted Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_requirement"
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Next action");
+    expect(markup).toContain("No next action");
+    expect(markup).not.toContain("Review accepted output");
   });
 
   it("shows current Requirement status and task generation from the home page", () => {
@@ -2051,6 +2090,7 @@ describe("App workbench layout", () => {
                 {
                   description: "Final acceptance packet",
                   id: "final-packet",
+                  path: "final-packet.md",
                   type: "markdown"
                 }
               ],
@@ -2080,7 +2120,8 @@ describe("App workbench layout", () => {
                   errorMessage: null,
                   id: "ndr_a",
                   nodeId: "produce",
-                  output: "Final packet content",
+                  output:
+                    "好的，收到。\n\n以下是最终版Markdown文档：\n\n```markdown\n# Final packet content\n\n- Ready for review\n```",
                   sortOrder: 0,
                   status: "succeeded",
                   updatedAt: timestamp,
@@ -2104,14 +2145,187 @@ describe("App workbench layout", () => {
 
     expect(markup).toContain(">Accept</button>");
     expect(markup).toContain("Review final Artifact");
-    expect(markup).toContain("artifact:final-packet");
+    expect(markup).toContain("final-packet.md");
+    expect(markup).toContain("artifact-file-button-md");
+    expect(markup).toContain("artifact-file-extension");
     expect(markup).toContain("Final acceptance packet");
-    expect(markup).toContain("Final packet content");
+    expect(markup).toContain("# Final packet content");
+    expect(markup).not.toContain("好的，收到");
+    expect(markup).not.toContain("以下是最终版Markdown文档");
     expect(markup).toContain(">View node Artifacts</button>");
     expect(markup).toContain(">Accept output</button>");
     expect(markup).toContain(">Reject and rerun</button>");
     expect(markup).not.toContain(">Accept Task</button>");
     expect(markup).not.toContain("Task Workflow Template");
+  });
+
+  it("shows Project Artifacts on the Artifacts page, not the home workspace", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const appProps = {
+      initialProjects: [
+        {
+          artifactStorageMode: "local-only" as const,
+          createdAt: timestamp,
+          dbStrategy: "sqlite" as const,
+          id: "proj_a",
+          name: "Project A",
+          updatedAt: timestamp
+        }
+      ],
+      initialRequirements: [
+        {
+          body: "Body",
+          createdAt: timestamp,
+          deletedAt: null,
+          errorMessage: null,
+          id: "req_a",
+          projectId: "proj_a",
+          status: "tasks_generated" as const,
+          title: "Research requirement",
+          updatedAt: timestamp,
+          workflowFileId: "wf_1"
+        }
+      ],
+      initialTasks: [
+        {
+          body: "Final task body",
+          createdAt: timestamp,
+          deletedAt: null,
+          dependsOn: [],
+          executorAgentBindingId: null,
+          executorLabel: "Model API",
+          executorType: "model-api" as const,
+          id: "tsk_final",
+          projectId: "proj_a",
+          requirementId: "req_a",
+          sourceItemId: "item_final",
+          status: "pending_acceptance" as const,
+          title: "Final task",
+          updatedAt: timestamp
+        }
+      ],
+      initialWorkflowFiles: [
+        {
+          createdAt: timestamp,
+          definition: JSON.stringify({
+            name: "Artifact review workflow",
+            version: "1.1",
+            artifacts: [
+              {
+                id: "brief",
+                path: "research-brief.md",
+                type: "markdown"
+              }
+            ],
+            nodes: [
+              {
+                dependsOn: [],
+                exit: { maxRetries: 1 },
+                id: "produce",
+                outputs: [{ artifact: "brief" }],
+                type: "writing"
+              }
+            ]
+          }),
+          id: "wf_2",
+          name: "Artifact review workflow",
+          nodeCount: 1,
+          templateType: "custom" as const
+        }
+      ],
+      initialWorkflowRunsByTaskId: {
+        tsk_final: [
+          {
+            nodeRuns: [
+              {
+                createdAt: timestamp,
+                dependsOn: [],
+                errorMessage: null,
+                id: "ndr_a",
+                nodeId: "produce",
+                output: "# Research brief",
+                sortOrder: 0,
+                status: "succeeded" as const,
+                updatedAt: timestamp,
+                workflowRunId: "wfr_a"
+              }
+            ],
+            workflowRun: {
+              createdAt: timestamp,
+              executorAssignments: {},
+              id: "wfr_a",
+              status: "succeeded" as const,
+              taskId: "tsk_final",
+              updatedAt: timestamp,
+              workflowFileId: "wf_2"
+            }
+          }
+        ]
+      }
+    };
+    const homeMarkup = renderToStaticMarkup(<App {...appProps} />);
+    const artifactPageMarkup = renderToStaticMarkup(
+      <App
+        initialPage="artifacts"
+        {...appProps}
+      />
+    );
+
+    expect(homeMarkup).not.toContain("Project Artifacts");
+    expect(homeMarkup).not.toContain("research-brief.md");
+    expect(artifactPageMarkup).toContain("Project Artifacts");
+    expect(artifactPageMarkup).toContain("research-brief.md");
+    expect(artifactPageMarkup).toContain("Markdown");
+    expect(artifactPageMarkup).toContain("Research requirement");
+  });
+
+  it("renders Markdown Artifact preview content", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialArtifactPreviewDialog={{
+          content:
+            "# Final Report\n\n> Reviewed output\n\n1. **Done**\n2. `Verified`\n\n| Field | Value |\n| --- | --- |\n| Format | Markdown |",
+          format: "markdown",
+          label: "final-report.md",
+          requirementTitle: "Requirement",
+          taskTitle: "Final task"
+        }}
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+      />
+    );
+
+    expect(markup).toContain("Markdown preview");
+    expect(markup).toContain("artifact-preview-backdrop");
+    expect(markup).toContain("<h1>Final Report</h1>");
+    expect(markup).toContain("<blockquote>");
+    expect(markup).toContain("<strong>Done</strong>");
+    expect(markup).toContain("<code>Verified</code>");
+    expect(markup).toContain("<table>");
+  });
+
+  it("keeps Markdown Artifact preview scrollable to the bottom", () => {
+    const styles = readFileSync(
+      new URL("./styles.css", import.meta.url),
+      "utf8"
+    );
+    const modalRule = styles.match(/\.artifact-preview-modal\s*\{[^}]+\}/)?.[0];
+    const bodyRule = styles.match(/\.artifact-preview-body\s*\{[^}]+\}/)?.[0];
+
+    expect(modalRule).toContain("grid-template-rows: auto auto minmax(0, 1fr) auto");
+    expect(modalRule).toContain("overflow: hidden");
+    expect(bodyRule).toContain("min-height: 0");
+    expect(bodyRule).toContain("overflow-y: auto");
+    expect(bodyRule).not.toContain("max-height");
   });
 
   it("shows a run-all action for generated Tasks", () => {
@@ -3181,11 +3395,13 @@ describe("App workbench layout", () => {
   });
 
   it("maps Workflow template management to its own route path", () => {
+    expect(resolvePageFromPath("/artifacts")).toBe("artifacts");
     expect(resolvePageFromPath("/workflow-templates")).toBe("workflow-templates");
     expect(resolvePageFromPath("/settings")).toBe("settings");
     expect(resolvePageFromPath("/main")).toBe("control-room");
     expect(resolvePageFromPath("/control-room")).toBe("control-room");
     expect(resolvePageFromPath("/")).toBe("control-room");
+    expect(getPathForPage("artifacts")).toBe("/artifacts");
     expect(getPathForPage("control-room")).toBe("/main");
     expect(getPathForPage("workflow-templates")).toBe("/workflow-templates");
   });
