@@ -1,9 +1,10 @@
 <div align="center">
-  <img src="./apps/forge/web/public/brand/forge-cat-logo-256.png" alt="Forge logo" width="88" />
+  <img src="./apps/forge/web/public/brand/forge-cat-logo-256.png" alt="Forge 标志" width="88" />
   <h1>Forge</h1>
-  <p><strong>Agentic work loop 的控制平面。</strong></p>
+  <p><strong>AI 工作编排控制平面。</strong></p>
   <p>
-    把一个需求变成可治理的 Loop：任务、任务工作流、Agent 执行、产物、评审、重试与验收。
+    把一个需求变成任务、任务工作流、产物、评审、重试和明确验收，
+    同时保留每次执行周围的工作历史。
   </p>
   <p>
     <a href="./README.md">English</a> ·
@@ -18,13 +19,40 @@
   </p>
 </div>
 
-![Forge 任务看板](./docs/assets/forge-control-room.png)
+![Forge 中文首页](./docs/assets/forge-control-room-zh-CN.png)
 
-Forge 不是另一个聊天窗口、执行界面或 Agent runtime。它是本地与远端 Agent 之外缺失的操作层：项目、需求、任务、`.wf` 工作流模板、Agent 绑定、节点执行、产物和明确的人工验收。
+![Forge 中文产物页](./docs/assets/forge-artifacts-zh-CN.png)
 
-## The Loop
+Forge 不是 IDE、聊天窗口或 Agent runtime。Forge 是围绕 AI 工作的控制平面：
+它把项目、需求、任务、工作流模板、任务工作流、节点执行、产物和验收决策放在同一个可运营界面里。
 
-多数 Agent 工具优化的是一次执行。Forge 管理的是每次执行外面的 Loop。
+本地桥接负责执行。本地或远端 Agent 继续拥有自己的工具、凭证、工作区和命令。
+Forge 负责编排、状态、检查、重试、产物评审和人工验收。
+
+## 当前功能复核
+
+当前产品主链路已经可以端到端闭环：
+
+1. 创建或选择项目。
+2. 从目标描述创建需求。
+3. 生成并编辑拆解结果。
+4. 从确认后的拆解结果生成任务。
+5. 选择任务范围的 `.wf` 工作流模板并启动任务工作流。
+6. 查看节点执行、进程输出和产物。
+7. 验收任务产物，或要求返工重跑。
+8. 关联任务完成后验收需求。
+9. 在独立产物页查看最终需求产物。
+
+近期功能清理：
+
+- 需求验收现在会把所有已执行完成的关联任务一起标记为已完成，不再只关闭最终任务。
+- 已完成需求显示 `无需下一步`，不再显示像待办动作的复核提示。
+- 需求产物已从首页工作区移到独立产物页。
+- 首页进展条增加产物数，并可点击进入产物页。
+- Markdown 产物预览使用内部滚动区域，长文档可以拉到底。
+- 英文和中文 README 截图来自对应路由、视口和项目状态。
+
+## 核心 Loop
 
 ```text
 需求
@@ -32,34 +60,25 @@ Forge 不是另一个聊天窗口、执行界面或 Agent runtime。它是本地
   -> 任务
   -> 任务工作流
   -> 节点执行
-  -> 产物版本
+  -> 产物
   -> 评审 / 重试 / 验收
-  -> 带着历史进入下一次执行
 ```
 
-| Loop 层级 | Forge 追踪什么 | 为什么重要 |
+| 层级 | Forge 追踪什么 | 为什么重要 |
 | --- | --- | --- |
-| 意图 | 需求与拆解结果 | 工作从目标开始，而不是丢在聊天记录里的 prompt |
-| 计划 | 任务与依赖关系 | 生成出来的工作可以编辑、排序和确认 |
+| 意图 | 需求 | 工作从持久目标开始，而不是丢在聊天记录里的 prompt |
+| 计划 | 拆解结果与任务 | 生成出来的工作可以在执行前编辑 |
 | 执行 | 任务工作流与节点执行 | Agent 工作可见、可重试、可检查 |
-| 证据 | 产物版本与执行日志 | 输出不会随着聊天或 CLI 会话结束而消失 |
-| 判断 | 验收条件与人工评审 | 完成是一次验收决策，不只是进程退出码 |
-
-本地桥接负责执行：模型凭证、工具、文件、命令、worktree 和外部服务。Forge 负责这些执行之外的控制平面。
-
-## 为什么需要 Forge
-
-- **聊天不保存可运营上下文。** Forge 把状态、负责人、重试、产物和验收决策绑定到项目。
-- **单个 Agent 不等于工作流。** Forge 把可复用 `.wf` 工作流模板变成 DAG Loop，支持节点级重试和评审点。
-- **本地执行也需要协调。** Forge 可以把工作分配给本地 CLI 或 MCP Agent，但不接管它们的运行时和凭证。
-- **输出需要生命周期。** Forge 把输出作为带版本、评审状态和验收路径的产物管理。
+| 证据 | 产物 | 输出不会随着聊天或 CLI 会话结束而消失 |
+| 判断 | 评审与验收 | 完成是用户决策，不只是进程退出 |
 
 ## 你会得到什么
 
-- 面向浏览器的控制平面：管理需求、任务、工作流模板、Agent 绑定、Skill、产物和设置。
-- 任务看板：扫描生成任务并启动任务工作流。
-- 任务工作流视图：检查节点状态、执行 Agent、执行日志、产物、重试、等待状态和阻塞原因。
-- 通过 `forgecli` 本地桥接执行工作。
+- 面向浏览器的控制平面：管理项目、需求、任务、工作流模板、Agent 绑定、Skill、产物和设置。
+- 任务看板：扫描生成任务、依赖状态和任务工作流。
+- 任务工作流详情：查看节点状态、执行日志、进程输出、产物、重试和阻塞状态。
+- 独立产物页：按格式查看最终需求产物。
+- 通过 `forgecli` 本地优先执行工作。
 - 基于 Vercel AI SDK 的模型配置：OpenAI、Anthropic、Google Gemini、Mistral、Groq、DeepSeek、OpenRouter、Ollama、LM Studio 和 OpenAI-compatible 端点。
 - TypeScript monorepo：`packages/core` 放纯工作流/领域逻辑，`packages/db` 放持久化，`packages/sdk` 提供 typed SDK。
 
@@ -110,15 +129,17 @@ apps/forgecli/dist/index.js bridge start
 apps/forgecli/dist/index.js bridge status
 ```
 
-CLI Connector Agent 会通过 stdin 接收 Bridge job JSON，并通过进程退出码报告成功或失败。MCP Connector Agent 通过 stdio 启动，并通过 `tools/call` 调用。
+CLI Connector Agent 会通过 stdin 接收 Bridge job JSON，并通过进程退出码报告成功或失败。
+MCP Connector Agent 通过 stdio 启动，并通过 `tools/call` 调用。
 
 ## 工作流模板
 
-Forge 使用 `.wf` 文件定义工作流。MVP 工作流模型是 DAG：节点声明输入、输出、依赖、Skill、产物、Agent、验收条件、重试说明和可选人工评审。
+Forge 使用 `.wf` 文件定义工作流。MVP 工作流模型是 DAG：
+节点声明输入、输出、依赖、Skill、产物、Agent、验收条件、重试说明和可选人工评审。
 
 ```text
-工作流模板
-  -> 节点
+工作流模板源文件
+  -> 工作流节点
   -> 依赖
   -> 验收条件
   -> 重试
@@ -126,7 +147,8 @@ Forge 使用 `.wf` 文件定义工作流。MVP 工作流模型是 DAG：节点�
   -> 评审
 ```
 
-Forge 在 MVP 中有意避免任意 runtime loop、`goto` 或运行时生成节点。Loop 是控制平面层面的显式机制：每次执行都可以被评审、重试、验收和审计。
+Forge 在 MVP 中有意避免任意 runtime loop、`goto` 或运行时生成节点。
+Loop 是控制平面层面的显式机制：每次执行都可以被评审、重试、验收和审计。
 
 ## 架构
 
@@ -134,7 +156,7 @@ Forge 在 MVP 中有意避免任意 runtime loop、`goto` 或运行时生成节�
 | --- | --- |
 | `apps/forge` | Forge Web 控制台和 API server |
 | `apps/forgecli` | `forgecli` 命令入口与本地桥接命令 |
-| `packages/core` | `.wf` 解析、DAG 规划和工作流领域逻辑 |
+| `packages/core` | `.wf` 解析、DAG 规划、产物输出规整和工作流领域逻辑 |
 | `packages/db` | SQLite 与 Drizzle 数据访问层 |
 | `packages/sdk` | TypeScript client SDK |
 | `packages/ui` | 共享 React UI 组件 |
@@ -178,25 +200,27 @@ pnpm release
 聚焦检查：
 
 ```bash
-pnpm --filter @forge/forge test -- src/app.test.ts
+pnpm --filter @forge/forge test -- src/app.test.ts web/src/App.test.tsx
 pnpm --filter @forge/db test -- src/project-repository.test.ts
+pnpm --filter @forge/sdk test -- src/index.test.ts
 pnpm --filter @forge/forge typecheck
 pnpm --filter @forge/forge build
 ```
 
 ## 项目状态
 
-Forge 仍处于早期阶段。当前实现聚焦核心路径：
+Forge 仍处于早期阶段。当前实现覆盖项目创建、需求创建、需求拆解、任务生成、
+任务范围工作流运行、节点执行检查、产物预览、任务验收、需求验收和最终需求产物查看。
 
-1. 创建项目。
-2. 导入需求范围的 `.wf` 工作流模板。
-3. 创建需求，并通过 mock executor 或已配置的 OpenAI-compatible 模型端点生成拆解结果。
-4. 编辑拆解结果并生成任务。
-5. 导入任务范围的 `.wf` 工作流模板。
-6. 从任务看板启动任务工作流。
-7. 在任务工作流视图中检查工作流和节点执行状态。
+仍在演进：
 
-完整 worktree 生命周期策略、产物版本存储、SSE 事件流和完整验收条件重试语义仍在完善中。API、存储形态和 UI 细节仍可能变化。
+- 完整 worktree 生命周期策略
+- cloud 产物存储适配器
+- 更丰富的外部产物发布
+- 更完整的本地和远端 Agent Connector 覆盖
+- 超出当前模型评审路径的验收条件语义
+
+API、存储形态和 UI 细节仍可能变化。
 
 ## 安全说明
 
@@ -205,7 +229,8 @@ Forge 仍处于早期阶段。当前实现聚焦核心路径：
 - 不要发布 `.forge` 数据库、`.env*` 文件、私钥、证书、bridge token、模型 API key 或本地 Agent 凭证。
 - 测试 fixture 可能使用 `secret-key` 这类占位字符串，它们不是真实凭证。
 
-如果你认为发现了安全问题，请不要在公开 issue 中发布漏洞细节。等项目公布首选私密报告渠道后，请通过该渠道联系维护者。
+如果你认为发现了安全问题，请不要在公开 issue 中发布漏洞细节。
+等项目公布首选私密报告渠道后，请通过该渠道联系维护者。
 
 ## License
 
