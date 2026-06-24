@@ -359,7 +359,7 @@ export type ResetRequirementResponse = {
 };
 export type AcceptRequirementResponse = {
   requirement: Requirement;
-  task: Task;
+  tasks: Task[];
 };
 
 export type ImportWorkflowFileResponse = {

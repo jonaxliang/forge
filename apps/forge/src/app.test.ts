@@ -7,7 +7,11 @@ import {
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository
 } from "@forge/db";
-import { buildRequirementPlanningRequest, createApp } from "./app";
+import {
+  buildRequirementPlanningRequest,
+  buildTaskWorkflowNodeExecutionRequest,
+  createApp
+} from "./app";
 
 const temporaryDirectories: string[] = [];
 
@@ -1679,6 +1683,116 @@ describe("Requirement API", () => {
     expect(request.system).not.toContain("LLM history");
   });
 
+  it("builds task node execution prompts with upstream artifact outputs", () => {
+    const request = buildTaskWorkflowNodeExecutionRequest({
+      node: {
+        dependsOn: ["draft"],
+        exit: {
+          criteria: [],
+          maxRetries: 1,
+          retryInstruction: "",
+          review: "model"
+        },
+        id: "review",
+        inputs: ["artifact:draft"],
+        outputs: [{ artifact: "final" }],
+        type: "writing-review",
+        uses: []
+      },
+      nodeRuns: [
+        {
+          createdAt: "2026-06-24T00:00:00.000Z",
+          dependsOn: [],
+          errorMessage: null,
+          id: "nr_draft",
+          nodeId: "draft",
+          output: "# LLM Wiki draft\n\nUse LLMs to maintain a personal wiki.",
+          sortOrder: 0,
+          status: "succeeded",
+          updatedAt: "2026-06-24T00:00:00.000Z",
+          workflowRunId: "wfr_test"
+        },
+        {
+          createdAt: "2026-06-24T00:00:00.000Z",
+          dependsOn: ["draft"],
+          errorMessage: null,
+          id: "nr_review",
+          nodeId: "review",
+          output: null,
+          sortOrder: 1,
+          status: "running",
+          updatedAt: "2026-06-24T00:00:00.000Z",
+          workflowRunId: "wfr_test"
+        }
+      ],
+      task: {
+        body: "Review the draft.",
+        title: "审核与修订"
+      },
+      workflow: {
+        agents: [],
+        artifacts: [
+          { id: "draft", path: "draft.md", type: "markdown" },
+          { id: "final", path: "final.md", type: "markdown" }
+        ],
+        inputs: [],
+        name: "调研写作模板",
+        nodes: [
+          {
+            dependsOn: [],
+            exit: {
+              criteria: [],
+              maxRetries: 1,
+              retryInstruction: "",
+              review: "model"
+            },
+            id: "draft",
+            inputs: ["task"],
+            outputs: [{ artifact: "draft" }],
+            type: "draft",
+            uses: []
+          },
+          {
+            dependsOn: ["draft"],
+            exit: {
+              criteria: [],
+              maxRetries: 1,
+              retryInstruction: "",
+              review: "model"
+            },
+            id: "review",
+            inputs: ["artifact:draft"],
+            outputs: [{ artifact: "final" }],
+            type: "writing-review",
+            uses: []
+          }
+        ],
+        skills: [],
+        version: "1.1"
+      },
+      workflowFile: {
+        name: "调研写作模板"
+      }
+    });
+    const prompt = JSON.parse(request.prompt) as {
+      workflowNode: {
+        inputArtifacts: Array<{
+          content: string;
+          input: string;
+          sourceNodeId: string;
+        }>;
+      };
+    };
+
+    expect(prompt.workflowNode.inputArtifacts).toEqual([
+      {
+        content: "# LLM Wiki draft\n\nUse LLMs to maintain a personal wiki.",
+        input: "artifact:draft",
+        sourceNodeId: "draft"
+      }
+    ]);
+  });
+
   it("records clarification questions instead of creating decomposition items", async () => {
     const app = createPlanningApp({
       requirementPlanner: async () => ({
@@ -2577,6 +2691,204 @@ nodes:
     return { task: generatedBody.tasks[0] };
   }
 
+  it("rejects starting Task Workflow Runs with non-task Workflow Files", async () => {
+    const app = createPlanningApp();
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Travel guide
+version: "1.1"
+nodes:
+  - id: itinerary
+    type: itinerary-design
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+
+    const response = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: workflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Task Workflow File must declare scope: task"
+    });
+  });
+
+  it("passes succeeded dependency Task outputs into downstream Task Workflow executors", async () => {
+    const executorInputs: Array<{
+      dependencyOutputs: Array<{
+        outputs: Array<{ output: string }>;
+        taskTitle: string;
+      }>;
+      taskTitle: string;
+    }> = [];
+    const app = createPlanningApp({
+      requirementPlanner: async () => ({
+        kind: "tasks",
+        items: [
+          {
+            body: "Write the draft.",
+            id: "draft",
+            sortOrder: 0,
+            title: "Draft"
+          },
+          {
+            body: "Review the draft.",
+            dependsOn: ["draft"],
+            id: "review",
+            sortOrder: 1,
+            title: "Review"
+          }
+        ],
+        summary: "Draft then review."
+      }),
+      taskWorkflowNodeExecutor: async (input) => {
+        executorInputs.push({
+          dependencyOutputs: input.taskDependencyOutputs.map((dependency) => ({
+            outputs: dependency.outputs.map((output) => ({
+              output: output.output
+            })),
+            taskTitle: dependency.taskTitle
+          })),
+          taskTitle: input.task.title
+        });
+
+        return `Output from ${input.task.title}`;
+      }
+    });
+    await configureModel(app);
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: One node task workflow
+scope: task
+version: "1.1"
+artifacts:
+  - id: result
+    type: markdown
+    path: result.md
+nodes:
+  - id: produce
+    type: produce
+    outputs:
+      - artifact: result
+    exit:
+      maxRetries: 1
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const requirementResponse = await app.request("/api/requirements", {
+      body: JSON.stringify({
+        body: "Produce draft then review.",
+        title: "Draft review flow",
+        workflowFileId: workflowBody.workflowFile.id
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const requirementBody = (await requirementResponse.json()) as {
+      requirement: { id: string };
+    };
+    const decompositionBody = await createDecompositionResultForRequirement(
+      app,
+      requirementBody.requirement.id
+    );
+    const generatedBody = await generateTasksFromDecompositionResult(
+      app,
+      decompositionBody.decompositionResult.id
+    );
+    const [draftTask, reviewTask] = generatedBody.tasks;
+
+    const draftRunResponse = await app.request(
+      `/api/tasks/${draftTask.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: workflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    const draftRun = (await draftRunResponse.json()) as {
+      workflowRun: { id: string };
+    };
+    await waitForTaskWorkflowRun(
+      app,
+      draftTask.id,
+      (run) => run.workflowRun.status === "succeeded"
+    );
+
+    const reviewRunResponse = await app.request(
+      `/api/tasks/${reviewTask.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          workflowFileId: workflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    const reviewRun = (await reviewRunResponse.json()) as {
+      workflowRun: { id: string };
+    };
+    await waitForTaskWorkflowRun(
+      app,
+      reviewTask.id,
+      (run) => run.workflowRun.status === "succeeded"
+    );
+
+    expect(draftRun.workflowRun.id).not.toBe(reviewRun.workflowRun.id);
+    expect(executorInputs).toEqual([
+      {
+        dependencyOutputs: [],
+        taskTitle: "Draft"
+      },
+      {
+        dependencyOutputs: [
+          {
+            outputs: [{ output: "Output from Draft" }],
+            taskTitle: "Draft"
+          }
+        ],
+        taskTitle: "Review"
+      }
+    ]);
+  });
+
   it("opens a Server-Sent Events stream for realtime workspace updates", async () => {
     const app = createPlanningApp();
 
@@ -3025,10 +3337,28 @@ nodes:
         id: requirementBody.requirement.id,
         status: "completed"
       },
-      task: {
-        id: finalTask!.id,
-        status: "completed"
-      }
+      tasks: expect.arrayContaining([
+        expect.objectContaining({
+          id: firstTask!.id,
+          status: "completed"
+        }),
+        expect.objectContaining({
+          id: finalTask!.id,
+          status: "completed"
+        })
+      ])
+    });
+    await expect((await app.request("/api/tasks")).json()).resolves.toMatchObject({
+      tasks: expect.arrayContaining([
+        expect.objectContaining({
+          id: firstTask!.id,
+          status: "completed"
+        }),
+        expect.objectContaining({
+          id: finalTask!.id,
+          status: "completed"
+        })
+      ])
     });
   });
 

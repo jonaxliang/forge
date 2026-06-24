@@ -260,6 +260,7 @@ type Messages = {
   };
   progress: {
     ariaLabel: string;
+    artifacts: string;
     workflowTemplates: string;
     ideas: string;
     tasks: string;
@@ -285,6 +286,17 @@ type Messages = {
     reviewFinalArtifact: string;
     finalArtifactLabel: string;
     finalArtifactUnavailable: string;
+    artifactPreviewTitle: string;
+    artifactPreviewRawLabel: string;
+    projectArtifactsEyebrow: string;
+    projectArtifactsHeading: string;
+    projectArtifactsBody: string;
+    projectArtifactsLabel: string;
+    projectArtifactsFilterAll: string;
+    projectArtifactsFormatLabel: string;
+    projectArtifactsEmpty: string;
+    projectArtifactRequirementLabel: string;
+    projectArtifactTaskLabel: string;
     viewNodeArtifacts: string;
     acceptRequirement: string;
     acceptRequirementOutput: string;
@@ -838,6 +850,7 @@ const messages: Record<Locale, Messages> = {
     },
     progress: {
       ariaLabel: "Forge progress",
+      artifacts: "Artifacts",
       workflowTemplates: "Workflow templates",
       ideas: "Ideas",
       tasks: "Tasks",
@@ -864,6 +877,18 @@ const messages: Record<Locale, Messages> = {
       reviewFinalArtifact: "Review final Artifact",
       finalArtifactLabel: "Final Artifact",
       finalArtifactUnavailable: "No final Artifact output captured.",
+      artifactPreviewTitle: "Markdown preview",
+      artifactPreviewRawLabel: "Raw Markdown",
+      projectArtifactsEyebrow: "Project Artifacts",
+      projectArtifactsHeading: "Requirement outputs",
+      projectArtifactsBody:
+        "Final outputs from completed Requirement workflows, grouped by file format.",
+      projectArtifactsLabel: "Project Artifacts",
+      projectArtifactsFilterAll: "All formats",
+      projectArtifactsFormatLabel: "Format",
+      projectArtifactsEmpty: "No Requirement output Artifacts yet.",
+      projectArtifactRequirementLabel: "Requirement",
+      projectArtifactTaskLabel: "Final Task",
       viewNodeArtifacts: "View node Artifacts",
       acceptRequirement: "Accept",
       acceptRequirementOutput: "Accept output",
@@ -996,7 +1021,7 @@ const messages: Record<Locale, Messages> = {
       nextActionDecomposing: "View decomposition progress",
       nextActionGenerateTasks: "Generate Tasks",
       nextActionTrackTasks: "Track generated Tasks",
-      nextActionDone: "Review accepted output",
+      nextActionDone: "No next action",
       nextActionResolveError: "Resolve decomposition failure",
       nextActionAnswerClarification: "Answer clarification questions",
       decompositionResultTitle: "Decomposition result",
@@ -1413,6 +1438,7 @@ const messages: Record<Locale, Messages> = {
     },
     progress: {
       ariaLabel: "Forge 进展",
+      artifacts: "产物",
       workflowTemplates: "工作流模板",
       ideas: "需求",
       tasks: "任务",
@@ -1439,6 +1465,17 @@ const messages: Record<Locale, Messages> = {
       reviewFinalArtifact: "验收最终产物",
       finalArtifactLabel: "最终产物",
       finalArtifactUnavailable: "尚未捕获最终产物输出。",
+      artifactPreviewTitle: "Markdown 预览",
+      artifactPreviewRawLabel: "原始 Markdown",
+      projectArtifactsEyebrow: "项目产物",
+      projectArtifactsHeading: "需求产物",
+      projectArtifactsBody: "所有需求最终任务产出的文件，可按格式筛选。",
+      projectArtifactsLabel: "项目产物",
+      projectArtifactsFilterAll: "全部格式",
+      projectArtifactsFormatLabel: "格式",
+      projectArtifactsEmpty: "暂无需求产物。",
+      projectArtifactRequirementLabel: "需求",
+      projectArtifactTaskLabel: "最终任务",
       viewNodeArtifacts: "查看子任务产物",
       acceptRequirement: "验收",
       acceptRequirementOutput: "验收通过",
@@ -1564,7 +1601,7 @@ const messages: Record<Locale, Messages> = {
       nextActionDecomposing: "查看拆解进度",
       nextActionGenerateTasks: "生成任务",
       nextActionTrackTasks: "跟进已生成任务",
-      nextActionDone: "复核已验收产物",
+      nextActionDone: "无需下一步",
       nextActionResolveError: "处理拆解失败",
       nextActionAnswerClarification: "填写澄清回答",
       decompositionResultTitle: "拆解结果",

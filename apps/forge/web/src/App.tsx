@@ -44,7 +44,7 @@ import {
   type WorkflowFile,
   type WorkflowNodeOutput,
 } from "@forge/sdk";
-import { readLegacyWorkflowScope } from "@forge/core";
+import { normalizeArtifactOutput, readLegacyWorkflowScope } from "@forge/core";
 import { StatusBadge } from "@forge/ui";
 import {
   AnimatePresence,
@@ -85,6 +85,7 @@ type MascotVariant =
   | "thinking"
   | "guide";
 type ActivePage =
+  | "artifacts"
   | "control-room"
   | "requirements"
   | "settings"
@@ -112,6 +113,13 @@ type WorkflowRunExecutorDialogState = {
 type WorkflowRunDetailDialogState = {
   taskId: string;
   workflowRunId: string;
+} | null;
+type ArtifactPreviewDialogState = {
+  content: string;
+  format: string;
+  label: string;
+  requirementTitle?: string;
+  taskTitle?: string;
 } | null;
 type WorkflowTemplateDialog = "new" | "import" | null;
 type WorkflowImportMode = "source" | "file";
@@ -168,6 +176,7 @@ type AppProps = {
   initialEditingWorkflowId?: string;
   initialPreviewWorkflowId?: string;
   initialRequirementAcceptanceDialog?: string;
+  initialArtifactPreviewDialog?: ArtifactPreviewDialogState;
   initialWorkflowRunDetailDialog?: WorkflowRunDetailDialogState;
   initialWorkflowRunsByTaskId?: Record<string, WorkflowRunWithNodes[]>;
   initialWorkflowFiles?: WorkflowFileMetadata[];
@@ -213,6 +222,7 @@ const taskBoardRequirementStorageKey = "forge:task-board-requirement-id";
 const taskWorkflowSelectionStorageKey = "forge:task-workflow-selections";
 const configuredModelApiKeyMask = "••••••••••••";
 const pagePathByPage: Record<ActivePage, string> = {
+  artifacts: "/artifacts",
   "control-room": "/main",
   requirements: "/requirements",
   settings: "/settings",
@@ -230,6 +240,9 @@ export function resolvePageFromPath(pathname: string): ActivePage {
   }
   if (normalizedPath === pagePathByPage["workflow-templates"]) {
     return "workflow-templates";
+  }
+  if (normalizedPath === pagePathByPage.artifacts) {
+    return "artifacts";
   }
   return "control-room";
 }
@@ -755,10 +768,72 @@ function getWorkflowArtifactDescription(
     : artifact?.path ?? "";
 }
 
+function getWorkflowArtifactFormat(
+  artifact: WorkflowFile["artifacts"][number] | undefined,
+  label: string
+) {
+  if (artifact?.type) {
+    return artifact.type === "markdown" ? "markdown" : artifact.type;
+  }
+
+  const extension = label.split(".").at(-1)?.toLowerCase() ?? "";
+
+  if (extension === "md" || extension === "markdown") {
+    return "markdown";
+  }
+  if (extension === "json" || extension === "patch") {
+    return extension;
+  }
+
+  return "markdown";
+}
+
+function getArtifactFormatDisplayName(format: string) {
+  return format === "markdown" ? "Markdown" : format.toUpperCase();
+}
+
+function getArtifactFileBadge(format: string, label: string) {
+  if (format === "markdown" || label.toLowerCase().endsWith(".md")) {
+    return "MD";
+  }
+
+  return getArtifactFormatDisplayName(format);
+}
+
+function getWorkflowArtifactLabel({
+  artifact,
+  artifactId,
+  fallback,
+  output
+}: {
+  artifact: WorkflowFile["artifacts"][number] | undefined;
+  artifactId: string;
+  fallback: string;
+  output: WorkflowNodeOutput | string | undefined;
+}) {
+  if (artifact?.path) {
+    return artifact.path;
+  }
+
+  if (artifactId) {
+    return artifact?.type === "markdown" ? `${artifactId}.md` : `artifact:${artifactId}`;
+  }
+
+  return output ? getWorkflowOutputLabel(output) : fallback;
+}
+
+type WorkflowRunAcceptanceArtifact = {
+  description: string;
+  format: string;
+  id: string;
+  label: string;
+  output: string;
+};
+
 function getWorkflowRunAcceptanceArtifact(
   run: WorkflowRunWithNodes,
   workflowFile: WorkflowFileMetadata | undefined
-) {
+): WorkflowRunAcceptanceArtifact {
   const workflow = workflowFile
     ? parseWorkflowDefinition(workflowFile.definition)
     : null;
@@ -781,17 +856,386 @@ function getWorkflowRunAcceptanceArtifact(
   const artifact = artifactId
     ? workflow?.artifacts.find((candidate) => candidate.id === artifactId)
     : undefined;
+  const label = getWorkflowArtifactLabel({
+    artifact,
+    artifactId,
+    fallback: finalOutputNodeRun?.nodeId ?? workflowFile?.name ?? "",
+    output: primaryOutput
+  });
+  const content =
+    typeof finalOutputNodeRun?.output === "string"
+      ? normalizeArtifactOutput(finalOutputNodeRun.output)
+      : "";
 
   return {
     description: getWorkflowArtifactDescription(artifact),
-    label: primaryOutput
-      ? getWorkflowOutputLabel(primaryOutput)
-      : finalOutputNodeRun?.nodeId ?? workflowFile?.name ?? "",
-    output:
-      typeof finalOutputNodeRun?.output === "string"
-        ? finalOutputNodeRun.output
-        : ""
+    format: getWorkflowArtifactFormat(artifact, label),
+    id: `${run.workflowRun.id}:${finalOutputNodeRun?.id ?? "artifact"}`,
+    label,
+    output: content
   };
+}
+
+function getProjectArtifacts({
+  projectRequirements,
+  projectTasks,
+  workflowFiles,
+  workflowRunsByTaskId
+}: {
+  projectRequirements: Requirement[];
+  projectTasks: Task[];
+  workflowFiles: WorkflowFileMetadata[];
+  workflowRunsByTaskId: Record<string, WorkflowRunWithNodes[]>;
+}) {
+  const artifacts: Array<
+    WorkflowRunAcceptanceArtifact & {
+      requirementId: string;
+      requirementTitle: string;
+      taskId: string;
+      taskTitle: string;
+      updatedAt: string;
+    }
+  > = [];
+
+  for (const requirement of projectRequirements) {
+    const linkedTasks = projectTasks.filter(
+      (task) => task.requirementId === requirement.id
+    );
+    const finalTask = getRequirementFinalTask(linkedTasks);
+    const finalRun = finalTask
+      ? getOrderedWorkflowRuns(workflowRunsByTaskId[finalTask.id] ?? []).find(
+          (run) => run.workflowRun.status === "succeeded"
+        )
+      : undefined;
+    const workflowFile = finalRun
+      ? workflowFiles.find(
+          (candidate) => candidate.id === finalRun.workflowRun.workflowFileId
+        )
+      : undefined;
+    const artifact = finalRun
+      ? getWorkflowRunAcceptanceArtifact(finalRun, workflowFile)
+      : null;
+
+    if (!finalTask || !finalRun || !artifact || !artifact.output) {
+      continue;
+    }
+
+    artifacts.push({
+      ...artifact,
+      requirementId: requirement.id,
+      requirementTitle: requirement.title,
+      taskId: finalTask.id,
+      taskTitle: finalTask.title,
+      updatedAt: finalRun.workflowRun.updatedAt
+    });
+  }
+
+  return artifacts.sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+  );
+}
+
+function isSafeMarkdownUrl(url: string) {
+  return (
+    url.startsWith("http://") ||
+    url.startsWith("https://") ||
+    url.startsWith("mailto:") ||
+    url.startsWith("/") ||
+    url.startsWith("#")
+  );
+}
+
+function renderMarkdownInline(text: string, keyPrefix: string) {
+  const nodes: ReactNode[] = [];
+  const inlinePattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = inlinePattern.exec(text))) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    const tokenKey = `${keyPrefix}-${match.index}`;
+
+    if (token.startsWith("**") && token.endsWith("**")) {
+      nodes.push(<strong key={tokenKey}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      nodes.push(<code key={tokenKey}>{token.slice(1, -1)}</code>);
+    } else {
+      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
+      const href = linkMatch?.[2]?.trim() ?? "";
+
+      nodes.push(
+        <a
+          href={isSafeMarkdownUrl(href) ? href : "#"}
+          key={tokenKey}
+          rel="noreferrer"
+          target={href.startsWith("http") ? "_blank" : undefined}
+        >
+          {linkMatch?.[1] ?? token}
+        </a>
+      );
+    }
+
+    lastIndex = inlinePattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : text;
+}
+
+function parseMarkdownTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line: string | undefined) {
+  return Boolean(
+    line
+      ?.trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
+  );
+}
+
+function renderMarkdownPreview(content: string) {
+  const lines = content.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const trimmedLine = line.trim();
+
+    if (!trimmedLine) {
+      index += 1;
+      continue;
+    }
+
+    if (trimmedLine.startsWith("```")) {
+      const codeLines: string[] = [];
+      index += 1;
+
+      while (index < lines.length && !lines[index]?.trim().startsWith("```")) {
+        codeLines.push(lines[index] ?? "");
+        index += 1;
+      }
+
+      if (index < lines.length) {
+        index += 1;
+      }
+
+      blocks.push(
+        <pre key={`code-${index}`}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    if (/^-{3,}$/.test(trimmedLine)) {
+      blocks.push(<hr key={`hr-${index}`} />);
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = /^(#{1,4})\s+(.+)$/.exec(trimmedLine);
+
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2];
+
+      if (level === 1) {
+        blocks.push(<h1 key={`h1-${index}`}>{renderMarkdownInline(text, `h1-${index}`)}</h1>);
+      } else if (level === 2) {
+        blocks.push(<h2 key={`h2-${index}`}>{renderMarkdownInline(text, `h2-${index}`)}</h2>);
+      } else if (level === 3) {
+        blocks.push(<h3 key={`h3-${index}`}>{renderMarkdownInline(text, `h3-${index}`)}</h3>);
+      } else {
+        blocks.push(<h4 key={`h4-${index}`}>{renderMarkdownInline(text, `h4-${index}`)}</h4>);
+      }
+      index += 1;
+      continue;
+    }
+
+    if (trimmedLine.startsWith(">")) {
+      const quoteLines: string[] = [];
+
+      while (index < lines.length && lines[index]?.trim().startsWith(">")) {
+        quoteLines.push((lines[index] ?? "").trim().replace(/^>\s?/, ""));
+        index += 1;
+      }
+
+      blocks.push(
+        <blockquote key={`blockquote-${index}`}>
+          {quoteLines.map((quoteLine, quoteIndex) => (
+            <p key={`${quoteIndex}-${quoteLine}`}>
+              {renderMarkdownInline(quoteLine, `blockquote-${index}-${quoteIndex}`)}
+            </p>
+          ))}
+        </blockquote>
+      );
+      continue;
+    }
+
+    if (
+      trimmedLine.includes("|") &&
+      isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      const headers = parseMarkdownTableRow(trimmedLine);
+      const rows: string[][] = [];
+      index += 2;
+
+      while (index < lines.length && (lines[index] ?? "").trim().includes("|")) {
+        rows.push(parseMarkdownTableRow(lines[index] ?? ""));
+        index += 1;
+      }
+
+      blocks.push(
+        <div className="markdown-table-wrap" key={`table-${index}`}>
+          <table>
+            <thead>
+              <tr>
+                {headers.map((header, headerIndex) => (
+                  <th key={`${headerIndex}-${header}`}>
+                    {renderMarkdownInline(header, `table-head-${index}-${headerIndex}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`${rowIndex}-${row.join("|")}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={`${cellIndex}-${cell}`}>
+                      {renderMarkdownInline(cell, `table-cell-${index}-${rowIndex}-${cellIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    if (/^[-*]\s+\[[ x]\]\s+/i.test(trimmedLine)) {
+      const items: Array<{ checked: boolean; text: string }> = [];
+
+      while (
+        index < lines.length &&
+        /^[-*]\s+\[[ x]\]\s+/i.test((lines[index] ?? "").trim())
+      ) {
+        const taskMatch = /^[-*]\s+\[([ x])\]\s+(.+)$/i.exec(
+          (lines[index] ?? "").trim()
+        );
+
+        if (taskMatch) {
+          items.push({
+            checked: taskMatch[1].toLowerCase() === "x",
+            text: taskMatch[2]
+          });
+        }
+        index += 1;
+      }
+
+      blocks.push(
+        <ul className="markdown-task-list" key={`tasks-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${itemIndex}-${item.text}`}>
+              <input checked={item.checked} readOnly type="checkbox" />
+              <span>{renderMarkdownInline(item.text, `task-${index}-${itemIndex}`)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmedLine)) {
+      const items: string[] = [];
+
+      while (index < lines.length && /^[-*]\s+/.test((lines[index] ?? "").trim())) {
+        items.push((lines[index] ?? "").trim().replace(/^[-*]\s+/, ""));
+        index += 1;
+      }
+
+      blocks.push(
+        <ul key={`ul-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${itemIndex}-${item}`}>
+              {renderMarkdownInline(item, `ul-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^\d+[.)]\s+/.test(trimmedLine)) {
+      const items: string[] = [];
+
+      while (
+        index < lines.length &&
+        /^\d+[.)]\s+/.test((lines[index] ?? "").trim())
+      ) {
+        items.push((lines[index] ?? "").trim().replace(/^\d+[.)]\s+/, ""));
+        index += 1;
+      }
+
+      blocks.push(
+        <ol key={`ol-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${itemIndex}-${item}`}>
+              {renderMarkdownInline(item, `ol-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    const paragraphLines = [trimmedLine];
+    index += 1;
+
+    while (
+      index < lines.length &&
+      lines[index]?.trim() &&
+      !lines[index]?.trim().startsWith("```") &&
+      !/^(#{1,4})\s+/.test((lines[index] ?? "").trim()) &&
+      !/^[-*]\s+/.test((lines[index] ?? "").trim()) &&
+      !/^\d+[.)]\s+/.test((lines[index] ?? "").trim()) &&
+      !lines[index]?.trim().startsWith(">") &&
+      !(
+        (lines[index] ?? "").trim().includes("|") &&
+        isMarkdownTableSeparator(lines[index + 1])
+      ) &&
+      !/^-{3,}$/.test((lines[index] ?? "").trim())
+    ) {
+      paragraphLines.push((lines[index] ?? "").trim());
+      index += 1;
+    }
+
+    blocks.push(
+      <p key={`p-${index}`}>
+        {renderMarkdownInline(paragraphLines.join(" "), `p-${index}`)}
+      </p>
+    );
+  }
+
+  return blocks;
 }
 
 function getWorkflowRunNoProcessDetailsMessage(
@@ -1568,6 +2012,7 @@ export function App({
   initialEditingWorkflowId = "",
   initialPreviewWorkflowId = "",
   initialRequirementAcceptanceDialog = "",
+  initialArtifactPreviewDialog = null,
   initialWorkflowRunDetailDialog = null,
   initialWorkflowRunsByTaskId = {},
   initialWorkflowFiles = []
@@ -1740,6 +2185,7 @@ export function App({
   const [selectedTaskWorkflowIds, setSelectedTaskWorkflowIds] = useState<
     Record<string, string>
   >(() => readStoredTaskWorkflowSelections(getBrowserStorage()));
+  const [artifactFormatFilter, setArtifactFormatFilter] = useState("all");
   const [requirementStatus, setRequirementStatus] = useState<StatusMessage>({
     kind: "status",
     key: "requirementIdle"
@@ -1778,6 +2224,8 @@ export function App({
     useState<WorkflowRunExecutorDialogState>(null);
   const [workflowRunDetailDialog, setWorkflowRunDetailDialog] =
     useState<WorkflowRunDetailDialogState>(initialWorkflowRunDetailDialog);
+  const [artifactPreviewDialog, setArtifactPreviewDialog] =
+    useState<ArtifactPreviewDialogState>(initialArtifactPreviewDialog);
   const [
     requirementAcceptanceDialogRequirementId,
     setRequirementAcceptanceDialogRequirementId
@@ -3372,10 +3820,13 @@ export function App({
 
     try {
       const result = await acceptRequirement(requirementId);
+      const acceptedTaskById = new Map(
+        result.tasks.map((task) => [task.id, task])
+      );
 
       setTasks((currentTasks) =>
         currentTasks.map((task) =>
-          task.id === result.task.id ? result.task : task
+          acceptedTaskById.get(task.id) ?? task
         )
       );
       setRequirements((currentRequirements) =>
@@ -3510,6 +3961,21 @@ export function App({
       projectTaskIds.has(taskId) ? count + runs.length : count,
     0
   );
+  const projectArtifacts = getProjectArtifacts({
+    projectRequirements,
+    projectTasks,
+    workflowFiles,
+    workflowRunsByTaskId
+  });
+  const projectArtifactFormats = Array.from(
+    new Set(projectArtifacts.map((artifact) => artifact.format))
+  ).sort();
+  const visibleProjectArtifacts =
+    artifactFormatFilter === "all"
+      ? projectArtifacts
+      : projectArtifacts.filter(
+          (artifact) => artifact.format === artifactFormatFilter
+        );
   const latestStatusMessage =
     [
       taskBoardStatus,
@@ -3524,9 +3990,14 @@ export function App({
   const visibleWorkflowTemplateCount =
     defaultWorkflowTemplates.length + visibleStoredWorkflowTemplates.length;
   const progressSteps = [
-    [t.progress.workflowTemplates, visibleWorkflowTemplateCount],
-    [t.progress.ideas, projectRequirements.length],
-    [t.progress.tasks, projectTasks.length]
+    { label: t.progress.workflowTemplates, value: visibleWorkflowTemplateCount },
+    { label: t.progress.ideas, value: projectRequirements.length },
+    { label: t.progress.tasks, value: projectTasks.length },
+    {
+      label: t.progress.artifacts,
+      page: "artifacts" as const,
+      value: projectArtifacts.length
+    }
   ] as const;
   const visibleWorkflowNodeCount =
     defaultWorkflowTemplates.reduce(
@@ -4285,6 +4756,69 @@ export function App({
       )
     : null;
 
+  function renderArtifactPreviewDialog() {
+    if (!artifactPreviewDialog) {
+      return null;
+    }
+
+    return (
+      <MotionModalBackdrop className="artifact-preview-backdrop">
+        <MotionModalPanel
+          aria-labelledby="artifact-preview-dialog-title"
+          aria-modal="true"
+          className="modal-panel workflow-run-detail-modal artifact-preview-modal"
+          role="dialog"
+        >
+          <div className="modal-heading-row workflow-run-detail-header">
+            <div>
+              <p className="eyebrow">{artifactPreviewDialog.format}</p>
+              <h2 id="artifact-preview-dialog-title">
+                {t.workspace.artifactPreviewTitle}
+              </h2>
+              <p>{artifactPreviewDialog.label}</p>
+            </div>
+            <button
+              className="button-secondary modal-close"
+              onClick={() => setArtifactPreviewDialog(null)}
+              type="button"
+            >
+              {t.workbench.close}
+            </button>
+          </div>
+          <div className="artifact-preview-meta">
+            {artifactPreviewDialog.requirementTitle ? (
+              <span>
+                {t.workspace.projectArtifactRequirementLabel}:{" "}
+                {artifactPreviewDialog.requirementTitle}
+              </span>
+            ) : null}
+            {artifactPreviewDialog.taskTitle ? (
+              <span>
+                {t.workspace.projectArtifactTaskLabel}:{" "}
+                {artifactPreviewDialog.taskTitle}
+              </span>
+            ) : null}
+          </div>
+          <div className="artifact-preview-body">
+            {artifactPreviewDialog.format === "markdown" ? (
+              <div className="markdown-preview">
+                {renderMarkdownPreview(artifactPreviewDialog.content)}
+              </div>
+            ) : (
+              <pre>{artifactPreviewDialog.content}</pre>
+            )}
+          </div>
+          {artifactPreviewDialog.format === "markdown" ? (
+            <details className="artifact-preview-raw">
+              <summary>{t.workspace.artifactPreviewRawLabel}</summary>
+              <pre>{artifactPreviewDialog.content}</pre>
+            </details>
+          ) : null}
+        </MotionModalPanel>
+      </MotionModalBackdrop>
+    );
+  }
+
   function renderWorkflowRunExecutorDialog() {
     if (!workflowRunExecutorDialog || !activeWorkflowRunTemplate) {
       return null;
@@ -4402,10 +4936,41 @@ export function App({
           <div className="task-acceptance-panel requirement-acceptance-panel">
             <div className="task-acceptance-heading">
               <span>{activeRequirementAcceptanceFinalTask.title}</span>
-              <strong>
-                {activeRequirementAcceptanceArtifact?.label ||
-                  t.workspace.finalArtifactLabel}
-              </strong>
+              {activeRequirementAcceptanceArtifact?.output ? (
+                <button
+                  aria-label={`Preview ${activeRequirementAcceptanceArtifact.label}`}
+                  className="artifact-file-button artifact-file-button-md"
+                  onClick={() =>
+                    setArtifactPreviewDialog({
+                      content: activeRequirementAcceptanceArtifact.output,
+                      format: activeRequirementAcceptanceArtifact.format,
+                      label:
+                        activeRequirementAcceptanceArtifact.label ||
+                        t.workspace.finalArtifactLabel,
+                      requirementTitle:
+                        activeRequirementAcceptanceRequirement.title,
+                      taskTitle: activeRequirementAcceptanceFinalTask.title
+                    })
+                  }
+                  type="button"
+                >
+                  <span className="artifact-file-extension">
+                    {getArtifactFileBadge(
+                      activeRequirementAcceptanceArtifact.format,
+                      activeRequirementAcceptanceArtifact.label
+                    )}
+                  </span>
+                  <span className="artifact-file-name">
+                    {activeRequirementAcceptanceArtifact.label ||
+                      t.workspace.finalArtifactLabel}
+                  </span>
+                </button>
+              ) : (
+                <strong>
+                  {activeRequirementAcceptanceArtifact?.label ||
+                    t.workspace.finalArtifactLabel}
+                </strong>
+              )}
             </div>
             {activeRequirementAcceptanceArtifact?.description ? (
               <p>{activeRequirementAcceptanceArtifact.description}</p>
@@ -5604,6 +6169,99 @@ export function App({
         })}
       </div>
     );
+
+  function renderProjectArtifactsSection() {
+    return (
+      <section
+        className="work-section project-artifacts-section"
+        aria-labelledby="project-artifacts-heading"
+      >
+        <div className="section-heading section-heading-with-action">
+          <div>
+            <p className="studio-label">{t.workspace.projectArtifactsEyebrow}</p>
+            <h2 id="project-artifacts-heading">
+              {t.workspace.projectArtifactsHeading}
+            </h2>
+            <p>{t.workspace.projectArtifactsBody}</p>
+          </div>
+          <div
+            className="artifact-format-filter"
+            aria-label={t.workspace.projectArtifactsFormatLabel}
+          >
+            <button
+              aria-pressed={artifactFormatFilter === "all"}
+              className="button-secondary"
+              onClick={() => setArtifactFormatFilter("all")}
+              type="button"
+            >
+              {t.workspace.projectArtifactsFilterAll}
+            </button>
+            {projectArtifactFormats.map((format) => (
+              <button
+                aria-pressed={artifactFormatFilter === format}
+                className="button-secondary"
+                key={format}
+                onClick={() => setArtifactFormatFilter(format)}
+                type="button"
+              >
+                {getArtifactFormatDisplayName(format)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div
+          className="project-artifact-list"
+          aria-label={t.workspace.projectArtifactsLabel}
+        >
+          {visibleProjectArtifacts.length === 0 ? (
+            <MascotLaneEmpty quiet>
+              {t.workspace.projectArtifactsEmpty}
+            </MascotLaneEmpty>
+          ) : (
+            visibleProjectArtifacts.map((artifact) => (
+              <article className="project-artifact-row" key={artifact.id}>
+                <div className="project-artifact-main">
+                  <button
+                    aria-label={`Preview ${artifact.label}`}
+                    className="artifact-file-button project-artifact-file"
+                    onClick={() =>
+                      setArtifactPreviewDialog({
+                        content: artifact.output,
+                        format: artifact.format,
+                        label: artifact.label,
+                        requirementTitle: artifact.requirementTitle,
+                        taskTitle: artifact.taskTitle
+                      })
+                    }
+                    type="button"
+                  >
+                    <span className="artifact-file-extension">
+                      {getArtifactFileBadge(artifact.format, artifact.label)}
+                    </span>
+                    <span className="artifact-file-name">{artifact.label}</span>
+                  </button>
+                  <div className="project-artifact-meta">
+                    <span>
+                      {t.workspace.projectArtifactRequirementLabel}:{" "}
+                      {artifact.requirementTitle}
+                    </span>
+                    <span>
+                      {t.workspace.projectArtifactTaskLabel}:{" "}
+                      {artifact.taskTitle}
+                    </span>
+                  </div>
+                </div>
+                <span className="project-artifact-format">
+                  {getArtifactFormatDisplayName(artifact.format)}
+                </span>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    );
+  }
+
   const primaryNavItems: { label: string; page: ActivePage }[] = [
     { label: t.nav.controlRoom, page: "control-room" },
     { label: t.nav.requirements, page: "requirements" },
@@ -5620,6 +6278,7 @@ export function App({
         {renderWorkflowRunExecutorDialog()}
         {renderRequirementAcceptanceDialog()}
         {renderWorkflowRunDetailDialog()}
+        {renderArtifactPreviewDialog()}
       </AnimatePresence>
       <header className="studio-hero">
         <nav className="studio-nav" aria-label={t.nav.statusLabel}>
@@ -5805,6 +6464,10 @@ export function App({
               />
             ) : null}
             {editableRequirementList}
+          </section>
+        ) : activePage === "artifacts" ? (
+          <section className="artifacts-page" aria-labelledby="project-artifacts-heading">
+            {renderProjectArtifactsSection()}
           </section>
         ) : activePage === "settings" ? (
           <section className="settings-page" aria-labelledby="settings-heading">
@@ -6961,12 +7624,24 @@ export function App({
         }`.trim()}
         aria-label={t.progress.ariaLabel}
       >
-        {progressSteps.map(([label, value]) => (
-          <div className="progress-item" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-          </div>
-        ))}
+        {progressSteps.map((step) =>
+          "page" in step ? (
+            <button
+              className="progress-item progress-item-button"
+              key={step.label}
+              onClick={() => handleNavigatePage(step.page)}
+              type="button"
+            >
+              <span>{step.label}</span>
+              <strong>{step.value}</strong>
+            </button>
+          ) : (
+            <div className="progress-item" key={step.label}>
+              <span>{step.label}</span>
+              <strong>{step.value}</strong>
+            </div>
+          )
+        )}
         {latestStatusMessage ? (
           <StatusMascotMessage status={latestStatusMessage} t={t} />
         ) : null}

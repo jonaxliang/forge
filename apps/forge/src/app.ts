@@ -1,5 +1,6 @@
 import {
   createHealthPayload,
+  normalizeArtifactOutput,
   parseWorkflowFile,
   planWorkflowDag,
   readLegacyWorkflowScope,
@@ -70,6 +71,7 @@ import {
   readExecutorAssignments,
   serializeExecutorAssignments,
   type ExecutorAssignment,
+  type TaskDependencyOutput,
   type TaskWorkflowNodeExecutor
 } from "./task-workflow-runner.js";
 
@@ -341,6 +343,10 @@ function parseStoredWorkflowDefinition(definition: string): WorkflowFile | null 
 
 function isLegacyRequirementWorkflowDefinition(definition: string) {
   return readLegacyWorkflowScope(definition) === "requirement";
+}
+
+function isTaskWorkflowDefinition(definition: string) {
+  return readLegacyWorkflowScope(definition) === "task";
 }
 
 function getBaseWorkflowTemplateSemanticKey(workflowFile: WorkflowFileMetadata) {
@@ -783,6 +789,15 @@ type AgentProxyClient = (input: {
 
 type ModelApiTester = (settings: ExecutionSettings) => Promise<void>;
 
+type TaskWorkflowNodeExecutionRequestInput = {
+  node: Parameters<TaskWorkflowNodeExecutor>[0]["node"];
+  nodeRuns: Array<Pick<NodeRun, "nodeId" | "output" | "status">>;
+  task: Pick<Task, "body" | "title">;
+  taskDependencyOutputs?: TaskDependencyOutput[];
+  workflow: Pick<WorkflowFile, "artifacts" | "name" | "nodes">;
+  workflowFile: Pick<WorkflowFileMetadata, "name">;
+};
+
 export function createApp({
   agentProxyClient,
   bridgeRepository,
@@ -1156,8 +1171,10 @@ export function createApp({
           executorAssignments,
           node,
           nodeRun: runningNodeRun,
+          nodeRuns,
           settings,
           task,
+          taskDependencyOutputs: [],
           workflow,
           workflowFile,
           workflowRun
@@ -1453,13 +1470,18 @@ export function createApp({
         throw new Error("Requirement-scoped Workflow Files are no longer supported");
       }
 
+      const workflowScope = readLegacyWorkflowScope(payload.data.source);
       const workflow = parseWorkflowFile(payload.data.source);
       const existingWorkflowFiles = await workflowFiles.listWorkflowFileMetadata();
       const workflowName = deduplicateWorkflowName(
         workflow.name,
         existingWorkflowFiles.map((workflowFile) => workflowFile.name)
       );
-      const storedWorkflow = { ...workflow, name: workflowName };
+      const storedWorkflow = {
+        ...workflow,
+        ...(workflowScope ? { scope: workflowScope } : {}),
+        name: workflowName
+      };
       const workflowFile = await workflowFiles.createWorkflowFileMetadata({
         definition: JSON.stringify(storedWorkflow),
         name: storedWorkflow.name,
@@ -1718,13 +1740,18 @@ export function createApp({
         return c.json({ error: "Final Task not found" }, 409);
       }
 
+      const acceptedTasks = await Promise.all(
+        linkedTasks.map((task) =>
+          task.status === "completed"
+            ? task
+            : tasks.updateTaskStatus({
+                id: task.id,
+                status: "completed"
+              })
+        )
+      );
       const acceptedTask =
-        finalTask.status === "completed"
-          ? finalTask
-          : await tasks.updateTaskStatus({
-              id: finalTask.id,
-              status: "completed"
-            });
+        acceptedTasks.find((task) => task.id === finalTask.id) ?? finalTask;
       const acceptedRequirement = await requirements.updateRequirementStatus({
         errorMessage: null,
         id: requirement.id,
@@ -1733,7 +1760,8 @@ export function createApp({
 
       return c.json({
         requirement: acceptedRequirement,
-        task: acceptedTask
+        task: acceptedTask,
+        tasks: acceptedTasks
       });
     } catch (error) {
       return c.json({ error: getErrorMessage(error) }, 400);
@@ -2027,6 +2055,10 @@ export function createApp({
 
       if (!workflowFile) {
         throw new Error("Selected workflow file was not found");
+      }
+
+      if (!isTaskWorkflowDefinition(workflowFile.definition)) {
+        return c.json({ error: "Task Workflow File must declare scope: task" }, 400);
       }
 
       const settings = await executionSettings.getExecutionSettings();
@@ -2618,15 +2650,15 @@ export function buildRequirementPlanningRequest({
   };
 }
 
-async function executeTaskWorkflowNodeWithModel({
+export function buildTaskWorkflowNodeExecutionRequest({
   node,
-  settings,
+  nodeRuns,
   task,
+  taskDependencyOutputs = [],
   workflow,
   workflowFile
-}: Parameters<TaskWorkflowNodeExecutor>[0]) {
-  const { text } = await generateText({
-    model: createPlanningLanguageModel(settings),
+}: TaskWorkflowNodeExecutionRequestInput) {
+  return {
     prompt: JSON.stringify({
       task: {
         body: task.body,
@@ -2640,19 +2672,99 @@ async function executeTaskWorkflowNodeWithModel({
         dependsOn: node.dependsOn,
         exitCriteria: node.exit.criteria,
         id: node.id,
+        inputArtifacts: resolveWorkflowNodeInputArtifacts({
+          node,
+          nodeRuns,
+          workflow
+        }),
         inputs: node.inputs,
         instruction: node.instruction ?? null,
         outputs: node.outputs,
         type: node.type,
         uses: node.uses
-      }
+      },
+      taskDependencyOutputs
     }),
     system:
-      "You execute one Forge Workflow Node. Produce concise, usable work output for this node only.",
+      "You execute one Forge Workflow Node. Produce concise, usable work output for this node only. Use provided inputArtifacts as the source material for artifact inputs. Default textual deliverables to Markdown. If you need to explain before the deliverable, end with a section titled 以下是最终版Markdown文档 and put only the final Markdown document after it."
+  };
+}
+
+async function executeTaskWorkflowNodeWithModel({
+  node,
+  nodeRuns,
+  settings,
+  task,
+  taskDependencyOutputs,
+  workflow,
+  workflowFile
+}: Parameters<TaskWorkflowNodeExecutor>[0]) {
+  const executionRequest = buildTaskWorkflowNodeExecutionRequest({
+    node,
+    nodeRuns,
+    task,
+    taskDependencyOutputs,
+    workflow,
+    workflowFile
+  });
+  const { text } = await generateText({
+    model: createPlanningLanguageModel(settings),
+    prompt: executionRequest.prompt,
+    system: executionRequest.system,
     temperature: 0.2
   });
 
-  return text.trim();
+  return normalizeArtifactOutput(text);
+}
+
+function resolveWorkflowNodeInputArtifacts({
+  node,
+  nodeRuns,
+  workflow
+}: Pick<TaskWorkflowNodeExecutionRequestInput, "node" | "nodeRuns" | "workflow">) {
+  const nodeRunByNodeId = new Map(
+    nodeRuns
+      .filter(
+        (nodeRun) =>
+          nodeRun.status === "succeeded" &&
+          typeof nodeRun.output === "string" &&
+          nodeRun.output.trim().length > 0
+      )
+      .map((nodeRun) => [nodeRun.nodeId, nodeRun])
+  );
+
+  return node.inputs.flatMap((input) => {
+    if (!input.startsWith("artifact:")) {
+      return [];
+    }
+
+    const sourceNode = workflow.nodes.find((candidate) =>
+      candidate.outputs.some((output) => getWorkflowNodeOutputLabel(output) === input)
+    );
+    const sourceNodeRun = sourceNode ? nodeRunByNodeId.get(sourceNode.id) : null;
+
+    if (!sourceNode || !sourceNodeRun?.output) {
+      return [];
+    }
+
+    return [
+      {
+        content: sourceNodeRun.output,
+        input,
+        sourceNodeId: sourceNode.id
+      }
+    ];
+  });
+}
+
+function getWorkflowNodeOutputLabel(
+  output: WorkflowFile["nodes"][number]["outputs"][number]
+) {
+  if ("artifact" in output) {
+    return `artifact:${output.artifact}`;
+  }
+
+  return `file:${output.ref}`;
 }
 
 type ProviderOptions = {
