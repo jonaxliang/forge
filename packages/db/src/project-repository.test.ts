@@ -14,6 +14,7 @@ import {
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
   createSqliteBridgeRepository,
+  createSqliteRequirementRepository,
   createSqliteWorkflowFileRepository
 } from "./index";
 
@@ -642,6 +643,31 @@ describe("RequirementRepository", () => {
     expect(failed.updatedAt).not.toBe(requirement.updatedAt);
 
     await expect(repository.listRequirements()).resolves.toEqual([failed]);
+  });
+
+  it("keeps completed requirements completed when reopening SQLite storage", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "forge-db-requirements-"));
+    const sqlitePath = join(directory, "forge.sqlite");
+    const repository = createSqliteRequirementRepository(sqlitePath);
+    const requirement = await repository.createRequirement({
+      body: "Finish the dogfood flow.",
+      title: "Dogfood flow",
+      workflowFileId: "wff_requirement"
+    });
+
+    await repository.updateRequirementStatus({
+      id: requirement.id,
+      status: "completed"
+    });
+
+    const reopenedRepository = createSqliteRequirementRepository(sqlitePath);
+
+    await expect(reopenedRepository.listRequirements()).resolves.toMatchObject([
+      {
+        id: requirement.id,
+        status: "completed"
+      }
+    ]);
   });
 
   it("soft deletes requirements from active lists", async () => {

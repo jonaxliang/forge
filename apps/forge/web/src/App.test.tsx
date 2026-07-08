@@ -1,4 +1,4 @@
-import { parseWorkflowFile } from "@forge/core";
+import { parseWorkflowFile, readLegacyWorkflowScope } from "@forge/core";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -3456,6 +3456,7 @@ describe("App workbench layout", () => {
 
       expect(template.workflow).toEqual(parsedWorkflow);
       expect(parsedWorkflow.version).toBe("1.1");
+      expect(readLegacyWorkflowScope(template.source)).toBe("task");
       expect(parsedWorkflow.inputs.length).toBeGreaterThan(0);
       expect(parsedWorkflow.skills.length).toBeGreaterThan(0);
       expect(parsedWorkflow.agents.length).toBeGreaterThan(0);
