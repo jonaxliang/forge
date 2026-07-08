@@ -20,6 +20,7 @@ function createDefaultWorkflowTemplate(
 
 export const defaultWorkflowTemplates: readonly DefaultWorkflowTemplate[] = [
   createDefaultWorkflowTemplate("software-change-task", `name: "代码编写模板"
+scope: task
 version: "1.1"
 inputs:
   - id: task
@@ -138,6 +139,7 @@ nodes:
 `,
   ),
   createDefaultWorkflowTemplate("research-writing-task", `name: "调研写作模板"
+scope: task
 version: "1.1"
 inputs:
   - id: task
@@ -235,6 +237,7 @@ nodes:
 `,
   ),
   createDefaultWorkflowTemplate("creative-writing-task", `name: "创意写作模板"
+scope: task
 version: "1.1"
 inputs:
   - id: task

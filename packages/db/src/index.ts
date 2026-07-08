@@ -642,7 +642,6 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
   ensureSqliteColumn(db, "tasks", "depends_on", "TEXT NOT NULL DEFAULT '[]'");
   ensureSqliteColumn(db, "requirements", "deleted_at", "TEXT");
   ensureSqliteColumn(db, "tasks", "deleted_at", "TEXT");
-  db.run("UPDATE requirements SET status = 'open' WHERE status = 'completed'");
 }
 
 function dropLegacyWorkflowFileScopeColumn(sqlite: Database.Database) {
