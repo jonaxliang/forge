@@ -2167,7 +2167,7 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("以下是最终版Markdown文档");
     expect(markup).toContain(">View node Artifacts</button>");
     expect(markup).toContain(">Accept output</button>");
-    expect(markup).toContain(">Reject and rerun</button>");
+    expect(markup).toContain(">Request changes</button>");
     expect(markup).not.toContain(">Accept Task</button>");
     expect(markup).not.toContain("Task Workflow Template");
   });
@@ -2823,6 +2823,170 @@ describe("App workbench layout", () => {
     expect(markup).toContain("workflow-run-detail-header");
     expect(markup).toContain("workflow-run-detail-body");
     expect(markup).toContain("Current node 2 / 3");
+  });
+
+  it("shows friendly Human Review controls and Attempt history", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <App
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_a",
+            name: "Project A",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Body",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_a",
+            projectId: "proj_a",
+            status: "tasks_generated",
+            title: "Requirement",
+            updatedAt: timestamp,
+            workflowFileId: "wf_1"
+          }
+        ]}
+        initialTasks={[
+          {
+            body: "Task body",
+            createdAt: timestamp,
+            deletedAt: null,
+            dependsOn: [],
+            executorAgentBindingId: null,
+            executorLabel: "Model API",
+            executorType: "model-api",
+            id: "tsk_a",
+            projectId: "proj_a",
+            requirementId: "req_a",
+            sourceItemId: "item_a",
+            status: "running",
+            title: "Task",
+            updatedAt: timestamp
+          }
+        ]}
+        initialWorkflowFiles={[
+          {
+            createdAt: timestamp,
+            definition: JSON.stringify({
+              name: "Human Review",
+              version: "1.1",
+              nodes: [
+                {
+                  dependsOn: [],
+                  exit: {
+                    criteria: ["Output is complete."],
+                    maxRetries: 2,
+                    review: "human",
+                    retryInstruction: "Complete the missing sections."
+                  },
+                  id: "draft",
+                  inputs: [],
+                  outputs: [],
+                  type: "draft",
+                  uses: []
+                }
+              ]
+            }),
+            id: "wf_2",
+            name: "Human Review",
+            nodeCount: 1,
+            templateType: "custom"
+          }
+        ]}
+        initialWorkflowRunsByTaskId={{
+          tsk_a: [
+            {
+              nodeRuns: [
+                {
+                  attempt: 2,
+                  attempts: [
+                    {
+                      attempt: 1,
+                      completedAt: timestamp,
+                      errorMessage: null,
+                      output: "First draft",
+                      review: {
+                        criteria: [
+                          {
+                            criterion: "Output is complete.",
+                            evidence: "The conclusion is missing.",
+                            passed: false
+                          }
+                        ],
+                        feedback: "Add the conclusion.",
+                        mode: "human",
+                        reviewedAt: timestamp,
+                        reviewer: "human",
+                        summary: "Needs a conclusion.",
+                        verdict: "failed"
+                      }
+                    }
+                  ],
+                  createdAt: timestamp,
+                  dependsOn: [],
+                  errorMessage: null,
+                  exitReview: {
+                    criteria: [
+                      {
+                        criterion: "Output is complete.",
+                        evidence: "",
+                        passed: false
+                      }
+                    ],
+                    feedback: "Review the revised draft.",
+                    mode: "human",
+                    reviewedAt: null,
+                    reviewer: "human",
+                    summary: "Review the revised draft.",
+                    verdict: "pending"
+                  },
+                  id: "ndr_a",
+                  nodeId: "draft",
+                  output: "Revised draft",
+                  retryCount: 1,
+                  sortOrder: 0,
+                  status: "reviewing",
+                  updatedAt: timestamp,
+                  workflowRunId: "wfr_a"
+                }
+              ],
+              workflowRun: {
+                correctionFeedback: "Preserve the structure.",
+                createdAt: timestamp,
+                executorAssignments: {},
+                id: "wfr_a",
+                status: "running",
+                taskId: "tsk_a",
+                updatedAt: timestamp,
+                workflowFileId: "wf_2"
+              }
+            }
+          ]
+        }}
+        initialWorkflowRunDetailDialog={{
+          taskId: "tsk_a",
+          workflowRunId: "wfr_a"
+        }}
+      />
+    );
+
+    expect(markup).toContain("Exit Review");
+    expect(markup).toContain("Human Review");
+    expect(markup).toContain("Attempt 2");
+    expect(markup).toContain("1 / 2 automatic retries");
+    expect(markup).toContain("Request changes");
+    expect(markup).toContain("Approve and continue");
+    expect(markup).toContain("1 completed attempt");
+    expect(markup).toContain("Correction feedback");
+    expect(markup).toContain("Preserve the structure.");
+    expect(markup).toContain("Current node 1 / 1");
   });
 
   it("restores the selected Project from local storage after reload", () => {

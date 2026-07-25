@@ -124,6 +124,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0

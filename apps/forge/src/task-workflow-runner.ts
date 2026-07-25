@@ -1,4 +1,10 @@
-import type { WorkflowFile, WorkflowNode } from "@forge/core";
+import {
+  getExitReviewTransition,
+  type ExitReviewResult,
+  type NodeRunAttempt,
+  type WorkflowFile,
+  type WorkflowNode
+} from "@forge/core";
 import type {
   AgentBinding,
   BridgeRepository,
@@ -23,7 +29,7 @@ export type TaskWorkflowNodeExecutorInput = {
   nodeRuns: NodeRun[];
   settings: ExecutionSettings;
   task: Task;
-  taskDependencyOutputs: TaskDependencyOutput[];
+  taskDependencyOutputs?: TaskDependencyOutput[];
   workflow: WorkflowFile;
   workflowFile: WorkflowFileMetadata;
   workflowRun: WorkflowRun;
@@ -43,8 +49,23 @@ export type TaskWorkflowNodeExecutor = (
   input: TaskWorkflowNodeExecutorInput
 ) => Promise<string>;
 
+export type TaskWorkflowExitEvaluatorInput = TaskWorkflowNodeExecutorInput & {
+  executorAssignment: ExecutorAssignment;
+  output: string;
+};
+
+export type TaskWorkflowExitEvaluation = Pick<
+  ExitReviewResult,
+  "criteria" | "feedback" | "summary" | "verdict"
+>;
+
+export type TaskWorkflowExitEvaluator = (
+  input: TaskWorkflowExitEvaluatorInput
+) => Promise<TaskWorkflowExitEvaluation>;
+
 type TaskWorkflowRunnerInput = {
   bridges: BridgeRepository;
+  exitEvaluator: TaskWorkflowExitEvaluator;
   taskNodeExecutor: TaskWorkflowNodeExecutor;
   tasks: TaskRepository;
   workflowRuns: WorkflowRunRepository;
@@ -66,6 +87,17 @@ type RetryFailedNodeRunInput = AdvanceTaskWorkflowRunInput & {
 
 type ExecuteModelNodeAndAdvanceInput = TaskWorkflowNodeExecutorInput & {
   executorAssignments: Record<string, ExecutorAssignment>;
+};
+
+type CompleteNodeExecutionInput = ExecuteModelNodeAndAdvanceInput & {
+  deferModelExecution?: boolean;
+  output: string;
+};
+
+type CompleteHumanReviewInput = AdvanceTaskWorkflowRunInput & {
+  decision: "approve" | "request_changes";
+  feedback: string;
+  nodeRunId: string;
 };
 
 export function serializeExecutorAssignments(
@@ -91,6 +123,7 @@ export function readExecutorAssignments(payload: unknown) {
 
 export function createTaskWorkflowRunner({
   bridges,
+  exitEvaluator,
   taskNodeExecutor,
   tasks,
   workflowRuns
@@ -101,11 +134,21 @@ export function createTaskWorkflowRunner({
     taskId?: string;
     workflowRunId: string;
   }) {
+    const currentNodeRuns = await workflowRuns.listNodeRuns(input.workflowRunId);
+    const currentNodeRun =
+      currentNodeRuns.find((nodeRun) => nodeRun.id === input.nodeRun.id) ??
+      input.nodeRun;
+    const errorMessage = input.errorMessage ?? currentNodeRun.errorMessage ?? null;
+    const attempts = appendAttempt(currentNodeRun, {
+      errorMessage,
+      output: currentNodeRun.output,
+      review: currentNodeRun.exitReview
+    });
+
     await workflowRuns.updateNodeRunStatus({
+      attempts,
       id: input.nodeRun.id,
-      ...(input.errorMessage === undefined
-        ? {}
-        : { errorMessage: input.errorMessage }),
+      errorMessage,
       status: "failed"
     });
     await workflowRuns.updateWorkflowRunStatus({
@@ -141,18 +184,9 @@ export function createTaskWorkflowRunner({
   ) {
     try {
       const output = await taskNodeExecutor(input);
-      await workflowRuns.updateNodeRunStatus({
-        id: input.nodeRun.id,
-        output,
-        status: "succeeded"
-      });
-      await advanceTaskWorkflowRun({
-        executorAssignments: input.executorAssignments,
-        settings: input.settings,
-        task: input.task,
-        workflow: input.workflow,
-        workflowFile: input.workflowFile,
-        workflowRun: input.workflowRun
+      await completeNodeExecution({
+        ...input,
+        output
       });
     } catch (error) {
       await failTaskWorkflowRun({
@@ -162,6 +196,223 @@ export function createTaskWorkflowRunner({
         workflowRunId: input.workflowRun.id
       });
     }
+  }
+
+  async function completeNodeExecution(input: CompleteNodeExecutionInput) {
+    const reviewingNodeRun = await workflowRuns.updateNodeRunStatus({
+      errorMessage: null,
+      exitReview: null,
+      id: input.nodeRun.id,
+      output: input.output,
+      status: "reviewing"
+    });
+    const review = await createExitReview(input);
+
+    return applyExitReview({
+      ...input,
+      nodeRun: reviewingNodeRun,
+      review
+    });
+  }
+
+  async function completeHumanReview(input: CompleteHumanReviewInput) {
+    const currentNodeRuns = await workflowRuns.listNodeRuns(input.workflowRun.id);
+    const nodeRun = currentNodeRuns.find(
+      (candidate) => candidate.id === input.nodeRunId
+    );
+
+    if (!nodeRun) {
+      throw new Error(`Node Run not found: ${input.nodeRunId}`);
+    }
+
+    if (nodeRun.status !== "reviewing" || nodeRun.exitReview?.verdict !== "pending") {
+      throw new Error("Workflow Node is not waiting for Human Review");
+    }
+
+    const node = input.workflow.nodes.find(
+      (candidate) => candidate.id === nodeRun.nodeId
+    );
+
+    if (!node) {
+      throw new Error(`Workflow Node not found: ${nodeRun.nodeId}`);
+    }
+
+    const feedback = input.feedback.trim();
+    if (input.decision === "request_changes" && !feedback) {
+      throw new Error("Feedback is required when requesting changes");
+    }
+
+    return applyExitReview({
+      ...input,
+      node,
+      nodeRun,
+      nodeRuns: currentNodeRuns,
+      output: nodeRun.output ?? "",
+      review: {
+        criteria: node.exit.criteria.map((criterion) => ({
+          criterion,
+          evidence: feedback,
+          passed: input.decision === "approve"
+        })),
+        feedback,
+        mode: node.exit.review,
+        reviewedAt: new Date().toISOString(),
+        reviewer: "human",
+        summary:
+          feedback ||
+          (input.decision === "approve"
+            ? "Human Review approved the output."
+            : "Human Review requested changes."),
+        verdict: input.decision === "approve" ? "passed" : "failed"
+      }
+    });
+  }
+
+  async function createExitReview(
+    input: CompleteNodeExecutionInput
+  ): Promise<ExitReviewResult> {
+    const mode = input.node.exit.review;
+
+    if (mode === "none" || input.node.exit.criteria.length === 0) {
+      return {
+        criteria: input.node.exit.criteria.map((criterion) => ({
+          criterion,
+          evidence: "",
+          passed: true
+        })),
+        feedback: "",
+        mode,
+        reviewedAt: new Date().toISOString(),
+        reviewer: "none",
+        summary:
+          mode === "none"
+            ? "Exit Review is disabled for this Workflow Node."
+            : "No Exit Criteria were defined.",
+        verdict: "skipped"
+      };
+    }
+
+    if (mode === "human") {
+      return createPendingHumanReview(input.node);
+    }
+
+    try {
+      const executorAssignment = input.executorAssignments[input.node.id];
+
+      if (!executorAssignment) {
+        throw new Error(
+          `Missing executor assignment for Workflow Node ${input.node.id}`
+        );
+      }
+
+      const evaluation = await exitEvaluator({
+        ...input,
+        executorAssignment
+      });
+
+      return {
+        ...evaluation,
+        mode,
+        reviewedAt: new Date().toISOString(),
+        reviewer: "model"
+      };
+    } catch (error) {
+      return createPendingHumanReview(
+        input.node,
+        `Model review was unavailable: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  async function applyExitReview(
+    input: CompleteNodeExecutionInput & {
+      review: ExitReviewResult;
+    }
+  ) {
+    const transition = getExitReviewTransition({
+      maxRetries: input.node.exit.maxRetries,
+      retryCount: input.nodeRun.retryCount,
+      verdict: input.review.verdict
+    });
+
+    if (transition === "waiting") {
+      const reviewingNodeRun = await workflowRuns.updateNodeRunStatus({
+        exitReview: input.review,
+        id: input.nodeRun.id,
+        status: "reviewing"
+      });
+
+      return replaceNodeRun(input.nodeRuns, reviewingNodeRun);
+    }
+
+    const attempts = appendAttempt(input.nodeRun, {
+      errorMessage: null,
+      output: input.output,
+      review: input.review
+    });
+
+    if (transition === "passed") {
+      const succeededNodeRun = await workflowRuns.updateNodeRunStatus({
+        attempts,
+        exitReview: input.review,
+        id: input.nodeRun.id,
+        status: "succeeded"
+      });
+
+      return advanceTaskWorkflowRun({
+        deferModelExecution: input.deferModelExecution,
+        executorAssignments: input.executorAssignments,
+        settings: input.settings,
+        task: input.task,
+        workflow: input.workflow,
+        workflowFile: input.workflowFile,
+        workflowRun: input.workflowRun
+      }).then((nodeRuns) => replaceNodeRun(nodeRuns, succeededNodeRun));
+    }
+
+    if (transition === "retry") {
+      await workflowRuns.updateNodeRunStatus({
+        attempt: input.nodeRun.attempt + 1,
+        attempts,
+        errorMessage: null,
+        exitReview: null,
+        id: input.nodeRun.id,
+        output: null,
+        retryCount: input.nodeRun.retryCount + 1,
+        status: "queued"
+      });
+
+      return advanceTaskWorkflowRun({
+        deferModelExecution: input.deferModelExecution,
+        executorAssignments: input.executorAssignments,
+        settings: input.settings,
+        task: input.task,
+        workflow: input.workflow,
+        workflowFile: input.workflowFile,
+        workflowRun: input.workflowRun
+      });
+    }
+
+    const blockedNodeRun = await workflowRuns.updateNodeRunStatus({
+      attempts,
+      errorMessage:
+        input.review.feedback ||
+        input.review.summary ||
+        "Exit Criteria were not met.",
+      exitReview: input.review,
+      id: input.nodeRun.id,
+      status: "blocked"
+    });
+    await workflowRuns.updateWorkflowRunStatus({
+      id: input.workflowRun.id,
+      status: "failed"
+    });
+    await tasks.updateTaskStatus({
+      id: input.task.id,
+      status: "failed"
+    });
+
+    return replaceNodeRun(input.nodeRuns, blockedNodeRun);
   }
 
   async function advanceTaskWorkflowRun(input: AdvanceTaskWorkflowRunInput) {
@@ -194,7 +445,12 @@ export function createTaskWorkflowRunner({
       return currentNodeRuns;
     }
 
-    if (currentNodeRuns.some((nodeRun) => nodeRun.status === "running")) {
+    if (
+      currentNodeRuns.some(
+        (nodeRun) =>
+          nodeRun.status === "running" || nodeRun.status === "reviewing"
+      )
+    ) {
       return currentNodeRuns;
     }
 
@@ -281,8 +537,8 @@ export function createTaskWorkflowRunner({
       throw new Error(`Node Run not found: ${input.nodeRunId}`);
     }
 
-    if (targetNodeRun.status !== "failed") {
-      throw new Error("Only failed Workflow Nodes can be retried");
+    if (!["blocked", "failed"].includes(targetNodeRun.status)) {
+      throw new Error("Only failed or blocked Workflow Nodes can be retried");
     }
 
     const statusByNodeId = new Map(
@@ -307,7 +563,13 @@ export function createTaskWorkflowRunner({
     for (const nodeRun of currentNodeRuns) {
       if (retryNodeIds.has(nodeRun.nodeId)) {
         await workflowRuns.updateNodeRunStatus({
+          attempt:
+            nodeRun.id === targetNodeRun.id ||
+            ["blocked", "failed", "succeeded"].includes(nodeRun.status)
+              ? nodeRun.attempt + 1
+              : nodeRun.attempt,
           errorMessage: null,
+          exitReview: null,
           id: nodeRun.id,
           output: null,
           status: "queued"
@@ -402,6 +664,8 @@ export function createTaskWorkflowRunner({
 
   return {
     advanceTaskWorkflowRun,
+    completeHumanReview,
+    completeNodeExecution,
     executeModelNodeAndAdvance,
     failTaskWorkflowRun,
     listRunnableNodeRunIdsForBridgeJobs,
@@ -430,6 +694,54 @@ function collectNodeRunDescendantIds(nodeRuns: NodeRun[], nodeId: string) {
   }
 
   return descendants;
+}
+
+function appendAttempt(
+  nodeRun: NodeRun,
+  attempt: Omit<NodeRunAttempt, "attempt" | "completedAt">
+) {
+  if (nodeRun.attempts.some((candidate) => candidate.attempt === nodeRun.attempt)) {
+    return nodeRun.attempts;
+  }
+
+  return [
+    ...nodeRun.attempts,
+    {
+      ...attempt,
+      attempt: nodeRun.attempt,
+      completedAt: new Date().toISOString()
+    }
+  ];
+}
+
+function createPendingHumanReview(
+  node: WorkflowNode,
+  fallbackReason = ""
+): ExitReviewResult {
+  const reason =
+    fallbackReason.trim() ||
+    node.humanReview?.reason.trim() ||
+    "Review the output against the Exit Criteria before continuing.";
+
+  return {
+    criteria: node.exit.criteria.map((criterion) => ({
+      criterion,
+      evidence: "",
+      passed: false
+    })),
+    feedback: reason,
+    mode: node.exit.review,
+    reviewedAt: null,
+    reviewer: "human",
+    summary: reason,
+    verdict: "pending"
+  };
+}
+
+function replaceNodeRun(nodeRuns: NodeRun[], updatedNodeRun: NodeRun) {
+  return nodeRuns.map((nodeRun) =>
+    nodeRun.id === updatedNodeRun.id ? updatedNodeRun : nodeRun
+  );
 }
 
 function getErrorMessage(error: unknown) {

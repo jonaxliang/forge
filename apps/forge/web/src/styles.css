@@ -3836,6 +3836,29 @@ h3 {
   align-self: center;
 }
 
+.workflow-run-correction-context {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #f1d6a8;
+  border-radius: var(--radius-control);
+  background: #fffbeb;
+  padding: 12px;
+}
+
+.workflow-run-correction-context strong {
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.workflow-run-correction-context p {
+  margin: 0;
+  color: #78350f;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .workflow-run-detail-node-list {
   display: grid;
   gap: 16px;
@@ -3893,10 +3916,18 @@ h3 {
 }
 
 .workflow-run-detail-node-status {
-  display: inline-flex;
-  align-items: center;
+  display: grid;
+  justify-items: end;
   justify-content: flex-end;
+  gap: 5px;
   min-width: max-content;
+}
+
+.workflow-run-attempt-summary {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .workflow-run-retry-button {
@@ -3953,6 +3984,175 @@ h3 {
   gap: 4px;
   margin: 0;
   padding-left: 18px;
+}
+
+.workflow-run-exit-review {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7e7e7;
+  border-radius: var(--radius-control);
+  background: #f7fbfb;
+  padding: 14px;
+}
+
+.workflow-run-exit-review-failed {
+  border-color: #fecaca;
+  background: #fff8f8;
+}
+
+.workflow-run-exit-review-pending {
+  border-color: #f1d6a8;
+  background: #fffbeb;
+}
+
+.workflow-run-exit-review-skipped {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.workflow-run-exit-review-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.workflow-run-exit-review-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.workflow-run-exit-review-heading > div p {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.workflow-run-exit-review-criteria {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-control);
+  background: #ffffff;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-run-exit-review-criteria li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 4px 10px;
+  border-bottom: 1px solid #edf2f7;
+  padding: 10px 12px;
+}
+
+.workflow-run-exit-review-criteria li:last-child {
+  border-bottom: 0;
+}
+
+.workflow-run-exit-review-criteria li strong {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-run-exit-review-failed
+  .workflow-run-exit-review-criteria
+  li
+  strong {
+  color: #b91c1c;
+}
+
+.workflow-run-exit-review-criteria li small {
+  grid-column: 2;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-run-exit-review-feedback {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid #e7a43b;
+  padding-left: 10px;
+}
+
+.workflow-run-exit-review-feedback strong {
+  color: #92400e;
+  font-size: 12px;
+}
+
+.workflow-run-human-review {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #efd7ae;
+  padding-top: 12px;
+}
+
+.workflow-run-human-review label {
+  display: grid;
+  gap: 6px;
+  color: #425064;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-run-human-review p {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.workflow-run-human-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workflow-run-attempt-history {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-control);
+  background: #ffffff;
+}
+
+.workflow-run-attempt-history summary {
+  cursor: pointer;
+  color: #425064;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 10px 12px;
+}
+
+.workflow-run-attempt-history ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid #edf2f7;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-run-attempt-history li {
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid #edf2f7;
+  padding: 10px 12px;
+}
+
+.workflow-run-attempt-history li:last-child {
+  border-bottom: 0;
+}
+
+.workflow-run-attempt-history li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-run-attempt-history li span {
+  color: var(--color-muted);
+  font-size: 11px;
 }
 
 .workflow-run-detail-trace dl {
@@ -4464,6 +4664,8 @@ h3 {
   .workflow-run-detail-summary,
   .workflow-run-detail-grid,
   .workflow-run-detail-definition,
+  .workflow-run-exit-review-heading,
+  .workflow-run-exit-review-criteria li,
   .workflow-run-detail-retry-panel,
   .workflow-run-detail-trace dl,
   .task-board {
@@ -4472,6 +4674,14 @@ h3 {
 
   .workflow-run-detail-retry-panel .workflow-run-retry-button {
     width: 100%;
+  }
+
+  .workflow-run-human-review-actions {
+    display: grid;
+  }
+
+  .workflow-run-exit-review-criteria li small {
+    grid-column: 1;
   }
 
   .run-group-header {
@@ -4921,6 +5131,40 @@ h3 {
     max-height: calc(100dvh - 24px);
     border-radius: var(--radius-panel);
     padding: 14px;
+  }
+
+  .workflow-run-detail-modal {
+    overflow-x: hidden;
+    padding: 0;
+  }
+
+  .workflow-run-detail-header,
+  .workflow-run-detail-body,
+  .workflow-run-detail-node-title {
+    min-width: 0;
+  }
+
+  .workflow-run-detail-node {
+    padding: 14px;
+  }
+
+  .workflow-run-detail-node-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .workflow-run-detail-node-title {
+    width: 100%;
+  }
+
+  .workflow-run-detail-node-status {
+    justify-content: start;
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .workflow-run-attempt-summary {
+    white-space: normal;
   }
 
   .artifact-preview-modal {

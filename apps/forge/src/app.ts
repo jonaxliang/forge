@@ -72,6 +72,7 @@ import {
   serializeExecutorAssignments,
   type ExecutorAssignment,
   type TaskDependencyOutput,
+  type TaskWorkflowExitEvaluator,
   type TaskWorkflowNodeExecutor
 } from "./task-workflow-runner.js";
 
@@ -551,6 +552,7 @@ type AppDependencies = {
   requirementRepository?: RequirementRepository;
   skillRepository?: SkillRepository;
   skillStorageRoot?: string;
+  taskWorkflowExitEvaluator?: TaskWorkflowExitEvaluator;
   taskWorkflowNodeExecutor?: TaskWorkflowNodeExecutor;
   taskRepository?: TaskRepository;
   workflowRunRepository?: WorkflowRunRepository;
@@ -793,11 +795,13 @@ type ModelApiTester = (settings: ExecutionSettings) => Promise<void>;
 
 type TaskWorkflowNodeExecutionRequestInput = {
   node: Parameters<TaskWorkflowNodeExecutor>[0]["node"];
+  nodeRun?: Pick<NodeRun, "attempt" | "attempts" | "retryCount">;
   nodeRuns: Array<Pick<NodeRun, "nodeId" | "output" | "status">>;
   task: Pick<Task, "body" | "title">;
   taskDependencyOutputs?: TaskDependencyOutput[];
   workflow: Pick<WorkflowFile, "artifacts" | "name" | "nodes">;
   workflowFile: Pick<WorkflowFileMetadata, "name">;
+  workflowRun?: Pick<WorkflowRun, "correctionFeedback">;
 };
 
 export function createApp({
@@ -813,6 +817,7 @@ export function createApp({
   requirementRepository,
   skillRepository,
   skillStorageRoot,
+  taskWorkflowExitEvaluator,
   taskRepository,
   taskWorkflowNodeExecutor,
   workflowRunRepository,
@@ -858,8 +863,11 @@ export function createApp({
   const planner = requirementPlanner ?? planRequirementWithModel;
   const taskNodeExecutor =
     taskWorkflowNodeExecutor ?? executeTaskWorkflowNodeWithModel;
+  const exitEvaluator =
+    taskWorkflowExitEvaluator ?? evaluateTaskWorkflowNodeWithModel;
   const taskWorkflowRunner = createTaskWorkflowRunner({
     bridges,
+    exitEvaluator,
     taskNodeExecutor,
     tasks,
     workflowRuns
@@ -1503,16 +1511,24 @@ export function createApp({
               workflowRun?: WorkflowRun;
             })
           : {};
-      const completedNodeRun = await workflowRuns.updateNodeRunStatus({
-        errorMessage: payload.data.errorMessage ?? null,
-        id: job.nodeRunId,
-        output: payload.data.output ?? null,
-        status: payload.data.status === "succeeded" ? "succeeded" : "failed"
-      });
+      const currentNodeRuns = await workflowRuns.listNodeRuns(job.workflowRunId);
+      const currentNodeRun = currentNodeRuns.find(
+        (nodeRun) => nodeRun.id === job.nodeRunId
+      );
+
+      if (!currentNodeRun) {
+        throw new Error(`Node Run not found: ${job.nodeRunId}`);
+      }
 
       if (payload.data.status === "failed") {
+        const failedNodeRun = await workflowRuns.updateNodeRunStatus({
+          errorMessage: payload.data.errorMessage ?? null,
+          id: job.nodeRunId,
+          output: payload.data.output ?? null,
+          status: "failed"
+        });
         await taskWorkflowRunner.failTaskWorkflowRun({
-          nodeRun: completedNodeRun,
+          nodeRun: failedNodeRun,
           taskId: jobPayload.task?.id,
           workflowRunId: job.workflowRunId
         });
@@ -1521,9 +1537,20 @@ export function createApp({
         const workflow = parseRunnableWorkflowDefinition(
           jobPayload.workflowFile.definition
         );
+        const node = workflow.nodes.find(
+          (candidate) => candidate.id === currentNodeRun.nodeId
+        );
 
-        await taskWorkflowRunner.advanceTaskWorkflowRun({
+        if (!node) {
+          throw new Error(`Workflow Node not found: ${currentNodeRun.nodeId}`);
+        }
+
+        await taskWorkflowRunner.completeNodeExecution({
           executorAssignments: readExecutorAssignments(job.payload),
+          node,
+          nodeRun: currentNodeRun,
+          nodeRuns: currentNodeRuns,
+          output: payload.data.output ?? "",
           settings,
           task: jobPayload.task,
           workflow,
@@ -2114,6 +2141,7 @@ export function createApp({
   api.post("/tasks/:id/workflow-runs", async (c) => {
     const payload = z
       .object({
+        correctionFeedback: z.string().trim().max(4000).optional(),
         nodeExecutorAssignments: z.array(nodeExecutorAssignmentSchema).optional(),
         workflowFileId: z.string().trim().min(1)
       })
@@ -2218,6 +2246,7 @@ export function createApp({
       const serializedExecutorAssignments =
         serializeExecutorAssignments(executorAssignments);
       const workflowRun = await workflowRuns.createWorkflowRun({
+        correctionFeedback: payload.data.correctionFeedback,
         executorAssignments: serializedExecutorAssignments,
         taskId: c.req.param("id"),
         workflowFileId: workflowFile.id
@@ -2347,6 +2376,82 @@ export function createApp({
         return c.json({
           nodeRuns,
           task: updatedTask,
+          workflowRun: updatedWorkflowRun
+        });
+      } catch (error) {
+        return c.json({ error: getErrorMessage(error) }, 400);
+      }
+    }
+  );
+
+  api.post(
+    "/tasks/:taskId/workflow-runs/:workflowRunId/node-runs/:nodeRunId/review",
+    async (c) => {
+      const payload = z
+        .object({
+          decision: z.enum(["approve", "request_changes"]),
+          feedback: z.string().trim().max(4000).optional().default("")
+        })
+        .strict()
+        .safeParse(await c.req.json().catch(() => null));
+
+      if (!payload.success) {
+        return c.json({ error: "Invalid Human Review payload" }, 400);
+      }
+
+      try {
+        const task = await tasks.getTask(c.req.param("taskId"));
+
+        if (!task) {
+          return c.json({ error: "Task not found" }, 404);
+        }
+
+        const workflowRun = (await workflowRuns.listWorkflowRuns(task.id)).find(
+          (candidate) => candidate.id === c.req.param("workflowRunId")
+        );
+
+        if (!workflowRun) {
+          return c.json({ error: "Workflow Run not found" }, 404);
+        }
+
+        const workflowFile = await workflowFiles.getWorkflowFileMetadata(
+          workflowRun.workflowFileId
+        );
+
+        if (!workflowFile) {
+          return c.json({ error: "Workflow File not found" }, 404);
+        }
+
+        const settings = await executionSettings.getExecutionSettings();
+        const workflow = parseRunnableWorkflowDefinition(workflowFile.definition);
+        const executorAssignments =
+          await resolveWorkflowRunExecutorAssignments({
+            settings,
+            task,
+            workflow,
+            workflowRun
+          });
+
+        await taskWorkflowRunner.completeHumanReview({
+          decision: payload.data.decision,
+          deferModelExecution: true,
+          executorAssignments,
+          feedback: payload.data.feedback,
+          nodeRunId: c.req.param("nodeRunId"),
+          settings,
+          task,
+          workflow,
+          workflowFile,
+          workflowRun
+        });
+
+        const [updatedWorkflowRun] = (
+          await workflowRuns.listWorkflowRuns(task.id)
+        ).filter((candidate) => candidate.id === workflowRun.id);
+
+        return c.json({
+          nodeRuns: await workflowRuns.listNodeRuns(workflowRun.id),
+          task: await tasks.getTask(task.id),
           workflowRun: updatedWorkflowRun
         });
       } catch (error) {
@@ -2840,12 +2945,16 @@ export function buildRequirementPlanningRequest({
 
 export function buildTaskWorkflowNodeExecutionRequest({
   node,
+  nodeRun = { attempt: 1, attempts: [], retryCount: 0 },
   nodeRuns,
   task,
   taskDependencyOutputs = [],
   workflow,
-  workflowFile
+  workflowFile,
+  workflowRun = { correctionFeedback: null }
 }: TaskWorkflowNodeExecutionRequestInput) {
+  const previousAttempt = nodeRun.attempts.at(-1) ?? null;
+
   return {
     prompt: JSON.stringify({
       task: {
@@ -2857,6 +2966,7 @@ export function buildTaskWorkflowNodeExecutionRequest({
         workflowFileName: workflowFile.name
       },
       workflowNode: {
+        attempt: nodeRun.attempt,
         dependsOn: node.dependsOn,
         exitCriteria: node.exit.criteria,
         id: node.id,
@@ -2871,6 +2981,15 @@ export function buildTaskWorkflowNodeExecutionRequest({
         type: node.type,
         uses: node.uses
       },
+      correctionContext: {
+        feedback:
+          previousAttempt?.review?.feedback ||
+          workflowRun.correctionFeedback ||
+          "",
+        previousOutput: previousAttempt?.output ?? "",
+        retryCount: nodeRun.retryCount,
+        retryInstruction: node.exit.retryInstruction
+      },
       taskDependencyOutputs
     }),
     system:
@@ -2880,20 +2999,24 @@ export function buildTaskWorkflowNodeExecutionRequest({
 
 async function executeTaskWorkflowNodeWithModel({
   node,
+  nodeRun,
   nodeRuns,
   settings,
   task,
   taskDependencyOutputs,
   workflow,
-  workflowFile
+  workflowFile,
+  workflowRun
 }: Parameters<TaskWorkflowNodeExecutor>[0]) {
   const executionRequest = buildTaskWorkflowNodeExecutionRequest({
     node,
+    nodeRun,
     nodeRuns,
     task,
     taskDependencyOutputs,
     workflow,
-    workflowFile
+    workflowFile,
+    workflowRun
   });
   const { text } = await generateText({
     model: createPlanningLanguageModel(settings),
@@ -2904,6 +3027,107 @@ async function executeTaskWorkflowNodeWithModel({
 
   return normalizeArtifactOutput(text);
 }
+
+const exitReviewEvaluationSchema = z.object({
+  criteria: z.array(
+    z.object({
+      criterion: z.string().trim().min(1),
+      evidence: z.string().trim(),
+      passed: z.boolean()
+    })
+  ),
+  feedback: z.string().trim(),
+  summary: z.string().trim().min(1),
+  verdict: z.enum(["passed", "failed"])
+});
+
+export function buildTaskWorkflowExitReviewRequest({
+  node,
+  nodeRun,
+  output,
+  task,
+  workflowFile
+}: Parameters<TaskWorkflowExitEvaluator>[0]) {
+  return {
+    prompt: JSON.stringify({
+      attempt: nodeRun.attempt,
+      exitCriteria: node.exit.criteria,
+      output,
+      task: {
+        body: task.body,
+        title: task.title
+      },
+      workflowNode: {
+        id: node.id,
+        type: node.type
+      },
+      workflowTemplate: workflowFile.name
+    }),
+    system: [
+      "You are the Exit Review evaluator for one Forge Workflow Node.",
+      "Judge the submitted output independently against every Exit Criterion.",
+      "Return passed only when every criterion is satisfied by concrete evidence in the output.",
+      "When failed, give concise, actionable feedback that the next attempt can use.",
+      "Do not rewrite the deliverable."
+    ].join(" ")
+  };
+}
+
+const evaluateTaskWorkflowNodeWithModel: TaskWorkflowExitEvaluator = async (input) => {
+  if (
+    input.executorAssignment.executorType === "agent-binding" &&
+    !isModelConfigured(input.settings)
+  ) {
+    return {
+      criteria: input.node.exit.criteria.map((criterion) => ({
+        criterion,
+        evidence: "No model reviewer is configured for this Agent Binding run.",
+        passed: true
+      })),
+      feedback:
+        "Configure a model reviewer or select Human Review to enforce these Exit Criteria.",
+      summary: "Exit Review skipped because no model reviewer is configured.",
+      verdict: "skipped"
+    };
+  }
+
+  const request = buildTaskWorkflowExitReviewRequest(input);
+  const { output } = await generateText({
+    model: createPlanningLanguageModel(input.settings),
+    output: Output.object({
+      description: "A structured Forge Workflow Node Exit Review.",
+      name: "forgeExitReview",
+      schema: exitReviewEvaluationSchema
+    }),
+    prompt: request.prompt,
+    system: request.system,
+    temperature: 0
+  });
+  const criteria = input.node.exit.criteria.map((criterion) => {
+    const result = output.criteria.find(
+      (candidate) => candidate.criterion === criterion
+    );
+
+    return (
+      result ?? {
+        criterion,
+        evidence: "The evaluator did not return a result for this criterion.",
+        passed: false
+      }
+    );
+  });
+  const verdict =
+    output.verdict === "passed" && criteria.every((criterion) => criterion.passed)
+      ? "passed"
+      : "failed";
+
+  return {
+    criteria,
+    feedback: output.feedback,
+    summary: output.summary,
+    verdict
+  };
+};
 
 function resolveWorkflowNodeInputArtifacts({
   node,

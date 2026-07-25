@@ -9,6 +9,19 @@ export function createHealthPayload() {
 export { normalizeArtifactOutput } from "./artifact-output.js";
 
 export {
+  exitReviewVerdicts,
+  getExitReviewTransition
+} from "./exit-review.js";
+
+export type {
+  ExitReviewCriterionResult,
+  ExitReviewResult,
+  ExitReviewTransition,
+  ExitReviewVerdict,
+  NodeRunAttempt
+} from "./exit-review.js";
+
+export {
   parseWorkflowFile,
   readLegacyWorkflowScope,
   workflowArtifactTypes,

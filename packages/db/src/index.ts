@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import type { ExitReviewResult, NodeRunAttempt } from "@forge/core";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -159,6 +160,7 @@ const workflowRuns = sqliteTable("workflow_runs", {
   taskId: text("task_id").notNull(),
   workflowFileId: text("workflow_file_id").notNull(),
   executorAssignments: text("executor_assignments").notNull(),
+  correctionFeedback: text("correction_feedback"),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull()
@@ -171,6 +173,10 @@ const nodeRuns = sqliteTable("node_runs", {
   workflowRunId: text("workflow_run_id").notNull(),
   nodeId: text("node_id").notNull(),
   dependsOn: text("depends_on").notNull(),
+  attempt: integer("attempt").notNull(),
+  attempts: text("attempts").notNull(),
+  exitReview: text("exit_review"),
+  retryCount: integer("retry_count").notNull(),
   status: text("status").notNull(),
   sortOrder: integer("sort_order").notNull(),
   output: text("output"),
@@ -553,6 +559,7 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
       task_id TEXT NOT NULL,
       workflow_file_id TEXT NOT NULL,
       executor_assignments TEXT NOT NULL DEFAULT '{}',
+      correction_feedback TEXT,
       status TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -564,12 +571,17 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
     "executor_assignments",
     "TEXT NOT NULL DEFAULT '{}'"
   );
+  ensureSqliteColumn(db, "workflow_runs", "correction_feedback", "TEXT");
   db.run(`
     CREATE TABLE IF NOT EXISTS node_runs (
       id TEXT PRIMARY KEY NOT NULL,
       workflow_run_id TEXT NOT NULL,
       node_id TEXT NOT NULL,
       depends_on TEXT NOT NULL,
+      attempt INTEGER NOT NULL DEFAULT 1,
+      attempts TEXT NOT NULL DEFAULT '[]',
+      exit_review TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
       output TEXT,
@@ -580,6 +592,10 @@ function initializeSqliteSchema(db: BetterSQLite3Database, sqlite: Database.Data
   `);
   ensureSqliteColumn(db, "node_runs", "output", "TEXT");
   ensureSqliteColumn(db, "node_runs", "error_message", "TEXT");
+  ensureSqliteColumn(db, "node_runs", "attempt", "INTEGER NOT NULL DEFAULT 1");
+  ensureSqliteColumn(db, "node_runs", "attempts", "TEXT NOT NULL DEFAULT '[]'");
+  ensureSqliteColumn(db, "node_runs", "exit_review", "TEXT");
+  ensureSqliteColumn(db, "node_runs", "retry_count", "INTEGER NOT NULL DEFAULT 0");
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_bindings (
       id TEXT PRIMARY KEY NOT NULL,
@@ -1552,6 +1568,7 @@ function createWorkflowRunRepository(
         taskId: input.taskId,
         workflowFileId: input.workflowFileId,
         executorAssignments: input.executorAssignments ?? {},
+        correctionFeedback: input.correctionFeedback?.trim() || null,
         status: "running",
         createdAt: now,
         updatedAt: now
@@ -1575,6 +1592,10 @@ function createWorkflowRunRepository(
         workflowRunId: input.workflowRunId,
         nodeId: input.nodeId,
         dependsOn: input.dependsOn,
+        attempt: 1,
+        attempts: [],
+        exitReview: null,
+        retryCount: 0,
         status: input.status,
         sortOrder: input.sortOrder,
         output: null,
@@ -1587,7 +1608,9 @@ function createWorkflowRunRepository(
         .insert(nodeRuns)
         .values({
           ...nodeRun,
-          dependsOn: JSON.stringify(nodeRun.dependsOn)
+          attempts: JSON.stringify(nodeRun.attempts),
+          dependsOn: JSON.stringify(nodeRun.dependsOn),
+          exitReview: null
         })
         .run();
 
@@ -1655,6 +1678,17 @@ function createWorkflowRunRepository(
 
       const updated = {
         ...row,
+        attempt: input.attempt === undefined ? row.attempt : input.attempt,
+        attempts:
+          input.attempts === undefined ? row.attempts : JSON.stringify(input.attempts),
+        exitReview:
+          input.exitReview === undefined
+            ? row.exitReview
+            : input.exitReview
+              ? JSON.stringify(input.exitReview)
+              : null,
+        retryCount:
+          input.retryCount === undefined ? row.retryCount : input.retryCount,
         status: input.status,
         output: input.output === undefined ? row.output : input.output,
         errorMessage:
@@ -1665,8 +1699,12 @@ function createWorkflowRunRepository(
       await db
         .update(nodeRuns)
         .set({
+          attempt: updated.attempt,
+          attempts: updated.attempts,
           errorMessage: updated.errorMessage,
+          exitReview: updated.exitReview,
           output: updated.output,
+          retryCount: updated.retryCount,
           status: updated.status,
           updatedAt: updated.updatedAt
         })
@@ -2022,6 +2060,7 @@ function toWorkflowRun(row: WorkflowRunRow): WorkflowRun {
       string,
       unknown
     >,
+    correctionFeedback: row.correctionFeedback,
     status: row.status as WorkflowRunStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -2034,13 +2073,39 @@ function toNodeRun(row: NodeRunRow): NodeRun {
     workflowRunId: row.workflowRunId,
     nodeId: row.nodeId,
     dependsOn: JSON.parse(row.dependsOn) as string[],
+    attempt: row.attempt,
+    attempts: parseNodeRunAttempts(row.attempts),
     errorMessage: row.errorMessage,
+    exitReview: parseExitReviewResult(row.exitReview),
+    retryCount: row.retryCount,
     status: row.status as NodeRunStatus,
     output: row.output,
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
+}
+
+function parseNodeRunAttempts(value: string): NodeRunAttempt[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    return Array.isArray(parsed) ? (parsed as NodeRunAttempt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseExitReviewResult(value: string | null): ExitReviewResult | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as ExitReviewResult;
+  } catch {
+    return null;
+  }
 }
 
 function toAgentBinding(row: AgentBindingRow, now = Date.now()): AgentBinding {

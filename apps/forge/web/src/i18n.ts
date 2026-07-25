@@ -303,6 +303,11 @@ type Messages = {
     requirementAcceptanceBlocked: (count: number) => string;
     chooseWorkflowRunExecutors: string;
     chooseWorkflowRunExecutorsHelp: string;
+    correctionFeedbackLabel: string;
+    correctionFeedbackPlaceholder: string;
+    correctionFeedbackHelp: string;
+    correctionFeedbackRequired: string;
+    runGuidanceHelp: string;
     workflowNodeExecutorLabel: string;
     useDefaultExecutor: string;
     startRun: string;
@@ -320,6 +325,27 @@ type Messages = {
     retryingWorkflowNode: string;
     retryWorkflowNodeTitle: string;
     retryWorkflowNodeHelp: string;
+    attemptLabel: (attempt: number) => string;
+    retryProgress: (retryCount: number, maxRetries: number) => string;
+    attemptHistoryLabel: (count: number) => string;
+    correctionContextLabel: string;
+    exitReviewHeading: string;
+    exitReviewVerdict: Record<
+      "pending" | "passed" | "failed" | "skipped",
+      string
+    >;
+    reviewedBy: (reviewer: "model" | "human" | "none") => string;
+    criterionPassed: string;
+    criterionNeedsWork: string;
+    exitReviewFeedbackLabel: string;
+    reviewFeedbackLabel: string;
+    reviewFeedbackPlaceholder: string;
+    reviewFeedbackHelp: string;
+    reviewFeedbackRequired: string;
+    requestChanges: string;
+    approveAndContinue: string;
+    submittingReview: string;
+    humanReviewFailed: string;
     workflowRunDetailsTitle: string;
     workflowRunProgressLabel: string;
     workflowRunCurrentNode: (current: number, total: number) => string;
@@ -887,12 +913,21 @@ const messages: Record<Locale, Messages> = {
       viewNodeArtifacts: "View node Artifacts",
       acceptRequirement: "Accept",
       acceptRequirementOutput: "Accept output",
-      rejectAndRerun: "Reject and rerun",
+      rejectAndRerun: "Request changes",
       requirementAcceptanceBlocked: (count) =>
         `${count} ${count === 1 ? "Task" : "Tasks"} unfinished`,
       chooseWorkflowRunExecutors: "Choose Workflow Run executors",
       chooseWorkflowRunExecutorsHelp:
         "Each Workflow Node uses the Project default executor unless you override it for this run.",
+      correctionFeedbackLabel: "Run guidance",
+      correctionFeedbackPlaceholder:
+        "Describe what should change, what to preserve, and how success will be judged.",
+      correctionFeedbackHelp:
+        "Required for a correction run. Forge sends this feedback into the next attempt.",
+      correctionFeedbackRequired:
+        "Describe the requested changes before starting the correction run.",
+      runGuidanceHelp:
+        "Optional context for this run. Keep it specific and actionable.",
       workflowNodeExecutorLabel: "Workflow Node executor",
       useDefaultExecutor: "Project default",
       startRun: "Start Run",
@@ -912,6 +947,38 @@ const messages: Record<Locale, Messages> = {
       retryWorkflowNodeTitle: "Retry from this Workflow Node",
       retryWorkflowNodeHelp:
         "Completed dependencies stay unchanged. This node and downstream nodes will run again.",
+      attemptLabel: (attempt) => `Attempt ${attempt}`,
+      retryProgress: (retryCount, maxRetries) =>
+        `${retryCount} / ${maxRetries} automatic retries`,
+      attemptHistoryLabel: (count) =>
+        `${count} completed ${count === 1 ? "attempt" : "attempts"}`,
+      correctionContextLabel: "Correction feedback",
+      exitReviewHeading: "Exit Review",
+      exitReviewVerdict: {
+        failed: "Needs changes",
+        passed: "Passed",
+        pending: "Human Review",
+        skipped: "Not enforced"
+      },
+      reviewedBy: (reviewer) =>
+        reviewer === "model"
+          ? "Reviewed by model"
+          : reviewer === "human"
+            ? "Reviewed by a person"
+            : "No reviewer configured",
+      criterionPassed: "Pass",
+      criterionNeedsWork: "Needs work",
+      exitReviewFeedbackLabel: "Feedback for the next attempt",
+      reviewFeedbackLabel: "Review feedback",
+      reviewFeedbackPlaceholder:
+        "Explain what needs to change. Approval does not require a note.",
+      reviewFeedbackHelp:
+        "Requesting changes automatically starts another attempt while retry budget remains.",
+      reviewFeedbackRequired: "Add feedback before requesting changes.",
+      requestChanges: "Request changes",
+      approveAndContinue: "Approve and continue",
+      submittingReview: "Saving review",
+      humanReviewFailed: "Human Review failed",
       workflowRunDetailsTitle: "Workflow Run details",
       workflowRunProgressLabel: "Progress",
       workflowRunCurrentNode: (current, total) =>
@@ -1468,11 +1535,18 @@ const messages: Record<Locale, Messages> = {
       viewNodeArtifacts: "查看子任务产物",
       acceptRequirement: "验收",
       acceptRequirementOutput: "验收通过",
-      rejectAndRerun: "拒绝重跑",
+      rejectAndRerun: "要求返工",
       requirementAcceptanceBlocked: (count) => `还有 ${count} 个任务未完成`,
       chooseWorkflowRunExecutors: "选择任务工作流执行方",
       chooseWorkflowRunExecutorsHelp:
         "每个 Workflow Node 默认使用项目默认执行方，也可以只为本次运行单独覆盖。",
+      correctionFeedbackLabel: "本次运行说明",
+      correctionFeedbackPlaceholder:
+        "说明需要修改什么、必须保留什么，以及怎样才算完成。",
+      correctionFeedbackHelp:
+        "返工运行必须填写。Forge 会把这些反馈带入下一次执行。",
+      correctionFeedbackRequired: "请先填写修改要求，再开始返工运行。",
+      runGuidanceHelp: "可选。建议写成具体、可执行的补充要求。",
       workflowNodeExecutorLabel: "Workflow Node 执行方",
       useDefaultExecutor: "项目默认",
       startRun: "开始任务",
@@ -1491,6 +1565,36 @@ const messages: Record<Locale, Messages> = {
       retryWorkflowNodeTitle: "从这个 Workflow Node 重试",
       retryWorkflowNodeHelp:
         "已完成的前置节点会保留，这个节点和后续节点会重新执行。",
+      attemptLabel: (attempt) => `第 ${attempt} 次尝试`,
+      retryProgress: (retryCount, maxRetries) =>
+        `自动重试 ${retryCount} / ${maxRetries}`,
+      attemptHistoryLabel: (count) => `${count} 次已完成尝试`,
+      correctionContextLabel: "返工反馈",
+      exitReviewHeading: "准出评审",
+      exitReviewVerdict: {
+        failed: "需要修改",
+        passed: "已通过",
+        pending: "等待人工评审",
+        skipped: "未强制评审"
+      },
+      reviewedBy: (reviewer) =>
+        reviewer === "model"
+          ? "模型评审"
+          : reviewer === "human"
+            ? "人工评审"
+            : "未配置评审方",
+      criterionPassed: "通过",
+      criterionNeedsWork: "待改进",
+      exitReviewFeedbackLabel: "下一次尝试的反馈",
+      reviewFeedbackLabel: "评审意见",
+      reviewFeedbackPlaceholder: "说明需要修改的地方；直接通过时可以不填。",
+      reviewFeedbackHelp:
+        "要求修改后，只要还有重试额度，Forge 会自动开始下一次尝试。",
+      reviewFeedbackRequired: "要求修改前，请填写具体评审意见。",
+      requestChanges: "要求修改",
+      approveAndContinue: "通过并继续",
+      submittingReview: "正在保存",
+      humanReviewFailed: "人工评审提交失败",
       workflowRunDetailsTitle: "Workflow Run 详情",
       workflowRunProgressLabel: "执行进度",
       workflowRunCurrentNode: (current, total) =>

@@ -16,6 +16,7 @@ import {
   listTaskWorkflowRuns,
   listTasks,
   listWorkflowFiles,
+  reviewTaskWorkflowNodeRun,
   retryTaskWorkflowNodeRun,
   resetRequirement,
   startTaskWorkflowRun,
@@ -105,6 +106,8 @@ type PendingRequirementAction = {
 } | null;
 type WorkflowRunExecutorDialogState = {
   assignments: Record<string, string>;
+  correctionFeedback: string;
+  isCorrection: boolean;
   taskId: string;
   workflowFileId: string;
 } | null;
@@ -725,6 +728,8 @@ function getWorkflowRunFocusNodeRun(run: WorkflowRunWithNodes) {
 
   return (
     orderedNodeRuns.find((nodeRun) => nodeRun.status === "running") ??
+    orderedNodeRuns.find((nodeRun) => nodeRun.status === "reviewing") ??
+    orderedNodeRuns.find((nodeRun) => nodeRun.status === "blocked") ??
     orderedNodeRuns.find((nodeRun) => nodeRun.status === "failed") ??
     orderedNodeRuns.find((nodeRun) => nodeRun.status === "queued") ??
     orderedNodeRuns.at(-1) ??
@@ -2228,6 +2233,12 @@ export function App({
   const [retryingNodeRunIds, setRetryingNodeRunIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [reviewingNodeRunIds, setReviewingNodeRunIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [reviewFeedbackByNodeRunId, setReviewFeedbackByNodeRunId] = useState<
+    Record<string, string>
+  >({});
   const [isRunningAllTaskWorkflows, setIsRunningAllTaskWorkflows] =
     useState(false);
   const [workflowRunExecutorError, setWorkflowRunExecutorError] = useState("");
@@ -3528,7 +3539,8 @@ export function App({
 
   function handleOpenWorkflowRunExecutorDialog(
     taskId: string,
-    workflowFileIdOverride?: string
+    workflowFileIdOverride?: string,
+    { isCorrection = false }: { isCorrection?: boolean } = {}
   ) {
     setWorkflowRunExecutorError("");
     const selectedTaskWorkflowId =
@@ -3559,6 +3571,8 @@ export function App({
         workflow,
         getProjectDefaultExecutorValue(selectedProject)
       ),
+      correctionFeedback: "",
+      isCorrection,
       taskId,
       workflowFileId: workflowFile.id
     });
@@ -3571,9 +3585,15 @@ export function App({
       return;
     }
 
+    const correctionFeedback =
+      workflowRunExecutorDialog.correctionFeedback.trim();
+    if (workflowRunExecutorDialog.isCorrection && !correctionFeedback) {
+      setWorkflowRunExecutorError(t.workspace.correctionFeedbackRequired);
+      return;
+    }
+
     setWorkflowRunExecutorError("");
     setTaskBoardStatus({ kind: "status", key: "startingWorkflowRun" });
-
     try {
       const nodeExecutorAssignments = Object.entries(
         workflowRunExecutorDialog.assignments
@@ -3584,7 +3604,7 @@ export function App({
       const workflowRun = await startTaskWorkflowRun(
         workflowRunExecutorDialog.taskId,
         workflowRunExecutorDialog.workflowFileId,
-        { nodeExecutorAssignments }
+        { correctionFeedback, nodeExecutorAssignments }
       );
 
       setTasks((currentTasks) =>
@@ -3810,6 +3830,72 @@ export function App({
     }
   }
 
+  async function handleReviewTaskWorkflowNodeRun(
+    taskId: string,
+    workflowRunId: string,
+    nodeRunId: string,
+    decision: "approve" | "request_changes"
+  ) {
+    const feedback = (reviewFeedbackByNodeRunId[nodeRunId] ?? "").trim();
+
+    if (decision === "request_changes" && !feedback) {
+      setTaskBoardStatus({
+        kind: "error",
+        message: t.workspace.reviewFeedbackRequired
+      });
+      return;
+    }
+
+    setReviewingNodeRunIds((currentIds) => new Set(currentIds).add(nodeRunId));
+
+    try {
+      const reviewedRun = await reviewTaskWorkflowNodeRun(
+        taskId,
+        workflowRunId,
+        nodeRunId,
+        { decision, feedback }
+      );
+
+      setTasks((currentTasks) =>
+        currentTasks.map((task) =>
+          task.id === reviewedRun.task.id ? reviewedRun.task : task
+        )
+      );
+      setWorkflowRunsByTaskId((currentWorkflowRuns) => ({
+        ...currentWorkflowRuns,
+        [taskId]: (currentWorkflowRuns[taskId] ?? []).map((currentRun) =>
+          currentRun.workflowRun.id === reviewedRun.workflowRun.id
+            ? reviewedRun
+            : currentRun
+        )
+      }));
+      setReviewFeedbackByNodeRunId((currentFeedback) => {
+        const nextFeedback = { ...currentFeedback };
+        delete nextFeedback[nodeRunId];
+        return nextFeedback;
+      });
+      setTaskBoardStatus({
+        kind: "named",
+        key: "workflowRunStatus",
+        name: reviewedRun.workflowRun.status
+      });
+    } catch (error) {
+      setTaskBoardStatus({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : t.workspace.humanReviewFailed
+      });
+    } finally {
+      setReviewingNodeRunIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.delete(nodeRunId);
+        return nextIds;
+      });
+    }
+  }
+
   async function handleAcceptRequirement(requirementId: string) {
     setTaskBoardStatus({ kind: "status", key: "acceptingRequirement" });
 
@@ -3844,7 +3930,9 @@ export function App({
 
   function handleRejectRequirementAcceptance(task: Task, run: WorkflowRunWithNodes) {
     setRequirementAcceptanceDialogRequirementId("");
-    handleOpenWorkflowRunExecutorDialog(task.id, run.workflowRun.workflowFileId);
+    handleOpenWorkflowRunExecutorDialog(task.id, run.workflowRun.workflowFileId, {
+      isCorrection: true
+    });
   }
 
   async function handleSaveModelSettings(event: FormEvent<HTMLFormElement>) {
@@ -4832,6 +4920,31 @@ export function App({
                   {workflowRunExecutorError}
                 </p>
               ) : null}
+              <label>
+                {t.workspace.correctionFeedbackLabel}
+                <textarea
+                  aria-describedby="workflow-run-correction-feedback-help"
+                  onChange={(event) =>
+                    setWorkflowRunExecutorDialog((currentDialog) =>
+                      currentDialog
+                        ? {
+                            ...currentDialog,
+                            correctionFeedback: event.target.value
+                          }
+                        : currentDialog
+                    )
+                  }
+                  placeholder={t.workspace.correctionFeedbackPlaceholder}
+                  required={workflowRunExecutorDialog.isCorrection}
+                  rows={4}
+                  value={workflowRunExecutorDialog.correctionFeedback}
+                />
+              </label>
+              <p className="form-helper" id="workflow-run-correction-feedback-help">
+                {workflowRunExecutorDialog.isCorrection
+                  ? t.workspace.correctionFeedbackHelp
+                  : t.workspace.runGuidanceHelp}
+              </p>
               {activeWorkflowRunTemplate.nodes.map((node) => (
                 <label key={node.id}>
                   {t.workspace.workflowNodeExecutorLabel}: {node.id}
@@ -5068,6 +5181,13 @@ export function App({
             </StatusBadge>
             </div>
 
+            {activeWorkflowRunDetail.workflowRun.correctionFeedback ? (
+              <section className="workflow-run-correction-context">
+                <strong>{t.workspace.correctionContextLabel}</strong>
+                <p>{activeWorkflowRunDetail.workflowRun.correctionFeedback}</p>
+              </section>
+            ) : null}
+
             <div className="workflow-run-detail-node-list">
             {orderedNodeRuns.map((nodeRun, index) => {
               const nodeDefinition = templateNodesById.get(nodeRun.nodeId);
@@ -5093,6 +5213,11 @@ export function App({
                 nodeDefinition?.instruction?.text ??
                 nodeDefinition?.instruction?.ref ??
                 "";
+              const attempt = nodeRun.attempt ?? 1;
+              const attempts = nodeRun.attempts ?? [];
+              const retryCount = nodeRun.retryCount ?? 0;
+              const exitReview = nodeRun.exitReview ?? null;
+              const isSubmittingReview = reviewingNodeRunIds.has(nodeRun.id);
 
               return (
                 <article
@@ -5111,6 +5236,13 @@ export function App({
                       <h3>{nodeRun.nodeId}</h3>
                     </div>
                     <div className="workflow-run-detail-node-status">
+                      <span className="workflow-run-attempt-summary">
+                        {t.workspace.attemptLabel(attempt)} ·{" "}
+                        {t.workspace.retryProgress(
+                          retryCount,
+                          nodeDefinition?.exit.maxRetries ?? 0
+                        )}
+                      </span>
                       <StatusBadge tone={getNodeRunTone(nodeRun.status)}>
                         {nodeRun.status}
                       </StatusBadge>
@@ -5173,6 +5305,148 @@ export function App({
                     </div>
                   ) : null}
 
+                  {exitReview ? (
+                    <section
+                      className={`workflow-run-exit-review workflow-run-exit-review-${exitReview.verdict}`}
+                    >
+                      <div className="workflow-run-exit-review-heading">
+                        <div>
+                          <h4>{t.workspace.exitReviewHeading}</h4>
+                          <p>{t.workspace.reviewedBy(exitReview.reviewer)}</p>
+                        </div>
+                        <StatusBadge
+                          tone={
+                            exitReview.verdict === "passed"
+                              ? "success"
+                              : exitReview.verdict === "failed"
+                                ? "danger"
+                                : exitReview.verdict === "pending"
+                                  ? "warning"
+                                  : "neutral"
+                          }
+                        >
+                          {t.workspace.exitReviewVerdict[exitReview.verdict]}
+                        </StatusBadge>
+                      </div>
+                      <p>{exitReview.summary}</p>
+                      {exitReview.criteria.length > 0 ? (
+                        <ul className="workflow-run-exit-review-criteria">
+                          {exitReview.criteria.map((criterion) => (
+                            <li key={criterion.criterion}>
+                              <strong>
+                                {criterion.passed
+                                  ? t.workspace.criterionPassed
+                                  : t.workspace.criterionNeedsWork}
+                              </strong>
+                              <span>{criterion.criterion}</span>
+                              {criterion.evidence ? (
+                                <small>{criterion.evidence}</small>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {exitReview.feedback &&
+                      exitReview.verdict !== "pending" ? (
+                        <div className="workflow-run-exit-review-feedback">
+                          <strong>{t.workspace.exitReviewFeedbackLabel}</strong>
+                          <p>{exitReview.feedback}</p>
+                        </div>
+                      ) : null}
+                      {nodeRun.status === "reviewing" &&
+                      exitReview.verdict === "pending" ? (
+                        <div className="workflow-run-human-review">
+                          <label>
+                            {t.workspace.reviewFeedbackLabel}
+                            <textarea
+                              onChange={(event) =>
+                                setReviewFeedbackByNodeRunId((currentFeedback) => ({
+                                  ...currentFeedback,
+                                  [nodeRun.id]: event.target.value
+                                }))
+                              }
+                              placeholder={t.workspace.reviewFeedbackPlaceholder}
+                              rows={3}
+                              value={reviewFeedbackByNodeRunId[nodeRun.id] ?? ""}
+                            />
+                          </label>
+                          <p>{t.workspace.reviewFeedbackHelp}</p>
+                          <div className="workflow-run-human-review-actions">
+                            <button
+                              className="button-secondary"
+                              disabled={isSubmittingReview}
+                              onClick={() =>
+                                void handleReviewTaskWorkflowNodeRun(
+                                  activeWorkflowRunDetail.workflowRun.taskId,
+                                  activeWorkflowRunDetail.workflowRun.id,
+                                  nodeRun.id,
+                                  "request_changes"
+                                )
+                              }
+                              type="button"
+                            >
+                              {t.workspace.requestChanges}
+                            </button>
+                            <button
+                              disabled={isSubmittingReview}
+                              onClick={() =>
+                                void handleReviewTaskWorkflowNodeRun(
+                                  activeWorkflowRunDetail.workflowRun.taskId,
+                                  activeWorkflowRunDetail.workflowRun.id,
+                                  nodeRun.id,
+                                  "approve"
+                                )
+                              }
+                              type="button"
+                            >
+                              {isSubmittingReview
+                                ? t.workspace.submittingReview
+                                : t.workspace.approveAndContinue}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  {attempts.length > 0 ? (
+                    <details className="workflow-run-attempt-history">
+                      <summary>
+                        {t.workspace.attemptHistoryLabel(attempts.length)}
+                      </summary>
+                      <ol>
+                        {[...attempts].reverse().map((attemptRecord) => (
+                          <li key={attemptRecord.attempt}>
+                            <div>
+                              <strong>
+                                {t.workspace.attemptLabel(attemptRecord.attempt)}
+                              </strong>
+                              <span>
+                                {formatManagementTimestamp(
+                                  attemptRecord.completedAt
+                                )}
+                              </span>
+                            </div>
+                            {attemptRecord.review ? (
+                              <p>
+                                {
+                                  t.workspace.exitReviewVerdict[
+                                    attemptRecord.review.verdict
+                                  ]
+                                }
+                                {attemptRecord.review.feedback
+                                  ? ` · ${attemptRecord.review.feedback}`
+                                  : ""}
+                              </p>
+                            ) : attemptRecord.errorMessage ? (
+                              <p>{attemptRecord.errorMessage}</p>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  ) : null}
+
                   <section className="workflow-run-detail-trace">
                     <h4>{t.workspace.workflowRunProcessLabel}</h4>
                     <dl>
@@ -5200,7 +5474,7 @@ export function App({
                     {!nodeRun.errorMessage && !nodeRun.output ? (
                       <p>{getWorkflowRunNoProcessDetailsMessage(nodeRun, t)}</p>
                     ) : null}
-                    {nodeRun.status === "failed" ? (
+                    {["blocked", "failed"].includes(nodeRun.status) ? (
                       <div className="workflow-run-detail-retry-panel">
                         <div>
                           <strong>{t.workspace.retryWorkflowNodeTitle}</strong>

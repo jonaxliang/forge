@@ -1,5 +1,7 @@
 import type {
   createHealthPayload,
+  ExitReviewResult as CoreExitReviewResult,
+  NodeRunAttempt as CoreNodeRunAttempt,
   WorkflowAgent as CoreWorkflowAgent,
   WorkflowArtifact as CoreWorkflowArtifact,
   WorkflowArtifactType as CoreWorkflowArtifactType,
@@ -56,6 +58,8 @@ export type WorkflowNodeOutput = CoreWorkflowNodeOutput;
 export type WorkflowHumanReview = CoreWorkflowHumanReview;
 export type WorkflowNode = CoreWorkflowNode;
 export type WorkflowFile = CoreWorkflowFile;
+export type ExitReviewResult = CoreExitReviewResult;
+export type NodeRunAttempt = CoreNodeRunAttempt;
 
 export type WorkflowFileMetadata = {
   id: string;
@@ -177,6 +181,7 @@ export type WorkflowRun = {
   taskId: string;
   workflowFileId: string;
   executorAssignments: Record<string, unknown>;
+  correctionFeedback?: string | null;
   status: WorkflowRunStatus;
   createdAt: string;
   updatedAt: string;
@@ -187,6 +192,10 @@ export type NodeRun = {
   workflowRunId: string;
   nodeId: string;
   dependsOn: string[];
+  attempt?: number;
+  attempts?: NodeRunAttempt[];
+  exitReview?: ExitReviewResult | null;
+  retryCount?: number;
   status: NodeStatus;
   sortOrder: number;
   output: string | null;
@@ -324,6 +333,7 @@ export type NodeExecutorAssignmentRequest = {
 };
 
 export type StartTaskWorkflowRunRequest = {
+  correctionFeedback?: string;
   nodeExecutorAssignments?: NodeExecutorAssignmentRequest[];
   workflowFileId: string;
 };
@@ -964,6 +974,41 @@ export async function retryTaskWorkflowNodeRun(
     } | null;
 
     throw new Error(body?.error ?? "Workflow Node retry failed");
+  }
+
+  return response.json() as Promise<RetriedWorkflowRunWithTask>;
+}
+
+export async function reviewTaskWorkflowNodeRun(
+  taskId: string,
+  workflowRunId: string,
+  nodeRunId: string,
+  input: {
+    decision: "approve" | "request_changes";
+    feedback?: string;
+  },
+  baseUrl = ""
+): Promise<RetriedWorkflowRunWithTask> {
+  const response = await fetch(
+    apiUrl(
+      baseUrl,
+      `/tasks/${taskId}/workflow-runs/${workflowRunId}/node-runs/${nodeRunId}/review`
+    ),
+    {
+      body: JSON.stringify(input),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    }
+  );
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+
+    throw new Error(body?.error ?? "Workflow Node review failed");
   }
 
   return response.json() as Promise<RetriedWorkflowRunWithTask>;

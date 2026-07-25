@@ -130,6 +130,16 @@ function createPlanningApp(options: Parameters<typeof createApp>[0] = {}) {
       ],
       summary: `Split ${requirement.title} into executable tasks.`
     }),
+    taskWorkflowExitEvaluator: async ({ node }) => ({
+      criteria: node.exit.criteria.map((criterion) => ({
+        criterion,
+        evidence: "Test evaluator passed this criterion.",
+        passed: true
+      })),
+      feedback: "",
+      summary: "Exit Criteria passed.",
+      verdict: "passed"
+    }),
     ...options
   });
 }
@@ -3790,6 +3800,126 @@ nodes:
       }
     });
     expect(executedNodeIds).toEqual(["collect", "analyze", "brief"]);
+  });
+
+  it("pauses for Human Review and continues with persisted correction feedback", async () => {
+    const app = createPlanningApp({
+      taskWorkflowNodeExecutor: async () => "Reviewable output"
+    } as never);
+    await configureModel(app);
+    const createdTask = await createTask(app);
+    const workflowResponse = await app.request("/api/workflow-files/import", {
+      body: JSON.stringify({
+        source: `
+name: Human-reviewed workflow
+scope: task
+version: "1.1"
+nodes:
+  - id: draft
+    type: writing
+    exit:
+      review: human
+      maxRetries: 1
+      criteria:
+        - Output is ready for delivery.
+      retryInstruction: Apply the Human Review feedback.
+`
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const workflowBody = (await workflowResponse.json()) as {
+      workflowFile: { id: string };
+    };
+    const startResponse = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs`,
+      {
+        body: JSON.stringify({
+          correctionFeedback: "Keep the approved structure.",
+          nodeExecutorAssignments: [
+            {
+              executorType: "model-api",
+              nodeId: "draft"
+            }
+          ],
+          workflowFileId: workflowBody.workflowFile.id
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    const started = (await startResponse.json()) as {
+      workflowRun: { id: string };
+    };
+
+    expect(startResponse.status).toBe(201);
+    const reviewingRun = await waitForTaskWorkflowRun(
+      app,
+      createdTask.task.id,
+      (run) => run.nodeRuns.some((nodeRun) => nodeRun.status === "reviewing")
+    );
+    const reviewingNodeRun = reviewingRun.nodeRuns[0]!;
+    expect(reviewingRun).toMatchObject({
+      nodeRuns: [
+        {
+          attempt: 1,
+          attempts: [],
+          exitReview: {
+            reviewer: "human",
+            verdict: "pending"
+          },
+          retryCount: 0,
+          status: "reviewing"
+        }
+      ],
+      workflowRun: {
+        correctionFeedback: "Keep the approved structure.",
+        id: started.workflowRun.id,
+        status: "running"
+      }
+    });
+
+    const reviewResponse = await app.request(
+      `/api/tasks/${createdTask.task.id}/workflow-runs/${started.workflowRun.id}/node-runs/${reviewingNodeRun.id}/review`,
+      {
+        body: JSON.stringify({
+          decision: "approve",
+          feedback: "Ready to ship."
+        }),
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    expect(reviewResponse.status).toBe(200);
+    await expect(reviewResponse.json()).resolves.toMatchObject({
+      nodeRuns: [
+        {
+          attempts: [
+            {
+              attempt: 1,
+              review: {
+                feedback: "Ready to ship.",
+                verdict: "passed"
+              }
+            }
+          ],
+          status: "succeeded"
+        }
+      ],
+      task: {
+        status: "pending_acceptance"
+      },
+      workflowRun: {
+        status: "succeeded"
+      }
+    });
   });
 
   it("retries a failed Model API Workflow Node without rerunning succeeded dependencies", async () => {

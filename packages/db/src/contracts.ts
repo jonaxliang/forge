@@ -1,3 +1,4 @@
+import type { ExitReviewResult, NodeRunAttempt } from "@forge/core";
 import type {
   AgentBindingStatus,
   AgentConnectorType,
@@ -303,6 +304,7 @@ export type WorkflowRun = {
   taskId: string;
   workflowFileId: string;
   executorAssignments: Record<string, unknown>;
+  correctionFeedback: string | null;
   status: WorkflowRunStatus;
   createdAt: string;
   updatedAt: string;
@@ -313,6 +315,10 @@ export type NodeRun = {
   workflowRunId: string;
   nodeId: string;
   dependsOn: string[];
+  attempt: number;
+  attempts: NodeRunAttempt[];
+  exitReview: ExitReviewResult | null;
+  retryCount: number;
   status: NodeRunStatus;
   sortOrder: number;
   output: string | null;
@@ -322,6 +328,7 @@ export type NodeRun = {
 };
 
 export type CreateWorkflowRunInput = {
+  correctionFeedback?: string | null;
   executorAssignments?: Record<string, unknown>;
   taskId: string;
   workflowFileId: string;
@@ -341,7 +348,11 @@ export type UpdateWorkflowRunStatusInput = {
 };
 
 export type UpdateNodeRunStatusInput = {
+  attempt?: number;
+  attempts?: NodeRunAttempt[];
+  exitReview?: ExitReviewResult | null;
   id: string;
+  retryCount?: number;
   status: NodeRunStatus;
   output?: string | null;
   errorMessage?: string | null;
