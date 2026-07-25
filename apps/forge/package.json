@@ -33,7 +33,7 @@
     "@hono/node-server": "^1.13.7",
     "@vitejs/plugin-react": "^4.3.4",
     "ai": "^6.0.205",
-    "hono": "^4.6.14",
+    "hono": "^4.12.27",
     "motion": "^12.40.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
