@@ -22,12 +22,22 @@ type BridgeJobResponse = {
   job: (BridgeJobPayload & { agentName: string }) | null;
 };
 
+type BridgeRegistrationResponse = {
+  bridgeToken?: string;
+};
+
 export async function startBridgeDaemon(options: BridgeDaemonOptions = {}) {
   const paths = resolveForgeCliPaths({ env: options.env });
   const state = await loadForgeCliState({ env: options.env });
 
   if (!state.config.serverUrl) {
     throw new Error("Bridge is not bound. Run `forgecli bridge bind --server <url>`.");
+  }
+
+  if (!state.config.authToken) {
+    throw new Error(
+      "Bridge has no Forge API token. Run `forgecli bridge bind --server <url> --token <token>`."
+    );
   }
 
   await mkdir(dirname(paths.logFile), { recursive: true });
@@ -91,12 +101,33 @@ export async function runBridgeDaemon(options: BridgeDaemonOptions = {}) {
     throw new Error("Bridge is not bound. Run `forgecli bridge bind --server <url>`.");
   }
 
+  if (!state.config.authToken) {
+    throw new Error(
+      "Bridge has no Forge API token. Run `forgecli bridge bind --server <url> --token <token>`."
+    );
+  }
+
   await writeBridgeStatus("running", { env: options.env });
-  await registerBridge(state.config.serverUrl, state.config.bridgeId, state.agents);
+  const bridgeToken = await registerBridge(
+    state.config.serverUrl,
+    state.config.bridgeId,
+    state.agents,
+    state.config.authToken
+  );
 
   do {
-    await heartbeatBridge(state.config.serverUrl, state.config.bridgeId, state.agents);
-    await executeNextJob(state.config.serverUrl, state.config.bridgeId, state.agents);
+    await heartbeatBridge(
+      state.config.serverUrl,
+      state.config.bridgeId,
+      state.agents,
+      bridgeToken
+    );
+    await executeNextJob(
+      state.config.serverUrl,
+      state.config.bridgeId,
+      state.agents,
+      bridgeToken
+    );
 
     if (!options.once) {
       await delay(state.config.pollIntervalMs);
@@ -107,10 +138,14 @@ export async function runBridgeDaemon(options: BridgeDaemonOptions = {}) {
 async function executeNextJob(
   serverUrl: string,
   bridgeId: string,
-  agents: ForgeCliAgent[]
+  agents: ForgeCliAgent[],
+  bridgeToken: string
 ) {
   const response = await fetch(
-    `${serverUrl}/api/bridges/${encodeURIComponent(bridgeId)}/jobs/next`
+    `${serverUrl}/api/bridges/${encodeURIComponent(bridgeId)}/jobs/next`,
+    {
+      headers: authorizationHeaders(bridgeToken)
+    }
   );
 
   if (!response.ok) {
@@ -126,26 +161,39 @@ async function executeNextJob(
   const agent = agents.find((candidate) => candidate.name === body.job?.agentName);
 
   if (!agent) {
-    await completeJob(serverUrl, bridgeId, body.job.id, {
-      errorMessage: `No local agent registered with name ${body.job.agentName}`,
-      status: "failed"
-    });
+    await completeJob(
+      serverUrl,
+      bridgeId,
+      body.job.id,
+      {
+        errorMessage: `No local agent registered with name ${body.job.agentName}`,
+        status: "failed"
+      },
+      bridgeToken
+    );
     return;
   }
 
   const result = await executeAgent(agent, body.job);
 
-  await completeJob(serverUrl, bridgeId, body.job.id, {
-    errorMessage: result.exitCode === 0 ? null : result.stderr || result.stdout,
-    output: result.stdout,
-    status: result.exitCode === 0 ? "succeeded" : "failed"
-  });
+  await completeJob(
+    serverUrl,
+    bridgeId,
+    body.job.id,
+    {
+      errorMessage: result.exitCode === 0 ? null : result.stderr || result.stdout,
+      output: result.stdout,
+      status: result.exitCode === 0 ? "succeeded" : "failed"
+    },
+    bridgeToken
+  );
 }
 
 async function registerBridge(
   serverUrl: string,
   bridgeId: string,
-  agents: ForgeCliAgent[]
+  agents: ForgeCliAgent[],
+  authToken: string
 ) {
   const response = await fetch(`${serverUrl}/api/bridges/register`, {
     body: JSON.stringify({
@@ -153,6 +201,7 @@ async function registerBridge(
       bridgeId
     }),
     headers: {
+      ...authorizationHeaders(authToken),
       "content-type": "application/json"
     },
     method: "POST"
@@ -161,18 +210,28 @@ async function registerBridge(
   if (!response.ok) {
     throw new Error(`Bridge registration failed with status ${response.status}`);
   }
+
+  const body = (await response.json()) as BridgeRegistrationResponse;
+
+  if (!body.bridgeToken) {
+    throw new Error("Bridge registration did not return an identity token");
+  }
+
+  return body.bridgeToken;
 }
 
 async function heartbeatBridge(
   serverUrl: string,
   bridgeId: string,
-  agents: ForgeCliAgent[]
+  agents: ForgeCliAgent[],
+  bridgeToken: string
 ) {
   const response = await fetch(
     `${serverUrl}/api/bridges/${encodeURIComponent(bridgeId)}/heartbeat`,
     {
       body: JSON.stringify({ agents }),
       headers: {
+        ...authorizationHeaders(bridgeToken),
         "content-type": "application/json"
       },
       method: "POST"
@@ -192,7 +251,8 @@ async function completeJob(
     errorMessage?: string | null;
     output?: string;
     status: "succeeded" | "failed";
-  }
+  },
+  bridgeToken: string
 ) {
   const response = await fetch(
     `${serverUrl}/api/bridges/${encodeURIComponent(bridgeId)}/jobs/${encodeURIComponent(
@@ -201,6 +261,7 @@ async function completeJob(
     {
       body: JSON.stringify(body),
       headers: {
+        ...authorizationHeaders(bridgeToken),
         "content-type": "application/json"
       },
       method: "POST"
@@ -210,6 +271,12 @@ async function completeJob(
   if (!response.ok) {
     throw new Error(`Bridge job completion failed with status ${response.status}`);
   }
+}
+
+function authorizationHeaders(token: string) {
+  return {
+    authorization: `Bearer ${token}`
+  };
 }
 
 async function writeBridgeStatus(

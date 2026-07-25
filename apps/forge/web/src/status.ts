@@ -1,8 +1,9 @@
 export function shouldShowModelConfigurationStatus({
-  modelConfigured
+  modelConfigured,
+  requirementCount
 }: {
   modelConfigured: boolean | null | undefined;
   requirementCount: number;
 }) {
-  return modelConfigured === false;
+  return modelConfigured === false && requirementCount > 0;
 }

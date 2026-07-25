@@ -37,6 +37,20 @@ describe("App workbench layout", () => {
     expect(markup).toContain('role="dialog"');
   });
 
+  it("describes SQLite storage without offering unsupported backends", () => {
+    const markup = renderToStaticMarkup(
+      <App initialWorkbenchAction="project" />
+    );
+
+    expect(markup).toContain('data-testid="current-storage-summary"');
+    expect(markup).toContain("Forge Server SQLite database");
+    expect(markup).not.toContain('data-testid="artifact-storage-select"');
+    expect(markup).not.toContain('data-testid="db-strategy-select"');
+    expect(markup).not.toContain('<option value="cloud"');
+    expect(markup).not.toContain('<option value="postgres"');
+    expect(markup).not.toContain('<option value="mysql"');
+  });
+
   it("guides first-time users to create a Project before showing work forms", () => {
     const markup = renderToStaticMarkup(<App />);
 
@@ -190,14 +204,14 @@ describe("App workbench layout", () => {
     );
   });
 
-  it("leads the home shell with Forge Studio and keeps the value line secondary", () => {
+  it("uses the Forge product name and a neutral product description", () => {
     const markup = renderToStaticMarkup(<App />);
 
-    expect(markup).toContain("<h1>Forge Studio</h1>");
+    expect(markup).toContain("<h1>Forge</h1>");
     expect(markup).toContain(
-      '<p class="brand-tagline">Turn an idea into shipped AI work.</p>'
+      '<p class="brand-tagline">AI work orchestration control plane.</p>'
     );
-    expect(markup).not.toContain("<h1>Turn an idea into shipped AI work.</h1>");
+    expect(markup).not.toContain("shipped AI work");
   });
 
   it("links the top-left brand lockup to the home page", () => {
@@ -555,7 +569,6 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("Hidden fourth");
     expect(markup).toContain("studio-footer");
     expect(markup).toContain("AI work orchestration control plane");
-    expect(markup).toContain("@2026 Forge");
     expect(markup).not.toContain(">requirement<");
   });
 
@@ -3623,7 +3636,8 @@ describe("App workbench layout", () => {
     expect(markup).not.toContain("intake");
   });
 
-  it("shows the model configuration warning whenever the model is missing", () => {
+  it("shows the model configuration warning when a saved Requirement is blocked", () => {
+    const timestamp = "2026-06-14T00:00:00.000Z";
     const markup = renderToStaticMarkup(
       <App
         initialExecutionSettings={{
@@ -3635,13 +3649,37 @@ describe("App workbench layout", () => {
           modelConfigured: false,
           modelName: "gpt-4.1-mini",
           modelProvider: "openai-compatible",
-          updatedAt: "2026-06-14T00:00:00.000Z"
+          updatedAt: timestamp
         }}
+        initialProjects={[
+          {
+            artifactStorageMode: "local-only",
+            createdAt: timestamp,
+            dbStrategy: "sqlite",
+            id: "proj_test",
+            name: "Project",
+            updatedAt: timestamp
+          }
+        ]}
+        initialRequirements={[
+          {
+            body: "Plan the requested work.",
+            createdAt: timestamp,
+            deletedAt: null,
+            errorMessage: null,
+            id: "req_test",
+            projectId: "proj_test",
+            status: "init",
+            title: "Plan work",
+            updatedAt: timestamp,
+            workflowFileId: "wf_requirement"
+          }
+        ]}
       />
     );
 
     expect(markup).toContain("persistent-status-bar-danger");
-    expect(markup).toContain("Configure a model in Settings");
+    expect(markup).toContain("Model planning is not configured");
   });
 
   it("shows one settings section at a time behind a left navigation", () => {
@@ -3958,6 +3996,6 @@ describe("App workbench layout", () => {
         modelConfigured: false,
         requirementCount: 0
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 });

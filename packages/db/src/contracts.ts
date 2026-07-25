@@ -402,6 +402,7 @@ export type CreateBridgeJobInput = {
 };
 
 export type CompleteBridgeJobInput = {
+  bridgeId: string;
   id: string;
   status: Extract<BridgeJobStatus, "succeeded" | "failed">;
   output?: string | null;
@@ -411,7 +412,8 @@ export type CompleteBridgeJobInput = {
 export type BridgeRepository = {
   claimNextBridgeJob(
     bridgeId: string,
-    eligibleNodeRunIds?: string[]
+    eligibleNodeRunIds?: string[],
+    eligibleAgentNames?: string[]
   ): Promise<BridgeJob | null>;
   completeBridgeJob(input: CompleteBridgeJobInput): Promise<BridgeJob>;
   createBridgeJob(input: CreateBridgeJobInput): Promise<BridgeJob>;

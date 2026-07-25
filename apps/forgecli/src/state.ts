@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -12,6 +12,7 @@ export type ForgeCliAgent = {
 
 export type ForgeCliState = {
   config: {
+    authToken: string;
     bridgeId: string;
     serverUrl: string;
     pollIntervalMs: number;
@@ -20,6 +21,7 @@ export type ForgeCliState = {
 };
 
 export type ForgeCliEnvironment = {
+  FORGE_AUTH_TOKEN?: string;
   FORGECLI_HOME?: string;
   HOME?: string;
   XDG_CONFIG_HOME?: string;
@@ -36,6 +38,7 @@ export function createDefaultForgeCliState(): ForgeCliState {
   return {
     agents: [],
     config: {
+      authToken: "",
       bridgeId: `brg_${randomUUID()}`,
       pollIntervalMs: defaultPollIntervalMs,
       serverUrl: ""
@@ -77,6 +80,10 @@ export async function loadForgeCliState(
     return {
       agents: Array.isArray(parsed.agents) ? parsed.agents.map(normalizeAgent) : [],
       config: {
+        authToken:
+          envAuthToken(options.env) ||
+          parsed.config?.authToken?.trim() ||
+          defaults.config.authToken,
         bridgeId: parsed.config?.bridgeId?.trim() || defaults.config.bridgeId,
         pollIntervalMs:
           typeof parsed.config?.pollIntervalMs === "number"
@@ -102,6 +109,7 @@ export async function saveForgeCliState(
   const normalized: ForgeCliState = {
     agents: state.agents.map(normalizeAgent),
     config: {
+      authToken: state.config.authToken?.trim() ?? "",
       bridgeId: state.config.bridgeId,
       pollIntervalMs: state.config.pollIntervalMs,
       serverUrl: normalizeServerUrl(state.config.serverUrl)
@@ -109,13 +117,48 @@ export async function saveForgeCliState(
   };
   const temporaryFile = `${paths.configFile}.${process.pid}.tmp`;
 
-  await mkdir(dirname(paths.configFile), { recursive: true });
-  await writeFile(temporaryFile, `${JSON.stringify(normalized, null, 2)}\n`);
+  await mkdir(dirname(paths.configFile), { mode: 0o700, recursive: true });
+  await writeFile(temporaryFile, `${JSON.stringify(normalized, null, 2)}\n`, {
+    mode: 0o600
+  });
   await rename(temporaryFile, paths.configFile);
+  await chmod(paths.configFile, 0o600);
 }
 
 export function normalizeServerUrl(serverUrl: string) {
   return serverUrl.trim().replace(/\/+$/, "");
+}
+
+export async function readLocalForgeAuthToken(
+  options: ForgeCliStateOptions = {}
+) {
+  const configuredToken = envAuthToken(options.env);
+
+  if (configuredToken) {
+    return configuredToken;
+  }
+
+  const home = options.env
+    ? options.env.HOME?.trim()
+    : process.env.HOME?.trim() || homedir();
+
+  if (!home) {
+    return "";
+  }
+
+  try {
+    return (await readFile(join(home, ".forge", "auth-token"), "utf8")).trim();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return "";
+    }
+
+    throw error;
+  }
+}
+
+function envAuthToken(env: ForgeCliEnvironment | undefined) {
+  return (env ?? process.env).FORGE_AUTH_TOKEN?.trim() ?? "";
 }
 
 function normalizeAgent(agent: ForgeCliAgent): ForgeCliAgent {

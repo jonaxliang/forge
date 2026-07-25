@@ -316,6 +316,117 @@ describe("GET /api/health", () => {
       status: "healthy"
     });
   });
+
+  it("keeps health public while protecting a remotely exposed API", async () => {
+    const apiToken = "a-secure-forge-api-token-with-at-least-32-characters";
+    const app = createApp({ apiToken, requireApiToken: true });
+
+    expect((await app.request("/api/health")).status).toBe(200);
+    expect((await app.request("/api/projects")).status).toBe(401);
+    expect(
+      (
+        await app.request("/api/projects", {
+          headers: { authorization: `Bearer ${apiToken}` }
+        })
+      ).status
+    ).toBe(200);
+  });
+
+  it("authenticates the remote Web console with a password form and HttpOnly cookie", async () => {
+    const apiToken = "a-secure-forge-api-token-with-at-least-32-characters";
+    const app = createApp({ apiToken, requireApiToken: true });
+    const formResponse = await app.request("/auth");
+
+    expect(formResponse.status).toBe(200);
+    await expect(formResponse.text()).resolves.toContain('type="password"');
+
+    const authResponse = await app.request("/auth", {
+      body: new URLSearchParams({ token: apiToken }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+    const cookie = authResponse.headers.get("set-cookie");
+
+    expect(authResponse.status).toBe(303);
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(
+      (
+        await app.request("/api/projects", {
+          headers: { cookie: cookie!.split(";")[0]! }
+        })
+      ).status
+    ).toBe(200);
+  });
+});
+
+describe("Bridge authentication", () => {
+  it("uses the server token only for registration and a Bridge identity token afterward", async () => {
+    const apiToken = "a-secure-forge-api-token-with-at-least-32-characters";
+    const app = createApp({ apiToken });
+    const registrationBody = {
+      agents: [
+        {
+          command: "private-agent --secret-config",
+          connector: "cli",
+          name: "local-agent"
+        }
+      ],
+      bridgeId: "bridge_local"
+    };
+
+    expect(
+      (
+        await app.request("/api/bridges/register", {
+          body: JSON.stringify(registrationBody),
+          headers: { "content-type": "application/json" },
+          method: "POST"
+        })
+      ).status
+    ).toBe(401);
+
+    const registrationResponse = await app.request("/api/bridges/register", {
+      body: JSON.stringify(registrationBody),
+      headers: {
+        authorization: `Bearer ${apiToken}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    const registered = (await registrationResponse.json()) as {
+      bridgeToken: string;
+    };
+
+    expect(registrationResponse.status).toBe(200);
+    expect(registered.bridgeToken).toHaveLength(43);
+    expect(JSON.stringify(registered)).not.toContain("private-agent");
+    expect(
+      (
+        await app.request("/api/bridges/bridge_local/heartbeat", {
+          body: JSON.stringify({ agents: registrationBody.agents }),
+          headers: {
+            authorization: `Bearer ${apiToken}`,
+            "content-type": "application/json"
+          },
+          method: "POST"
+        })
+      ).status
+    ).toBe(401);
+    expect(
+      (
+        await app.request("/api/bridges/bridge_local/heartbeat", {
+          body: JSON.stringify({ agents: registrationBody.agents }),
+          headers: {
+            authorization: `Bearer ${registered.bridgeToken}`,
+            "content-type": "application/json"
+          },
+          method: "POST"
+        })
+      ).status
+    ).toBe(200);
+  });
 });
 
 describe("Web console assets", () => {
@@ -403,8 +514,8 @@ describe("Project API", () => {
 
     const createResponse = await app.request("/api/projects", {
       body: JSON.stringify({
-        artifactStorageMode: "cloud",
-        dbStrategy: "mysql",
+        artifactStorageMode: "local-only",
+        dbStrategy: "sqlite",
         defaultExecutorAgentBindingId: "agb_planner",
         defaultExecutorType: "agent-binding",
         name: "Forge"
@@ -417,8 +528,8 @@ describe("Project API", () => {
 
     expect(createResponse.status).toBe(201);
     await expect(createResponse.json()).resolves.toMatchObject({
-      artifactStorageMode: "cloud",
-      dbStrategy: "mysql",
+      artifactStorageMode: "local-only",
+      dbStrategy: "sqlite",
       defaultExecutorAgentBindingId: "agb_planner",
       defaultExecutorType: "agent-binding",
       name: "Forge"
@@ -430,8 +541,8 @@ describe("Project API", () => {
     await expect(listResponse.json()).resolves.toMatchObject({
       projects: [
         {
-          artifactStorageMode: "cloud",
-          dbStrategy: "mysql",
+          artifactStorageMode: "local-only",
+          dbStrategy: "sqlite",
           defaultExecutorAgentBindingId: "agb_planner",
           defaultExecutorType: "agent-binding",
           name: "Forge"
@@ -447,6 +558,23 @@ describe("Project API", () => {
       body: JSON.stringify({
         artifactStorageMode: "remote",
         name: ""
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects storage modes and databases that are not implemented", async () => {
+    const app = createApp();
+    const response = await app.request("/api/projects", {
+      body: JSON.stringify({
+        artifactStorageMode: "cloud",
+        dbStrategy: "postgres",
+        name: "Unsupported storage"
       }),
       headers: {
         "content-type": "application/json"
@@ -681,7 +809,7 @@ describe("Execution settings API", () => {
     });
   });
 
-  it("preserves the configured model API key when settings are saved with an empty key field", async () => {
+  it("clears the configured model API key when its endpoint changes without a new key", async () => {
     const app = createApp();
 
     await app.request("/api/execution-settings", {
@@ -712,7 +840,7 @@ describe("Execution settings API", () => {
     await expect(updateResponse.json()).resolves.toMatchObject({
       executionSettings: {
         modelBaseUrl: "https://models.example/v2",
-        modelConfigured: true,
+        modelConfigured: false,
         modelName: "planner-model-v2"
       }
     });
@@ -723,9 +851,46 @@ describe("Execution settings API", () => {
     expect(JSON.stringify(body)).not.toContain("secret-key");
     expect(body).toMatchObject({
       executionSettings: {
-        modelConfigured: true
+        modelConfigured: false
       }
     });
+  });
+
+  it("does not send a stored API key to a different model test endpoint", async () => {
+    const calls: unknown[] = [];
+    const app = createApp({
+      modelApiTester: async (settings) => {
+        calls.push(settings);
+      }
+    });
+
+    await app.request("/api/execution-settings", {
+      body: JSON.stringify({
+        modelApiKey: "stored-secret-key",
+        modelBaseUrl: "https://models.example/v1"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "PATCH"
+    });
+    const response = await app.request("/api/execution-settings/model/test", {
+      body: JSON.stringify({
+        modelApiKey: "",
+        modelBaseUrl: "https://attacker.example/v1"
+      }),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/API key is required/i),
+      ok: false
+    });
+    expect(calls).toEqual([]);
   });
 });
 
@@ -1273,7 +1438,9 @@ describe("Skill API", () => {
     });
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
+    const responseBody = await response.json();
+
+    expect(responseBody).toMatchObject({
       skill: {
         body: "# Code Review\n\nReview changes for behavioral regressions.",
         description: "Reviews code changes before handoff.",
@@ -1285,9 +1452,10 @@ describe("Skill API", () => {
         name: "code-review",
         projectId: "proj_test",
         ref: "skill:code-review",
-        storagePath: join(storageRoot, "proj_test", "code-review")
+        sourceConfigured: false
       }
     });
+    expect(JSON.stringify(responseBody)).not.toContain(storageRoot);
     await expect(
       readFile(join(storageRoot, "proj_test", "code-review", "SKILL.md"), "utf8")
     ).resolves.toContain("Review changes for behavioral regressions.");
@@ -1301,7 +1469,7 @@ describe("Skill API", () => {
           name: "code-review",
           projectId: "proj_test",
           ref: "skill:code-review",
-          storagePath: join(storageRoot, "proj_test", "code-review")
+          sourceConfigured: false
         }
       ]
     });
@@ -1452,8 +1620,7 @@ describe("Skill API", () => {
         ],
         name: "github-review",
         ref: "skill:github-review",
-        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review",
-        storagePath: join(storageRoot, "proj_test", "github-review")
+        sourceConfigured: true
       }
     });
     await expect(
@@ -1515,7 +1682,7 @@ describe("Skill API", () => {
         description: "Updated GitHub Skill.",
         name: "github-review",
         ref: "skill:github-review",
-        sourceUrl: "https://github.com/acme/forge-skills/tree/main/code-review"
+        sourceConfigured: true
       }
     });
     await expect(

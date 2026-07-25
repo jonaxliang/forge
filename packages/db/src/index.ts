@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { and, asc, eq, isNull, or } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
@@ -258,64 +258,64 @@ export function createInMemoryBridgeRepository(): BridgeRepository {
 export function createSqliteProjectRepository(
   filename = ".forge/forge.sqlite"
 ): ProjectRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createProjectRepository(new Database(filename));
+  return createProjectRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteWorkflowFileRepository(
   filename = ".forge/forge.sqlite"
 ): WorkflowFileRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createWorkflowFileRepository(new Database(filename));
+  return createWorkflowFileRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteSkillRepository(
   filename = ".forge/forge.sqlite"
 ): SkillRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createSkillRepository(new Database(filename));
+  return createSkillRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteExecutionSettingsRepository(
   filename = ".forge/forge.sqlite"
 ): ExecutionSettingsRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createExecutionSettingsRepository(new Database(filename));
+  return createExecutionSettingsRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteRequirementRepository(
   filename = ".forge/forge.sqlite"
 ): RequirementRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createRequirementRepository(new Database(filename));
+  return createRequirementRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteDecompositionResultRepository(
   filename = ".forge/forge.sqlite"
 ): DecompositionResultRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createDecompositionResultRepository(new Database(filename));
+  return createDecompositionResultRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteTaskRepository(
   filename = ".forge/forge.sqlite"
 ): TaskRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createTaskRepository(new Database(filename));
+  return createTaskRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteWorkflowRunRepository(
   filename = ".forge/forge.sqlite"
 ): WorkflowRunRepository {
-  mkdirSync(dirname(filename), { recursive: true });
-  return createWorkflowRunRepository(new Database(filename));
+  return createWorkflowRunRepository(openSqliteDatabase(filename));
 }
 
 export function createSqliteBridgeRepository(
   filename = ".forge/forge.sqlite"
 ): BridgeRepository {
+  return createBridgeRepository(openSqliteDatabase(filename));
+}
+
+function openSqliteDatabase(filename: string) {
   mkdirSync(dirname(filename), { recursive: true });
-  return createBridgeRepository(new Database(filename));
+  const sqlite = new Database(filename);
+
+  chmodSync(filename, 0o600);
+
+  return sqlite;
 }
 
 function createProjectRepository(sqlite: Database.Database): ProjectRepository {
@@ -1020,6 +1020,11 @@ function createExecutionSettingsRepository(
       const providerChanged =
         input.modelProvider !== undefined && input.modelProvider !== current.modelProvider;
       const providerDefaults = modelProviderDefaults[modelProvider];
+      const modelBaseUrl =
+        input.modelBaseUrl?.trim() ??
+        (providerChanged ? providerDefaults.baseUrl : current.modelBaseUrl);
+      const modelConnectionChanged =
+        providerChanged || modelBaseUrl !== current.modelBaseUrl;
       const updated: ExecutionSettings = {
         ...current,
         agentProxyUrl: input.agentProxyUrl?.trim() ?? current.agentProxyUrl,
@@ -1028,10 +1033,12 @@ function createExecutionSettingsRepository(
             ? requestedDefaultExecutorAgentBindingId
             : null,
         defaultExecutorType,
-        modelApiKey: nextModelApiKey ? nextModelApiKey : current.modelApiKey,
-        modelBaseUrl:
-          input.modelBaseUrl?.trim() ??
-          (providerChanged ? providerDefaults.baseUrl : current.modelBaseUrl),
+        modelApiKey: nextModelApiKey
+          ? nextModelApiKey
+          : modelConnectionChanged
+            ? ""
+            : current.modelApiKey,
+        modelBaseUrl,
         modelName:
           input.modelName?.trim() ??
           (providerChanged ? providerDefaults.modelName : current.modelName),
@@ -1676,7 +1683,11 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
   initializeSqliteSchema(db, sqlite);
 
   return {
-    async claimNextBridgeJob(bridgeId, eligibleNodeRunIds) {
+    async claimNextBridgeJob(
+      bridgeId,
+      eligibleNodeRunIds,
+      eligibleAgentNames
+    ) {
       const rows = await db
         .select()
         .from(bridgeJobs)
@@ -1686,13 +1697,16 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
       const eligibleNodeRunIdSet = eligibleNodeRunIds
         ? new Set(eligibleNodeRunIds)
         : null;
-      const row = eligibleNodeRunIdSet
-        ? rows.find(
-            (job) =>
-              job.nodeRunId.startsWith("requirement:") ||
-              eligibleNodeRunIdSet.has(job.nodeRunId)
-          )
-        : rows[0];
+      const eligibleAgentNameSet = eligibleAgentNames
+        ? new Set(eligibleAgentNames)
+        : null;
+      const row = rows.find(
+        (job) =>
+          (!eligibleAgentNameSet || eligibleAgentNameSet.has(job.agentName)) &&
+          (!eligibleNodeRunIdSet ||
+            job.nodeRunId.startsWith("requirement:") ||
+            eligibleNodeRunIdSet.has(job.nodeRunId))
+      );
 
       if (!row) {
         return null;
@@ -1700,15 +1714,21 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
 
       const updatedAt = nextTimestamp(row.updatedAt);
 
-      await db
+      const result = await db
         .update(bridgeJobs)
         .set({
           bridgeId,
           status: "claimed",
           updatedAt
         })
-        .where(eq(bridgeJobs.id, row.id))
+        .where(
+          and(eq(bridgeJobs.id, row.id), eq(bridgeJobs.status, "queued"))
+        )
         .run();
+
+      if (result.changes === 0) {
+        return null;
+      }
 
       return toBridgeJob({
         ...row,
@@ -1729,6 +1749,12 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
         throw new Error(`Bridge job not found: ${input.id}`);
       }
 
+      if (row.bridgeId !== input.bridgeId || row.status !== "claimed") {
+        throw new Error(
+          `Bridge job ${input.id} is not claimed by bridge ${input.bridgeId}`
+        );
+      }
+
       const updatedAt = nextTimestamp(row.updatedAt);
       const updated = {
         ...row,
@@ -1746,7 +1772,13 @@ function createBridgeRepository(sqlite: Database.Database): BridgeRepository {
           status: updated.status,
           updatedAt
         })
-        .where(eq(bridgeJobs.id, input.id))
+        .where(
+          and(
+            eq(bridgeJobs.id, input.id),
+            eq(bridgeJobs.bridgeId, input.bridgeId),
+            eq(bridgeJobs.status, "claimed")
+          )
+        )
         .run();
 
       return toBridgeJob(updated);

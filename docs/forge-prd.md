@@ -1,5 +1,9 @@
 # Forge 产品需求文档
 
+> 状态：本文包含产品方向和未来设想，不是当前功能清单。当前已实现能力、运行方式
+> 和限制以仓库根目录 README 为准。当前版本只使用 Forge Server 上的 SQLite；
+> 云端产物存储、Postgres 和 MySQL 后端尚未实现。
+
 ## 问题陈述
 
 AI agent 已经可以写代码、起草文档、调研主题、评审产物并操作本地工具，但这些工作通常发生在互相割裂的聊天会话、IDE 面板、CLI 会话或厂商专属 agent 环境中。用户缺少一个共享控制平面，把需求转成可追踪任务，把任务分配给本地或远端 agent，编排多步骤工作流，评审输出，并在多次运行之间保留可追溯产物。
@@ -135,11 +139,12 @@ _避免使用_：Result、output
 
 _避免使用_：Draft、revision
 
-###产物存储方式
+### 产物存储后端
 
-产物存储方式 是决定产物内容存储位置的项目策略。初始模式包括 local-only 和 cloud：local-only 表示产物内容通过本地 agent binding 留在用户机器上；cloud 表示 Forge 通过服务端存储适配器保存产物内容。
+当前版本只使用 Forge Server 上的 SQLite。项目记录、工作流定义、节点输出和本地桥接
+输出都会写入该数据库。云端产物存储是未来方向，不是当前可选能力。
 
-_避免使用_：File path、sync setting
+_避免使用_：当前版本中的 local-only、cloud
 
 ###产物Publisher
 
@@ -193,7 +198,7 @@ _避免使用_：Workflow engine、simulation
 - 让用户通过 任务工作流视图 风格的 任务工作流检查 任务工作流。
 - 让每个工作流节点 定义由模型评审的 验收条件 和最大重试次数。
 - 让 任务产出带版本的产物，包括代码、文档、报告、草稿、评审和测试结果。
-- 默认支持 local-only产物存储，并把 cloud产物存储作为可选模式。
+- 当前版本使用 Forge Server SQLite 存储，并把其他存储后端留作未来方向。
 
 ## 非目标
 
@@ -216,7 +221,9 @@ _避免使用_：Workflow engine、simulation
 
 ### 项目
 
-项目组织需求、拆解结果、任务、工作流模板源文件、工作流模板、Agent Binding、Skill、产物和设置。项目有默认产物存储方式和已导入的 `.wf` 工作流文件集合。
+项目组织需求、拆解结果、任务、工作流模板源文件、工作流模板、Agent Binding、Skill、
+产物和设置。当前版本统一使用 Forge Server SQLite，并保存已导入的 `.wf` 工作流
+文件集合。
 
 ### 需求
 
@@ -339,80 +346,29 @@ Connector 把 Forge 的工作流命令适配为 agent 的协议：
 
 Agent Pairing 允许多个 agent 以不同角色参与同一个 任务或 任务工作流，例如 planner、executor、reviewer、researcher、editor、tester。MVP 数据模型应支持该能力，但首批模板可以先使用单个默认 agent。
 
-## 核心竞争力判断
+## 产品假设
 
-Forge 目前具备潜在核心竞争力，但还不是稳固护城河。它的差异点不在“又做一个 agent”，而在于把本地 agent、通用工作流、可评审节点、版本化产物和项目级任务管理组合成一个控制平面。
+以下方向尚未经过公开用户研究或对照测试，不构成已验证优势或实现承诺：
 
-已有行业实践覆盖了部分相邻能力：云端 coding agent、IDE 内 agent、MCP 工具连接、agent 互操作协议、issue-to-PR 自动化等。但 Forge 的组合仍有机会形成独特定位：
+- 在同一项目中连接需求、任务、任务工作流、节点执行和产物记录。
+- 通过本地桥接把本地或远端 Agent 接入 Forge。
+- 用同一套工作流模型处理编码、研究、文档和写作任务。
+- 使用验收条件、重试和人工评审记录节点是否继续执行。
 
-- **本地 agent 托管到 Web 控制平面**：用户保留本地模型账号、工具、仓库和权限，Forge 负责编排和协作。
-- **通用 AI work workflow**：不局限 coding，同一模型支持代码、论文、小说、文档、研究等。
-- **需求->拆解结果-> 任务-> 任务工作流->产物版本**：比聊天更结构化，比 CI 更适合 AI产物。
-- **大模型评审式 验收条件**：把“质量是否过关”变成每个节点的一等能力。
-- **任务工作流视图**：把复杂 agent 执行状态变成用户可感知的过程，而不是隐藏在日志里。
+## 未实现探索
 
-结论：Forge 的核心竞争力可以成立，但需要强化两个方向：**绑定 agent 的体验壁垒** 和 **工作流/产物知识沉淀壁垒**。否则它容易被理解为“AI 任务看板 + agent 调用器”，壁垒不够深。
-
-## 建议增强功能
-
-### 1. Agent Capability Registry
-
-让每个绑定 agent 上报能力、适用场景、可访问资源、成本、历史表现和风险边界。Forge 根据 任务类型推荐或自动选择 agent。
-
-价值：形成 agent 路由能力，避免用户手动判断哪个 agent 适合哪个任务。
-
-### 2. Agent Pairing 作为标志性能力
-
-把 Agent Pairing 从二期概念提前纳入 MVP 的数据模型和部分内置模板。比如：
-
-```text
-Planner Agent -> 拆解方案
-Executor Agent -> 产出 artifact
-Critic Agent -> 评审 exit criteria
-Editor/Tester Agent -> 修订或验证
-```
-
-价值：这是 Forge 区别于单 agent 工具的强差异点。
-
-### 3. Workflow Memory
-
-Forge 应保存每个项目、模板、节点和 artifact 的运行经验：
-
-- 哪些 验收条件 经常失败
-- 哪些 agent 在哪些模板上表现更好
-- 哪些 retry instruction 更有效
-- 哪些 artifact 版本被最终接受
-
-价值：让 Forge 越用越懂项目和工作流，形成数据飞轮。
-
-### 4. `.wf` Registry
-
-把 `.wf` 做成可安装、可分享、可版本化的工作流文件。一个 `.wf` 文件描述一个 workflow，可以引用外部 Skill、产物Type、验收条件 Prompt 和示例任务；多个 `.wf` 文件可以通过 registry 组织，但 registry 不是核心领域对象。
-
-价值：把平台从“工具”变成“工作流生态”。
-
-### 5.产物Publisher 插件体系
-
-二期支持将产物发布到飞书文档、Google Docs、Notion、GitHub PR、云盘等外部介质。
-
-价值：让 Forge产物进入团队已有工作场景，而不是困在 Forge 内。
-
-### 6. Evaluation Run / Agent Benchmark
-
-允许同一个 任务或 节点 并行交给多个 agent，比较耗时、重试次数、评审结果、人工接受率和 artifact 质量。
-
-价值：帮助用户建立对 agent 的可量化信任，也让 Forge 拥有 agent 选择依据。
-
-### 7. Secure Local 本地桥接
-
-本地 agent 与远端 Forge 之间需要安全绑定机制：设备授权、短期 token、能力白名单、artifact 上传策略、命令权限边界和审计日志。
-
-价值：这是本地 agent 托管模式能否被团队采用的前提。
+- Agent Capability Registry：记录 Agent 的适用场景、可访问资源和风险边界。
+- Agent Pairing：让多个 Agent 以不同角色参与同一任务工作流。
+- Workflow Memory：汇总节点失败、重试和产物验收记录。
+- `.wf` Registry：分发和版本化工作流模板源文件。
+- 产物 Publisher：把产物发送到外部文档、代码托管或存储系统。
+- Evaluation Run：比较多个 Agent 在同一任务或节点上的运行记录。
+- 远端本地桥接安全机制：设备授权、短期 token、能力白名单和审计记录。
 
 ## 用户故事
 
 1. 作为用户，我想创建 项目，以便组织相关 AI 工作。
-2. 作为用户，我想选择 项目 的产物存储在本地还是云端，以便控制隐私和协作方式。
+2. 作为用户，我想明确知道项目数据和产物保存在何处，以便评估隐私和备份策略。
 3. 作为用户，我想创建需求，以便先描述目标工作，而不是直接创建执行任务。
 4. 作为用户，我想选择需求工作流模板，以便 Forge 能按合适方式拆解需求。
 5. 作为用户，我想让 Forge 生成拆解结果，以便在任务进入看板前检查拆解结果。
@@ -441,8 +397,8 @@ Forge 应保存每个项目、模板、节点和 artifact 的运行经验：
 28. 作为用户，我想使用研究写作模板，以便 Forge 支持论文、报告和文章。
 29. 作为用户，我想使用创意写作模板，以便 Forge 支持小说和长文草稿。
 30. 作为团队成员，我想远端部署 Forge，以便多人查看共享 任务和 Workflow 状态。
-31. 作为重视隐私的用户，我想使用 local-only产物模式，以便内容留在我的机器上。
-32. 作为协作者，我想使用 cloud产物模式，以便被选中的产物可以远端查看。
+31. 作为重视隐私的用户，我想知道 Forge Server 会保存哪些数据，以便保护数据库和备份。
+32. 作为未来协作者，我想使用可配置的远端存储后端，以便在明确的权限边界下共享产物。
 33. 作为模板作者，我想定义包含输入、输出、验收条件 和 controls 的工作流节点，以便模板可复用。
 34. 作为模板作者，我想通过 `.wf` 文件定义工作流，并引用 Skill、产物Type 和 prompt，以便工作流可以被导入、分享和版本化。
 35. 作为 agent 构建者，我想通过 Connector 把 agent 暴露给 Forge，以便用户可以把工作流节点 分配给它。
@@ -456,8 +412,8 @@ Forge 应保存每个项目、模板、节点和 artifact 的运行经验：
 - 推荐本地部署。
 - 支持远端部署。
 - 项目 创建和 项目 设置。
-- 项目 级默认产物存储方式。
--产物级存储模式覆盖。
+- Forge Server SQLite 存储。
+- 在 UI 中说明项目记录和任务工作流输出的实际存储位置。
 
 ### 需求和任务
 
@@ -540,9 +496,8 @@ Forge 应保存每个项目、模板、节点和 artifact 的运行经验：
 - Forge 保存产物metadata。
 -产物版本 不可变保留。
 - 当前版本和已接受版本标记。
-- Local-only 存储模式。
-- 通过服务端存储适配器实现 cloud 存储模式。
-- Content reference 抽象。
+- 当前版本使用 Forge Server SQLite。
+- 未来存储后端需要单独的适配器和安全边界设计。
 
 ## 二期范围
 
@@ -569,9 +524,8 @@ Forge 应保存每个项目、模板、节点和 artifact 的运行经验：
 - Same Agent 是 验收条件 的默认 reviewer。
 - Human Review 可选。
 - 每个节点支持最大重试次数。
--产物内容存储由产物存储方式 控制。
-- Local-only 是默认存储模式。
-- Cloud storage 通过 storage adapter 作为可选模式。
+- 当前版本由 Forge Server SQLite 保存项目记录和任务工作流输出。
+- 未来存储后端必须在实现后再作为用户可选项。
 -产物Publisher 是未来插件概念，与 storage 分离。
 - 任务工作流视图 是默认 任务工作流呈现，不是另一套 workflow engine。
 - MCP Connector 是优先本地 agent binding 策略。
@@ -717,7 +671,7 @@ AgentBinding
 
 MVP 测试应聚焦外部行为：
 
-- 创建项目会设置默认产物存储方式。
+- 创建项目使用 Forge Server SQLite。
 - 用模板创建需求会生成拆解结果，而不是直接生成任务。
 - 确认拆解结果后会在任务看板上创建任务。
 - 任务工作流会按预期顺序创建节点运行。
@@ -726,7 +680,7 @@ MVP 测试应聚焦外部行为：
 - 超过最大重试次数后，节点进入 blocked 或 failed。
 - Optional Human Review 会暂停节点，直到用户作出决定。
 - 产物版本不可变。
-- 产物级存储方式可以覆盖项目默认值。
+- 项目记录和任务工作流输出会写入配置的 Forge Server SQLite 数据库。
 - 本地 agent binding 可以通过 MCP 或 CLI connector metadata 注册。
 - 任务工作流视图 准确反映底层 节点状态。
 

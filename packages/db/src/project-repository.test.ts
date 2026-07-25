@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -411,6 +411,24 @@ describe("ExecutionSettingsRepository", () => {
     });
     await expect(repository.getExecutionSettings()).resolves.toEqual(updated);
   });
+
+  it("clears a stored model API key when the provider endpoint changes", async () => {
+    const repository = createInMemoryExecutionSettingsRepository();
+
+    await repository.updateExecutionSettings({
+      modelApiKey: "secret-key",
+      modelBaseUrl: "https://models.example/v1"
+    });
+    const updated = await repository.updateExecutionSettings({
+      modelApiKey: "",
+      modelBaseUrl: "https://attacker.example/v1"
+    });
+
+    expect(updated).toMatchObject({
+      modelApiKey: "",
+      modelBaseUrl: "https://attacker.example/v1"
+    });
+  });
 });
 
 describe("BridgeRepository", () => {
@@ -466,6 +484,7 @@ describe("BridgeRepository", () => {
     });
 
     const completed = await repository.completeBridgeJob({
+      bridgeId: "bridge_local",
       errorMessage: null,
       id: job.id,
       output: "done",
@@ -478,10 +497,60 @@ describe("BridgeRepository", () => {
     });
   });
 
+  it("only lets the claiming Bridge complete a job", async () => {
+    const repository = createInMemoryBridgeRepository();
+    const job = await repository.createBridgeJob({
+      agentName: "coco",
+      nodeRunId: "ndr_1",
+      payload: {},
+      workflowRunId: "wfr_1"
+    });
+
+    await repository.claimNextBridgeJob("bridge_owner");
+
+    await expect(
+      repository.completeBridgeJob({
+        bridgeId: "bridge_other",
+        id: job.id,
+        status: "succeeded"
+      })
+    ).rejects.toThrow(/not claimed by bridge bridge_other/);
+  });
+
+  it("only claims jobs for agents registered to the Bridge", async () => {
+    const repository = createInMemoryBridgeRepository();
+
+    await repository.createBridgeJob({
+      agentName: "remote-agent",
+      nodeRunId: "ndr_remote",
+      payload: {},
+      workflowRunId: "wfr_1"
+    });
+    const localJob = await repository.createBridgeJob({
+      agentName: "local-agent",
+      nodeRunId: "ndr_local",
+      payload: {},
+      workflowRunId: "wfr_1"
+    });
+
+    await expect(
+      repository.claimNextBridgeJob(
+        "bridge_local",
+        undefined,
+        ["local-agent"]
+      )
+    ).resolves.toMatchObject({
+      id: localJob.id
+    });
+  });
+
   it("treats stale local Agent Binding heartbeats as offline", async () => {
     const directory = await mkdtemp(join(tmpdir(), "forge-db-bridge-"));
     const sqlitePath = join(directory, "forge.sqlite");
     const repository = createSqliteBridgeRepository(sqlitePath);
+    const sqliteStat = await stat(sqlitePath);
+
+    expect(sqliteStat.mode & 0o777).toBe(0o600);
 
     await repository.upsertAgentBinding({
       capabilities: ["cli"],

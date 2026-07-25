@@ -8,7 +8,6 @@ import {
   type WorkflowFile
 } from "@forge/core";
 import {
-  artifactStorageModes,
   agentConnectorTypes,
   createInMemoryDecompositionResultRepository,
   createInMemoryBridgeRepository,
@@ -19,7 +18,6 @@ import {
   createInMemoryTaskRepository,
   createInMemoryWorkflowRunRepository,
   createInMemoryWorkflowFileRepository,
-  dbStrategies,
   executorTypes,
   modelProviderDefaults,
   modelProviderKinds,
@@ -54,6 +52,8 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { generateText, Output, type LanguageModel } from "ai";
 import { Hono, type Context } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
@@ -77,8 +77,8 @@ import {
 
 const createProjectSchema = z.object({
   name: z.string().trim().min(1),
-  artifactStorageMode: z.enum(artifactStorageModes).optional(),
-  dbStrategy: z.enum(dbStrategies).optional(),
+  artifactStorageMode: z.literal("local-only").optional(),
+  dbStrategy: z.literal("sqlite").optional(),
   defaultExecutorAgentBindingId: z.string().trim().nullable().optional(),
   defaultExecutorType: z.enum(executorTypes).optional()
 });
@@ -540,6 +540,7 @@ type ExecutorSelection = {
 
 type AppDependencies = {
   agentProxyClient?: AgentProxyClient;
+  apiToken?: string;
   bridgeRepository?: BridgeRepository;
   decompositionResultRepository?: DecompositionResultRepository;
   executionSettingsRepository?: ExecutionSettingsRepository;
@@ -555,6 +556,7 @@ type AppDependencies = {
   workflowRunRepository?: WorkflowRunRepository;
   workflowFileRepository?: WorkflowFileRepository;
   releaseAssetsRoot?: string;
+  requireApiToken?: boolean;
   webAssetsRoot?: string;
 };
 
@@ -800,6 +802,7 @@ type TaskWorkflowNodeExecutionRequestInput = {
 
 export function createApp({
   agentProxyClient,
+  apiToken,
   bridgeRepository,
   decompositionResultRepository,
   executionSettingsRepository,
@@ -815,10 +818,21 @@ export function createApp({
   workflowRunRepository,
   workflowFileRepository,
   releaseAssetsRoot,
+  requireApiToken = false,
   webAssetsRoot
 }: AppDependencies = {}) {
   const app = new Hono();
   const api = new Hono();
+  const normalizedApiToken = apiToken?.trim() ?? "";
+
+  if (requireApiToken && !normalizedApiToken) {
+    throw new Error("An API token is required when remote API authentication is enabled");
+  }
+
+  const bridgeSessions = new Map<
+    string,
+    { agentNames: Set<string>; token: string }
+  >();
   const executionSettings =
     executionSettingsRepository ?? createInMemoryExecutionSettingsRepository();
   const bridges = bridgeRepository ?? createInMemoryBridgeRepository();
@@ -854,6 +868,30 @@ export function createApp({
   const testModelApi = modelApiTester ?? testModelApiWithProvider;
   const skillSourceFetcher = fetchSkillSource ?? fetch;
   const resumingNodeRunIds = new Set<string>();
+
+  app.use("/api/*", async (c, next) => {
+    const path = c.req.path;
+
+    if (
+      path === "/api/health" ||
+      path === "/health" ||
+      path.startsWith("/api/bridges/") ||
+      path.startsWith("/bridges/")
+    ) {
+      await next();
+      return;
+    }
+
+    if (
+      !requireApiToken ||
+      isRequestAuthorized(c, normalizedApiToken, { allowCookie: true })
+    ) {
+      await next();
+      return;
+    }
+
+    return unauthorized(c);
+  });
 
   async function getExecutorAssignment(
     settings: ExecutionSettings,
@@ -1309,6 +1347,13 @@ export function createApp({
   });
 
   api.post("/bridges/register", async (c) => {
+    if (
+      normalizedApiToken &&
+      !isRequestAuthorized(c, normalizedApiToken, { allowCookie: false })
+    ) {
+      return unauthorized(c);
+    }
+
     const payload = bridgeRegisterSchema.safeParse(
       await c.req.json().catch(() => null)
     );
@@ -1331,13 +1376,31 @@ export function createApp({
       );
     }
 
+    const bridgeToken = randomBytes(32).toString("base64url");
+    bridgeSessions.set(payload.data.bridgeId, {
+      agentNames: new Set(payload.data.agents.map((agent) => agent.name)),
+      token: bridgeToken
+    });
+
     return c.json({
       agents: agents.map(serializeAgentBinding),
-      bridgeId: payload.data.bridgeId
+      bridgeId: payload.data.bridgeId,
+      bridgeToken
     });
   });
 
   api.post("/bridges/:bridgeId/heartbeat", async (c) => {
+    const bridgeId = c.req.param("bridgeId");
+    const bridgeSession = bridgeSessions.get(bridgeId);
+
+    if (
+      normalizedApiToken &&
+      (!bridgeSession ||
+        !isRequestAuthorized(c, bridgeSession.token, { allowCookie: false }))
+    ) {
+      return unauthorized(c);
+    }
+
     const payload = bridgeRegisterSchema
       .omit({ bridgeId: true })
       .safeParse(await c.req.json().catch(() => null));
@@ -1360,16 +1423,34 @@ export function createApp({
       );
     }
 
+    if (bridgeSession) {
+      bridgeSession.agentNames = new Set(
+        payload.data.agents.map((agent) => agent.name)
+      );
+    }
+
     return c.json({
       agents: agents.map(serializeAgentBinding),
-      bridgeId: c.req.param("bridgeId")
+      bridgeId
     });
   });
 
   api.get("/bridges/:bridgeId/jobs/next", async (c) => {
+    const bridgeId = c.req.param("bridgeId");
+    const bridgeSession = bridgeSessions.get(bridgeId);
+
+    if (
+      normalizedApiToken &&
+      (!bridgeSession ||
+        !isRequestAuthorized(c, bridgeSession.token, { allowCookie: false }))
+    ) {
+      return unauthorized(c);
+    }
+
     const job = await bridges.claimNextBridgeJob(
-      c.req.param("bridgeId"),
-      await taskWorkflowRunner.listRunnableNodeRunIdsForBridgeJobs()
+      bridgeId,
+      await taskWorkflowRunner.listRunnableNodeRunIdsForBridgeJobs(),
+      bridgeSession ? [...bridgeSession.agentNames] : undefined
     );
 
     if (!job) {
@@ -1380,6 +1461,17 @@ export function createApp({
   });
 
   api.post("/bridges/:bridgeId/jobs/:jobId/complete", async (c) => {
+    const bridgeId = c.req.param("bridgeId");
+    const bridgeSession = bridgeSessions.get(bridgeId);
+
+    if (
+      normalizedApiToken &&
+      (!bridgeSession ||
+        !isRequestAuthorized(c, bridgeSession.token, { allowCookie: false }))
+    ) {
+      return unauthorized(c);
+    }
+
     const payload = bridgeJobCompletionSchema.safeParse(
       await c.req.json().catch(() => null)
     );
@@ -1390,6 +1482,7 @@ export function createApp({
 
     try {
       const job = await bridges.completeBridgeJob({
+        bridgeId,
         errorMessage: payload.data.errorMessage ?? null,
         id: c.req.param("jobId"),
         output: payload.data.output ?? null,
@@ -2283,6 +2376,62 @@ export function createApp({
   app.route("/api", api);
   app.all("/api/*", (c) => c.json({ error: "API route not found" }, 404));
 
+  if (requireApiToken) {
+    app.get("/auth", (c) => {
+      c.header("cache-control", "no-store");
+      c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'");
+      c.header("x-frame-options", "DENY");
+
+      return c.html(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authenticate to Forge</title>
+    <style>
+      body { background: #f7f8f7; color: #202624; font: 14px system-ui, sans-serif; margin: 0; }
+      main { background: white; border: 1px solid #d9dfdc; border-radius: 14px; margin: 12vh auto; max-width: 360px; padding: 24px; }
+      h1 { font-size: 18px; margin: 0 0 20px; }
+      label { display: block; font-weight: 600; margin-bottom: 8px; }
+      input { border: 1px solid #aeb8b3; border-radius: 8px; box-sizing: border-box; font: inherit; padding: 10px; width: 100%; }
+      button { background: #0f766e; border: 0; border-radius: 8px; color: white; font: inherit; font-weight: 600; margin-top: 16px; padding: 10px 14px; width: 100%; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Authenticate to Forge</h1>
+      <form method="post">
+        <label for="token">API token</label>
+        <input id="token" name="token" type="password" autocomplete="current-password" required>
+        <button type="submit">Continue</button>
+      </form>
+    </main>
+  </body>
+</html>`);
+    });
+    app.post("/auth", async (c) => {
+      const form = await c.req.formData().catch(() => null);
+      const token = form?.get("token");
+
+      if (
+        typeof token !== "string" ||
+        !secureTokenEquals(token, normalizedApiToken)
+      ) {
+        return c.text("Invalid Forge API token", 401);
+      }
+
+      setCookie(c, forgeAuthCookieName, normalizedApiToken, {
+        httpOnly: true,
+        maxAge: 60 * 60 * 8,
+        path: "/",
+        sameSite: "Strict",
+        secure: new URL(c.req.url).protocol === "https:"
+      });
+
+      return c.redirect("/main", 303);
+    });
+  }
+
   if (releaseAssetsRoot) {
     app.get("/release/forgecli", (c) => {
       const forgeCliReleasePath = findForgeCliReleasePath(releaseAssetsRoot);
@@ -2377,6 +2526,40 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+const forgeAuthCookieName = "forge_auth";
+
+function isRequestAuthorized(
+  c: Context,
+  expectedToken: string,
+  { allowCookie }: { allowCookie: boolean }
+) {
+  const authorization = c.req.header("authorization") ?? "";
+  const bearerMatch = /^Bearer\s+(.+)$/i.exec(authorization);
+  const suppliedToken =
+    bearerMatch?.[1]?.trim() ||
+    (allowCookie ? getCookie(c, forgeAuthCookieName) : undefined) ||
+    "";
+
+  return secureTokenEquals(suppliedToken, expectedToken);
+}
+
+function secureTokenEquals(suppliedToken: string, expectedToken: string) {
+  if (!suppliedToken || !expectedToken) {
+    return false;
+  }
+
+  const supplied = Buffer.from(suppliedToken);
+  const expected = Buffer.from(expectedToken);
+
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+function unauthorized(c: Context) {
+  c.header("www-authenticate", 'Bearer realm="Forge"');
+
+  return c.json({ error: "Unauthorized" }, 401);
+}
+
 function serializeExecutionSettings(settings: ExecutionSettings) {
   return {
     agentProxyConfigured: settings.agentProxyUrl.length > 0,
@@ -2394,7 +2577,6 @@ function serializeExecutionSettings(settings: ExecutionSettings) {
 function serializeAgentBinding(agent: AgentBinding) {
   return {
     capabilities: agent.capabilities,
-    command: agent.command,
     connector: agent.connector,
     errorMessage: agent.errorMessage,
     id: agent.id,
@@ -2415,8 +2597,7 @@ function serializeSkill(skill: Skill) {
     name: skill.name,
     projectId: skill.projectId,
     ref: skill.ref,
-    sourceUrl: skill.sourceUrl,
-    storagePath: skill.storagePath,
+    sourceConfigured: Boolean(skill.sourceUrl),
     updatedAt: skill.updatedAt
   };
 }
@@ -2533,13 +2714,20 @@ function createTransientModelSettings(
     input.modelProvider !== undefined && input.modelProvider !== current.modelProvider;
   const providerDefaults = modelProviderDefaults[nextModelProvider];
   const nextModelApiKey = input.modelApiKey?.trim();
+  const nextModelBaseUrl =
+    input.modelBaseUrl?.trim() ??
+    (providerChanged ? providerDefaults.baseUrl : current.modelBaseUrl);
+  const connectionChanged =
+    providerChanged || nextModelBaseUrl !== current.modelBaseUrl;
 
   return {
     ...current,
-    modelApiKey: nextModelApiKey ? nextModelApiKey : current.modelApiKey,
-    modelBaseUrl:
-      input.modelBaseUrl?.trim() ??
-      (providerChanged ? providerDefaults.baseUrl : current.modelBaseUrl),
+    modelApiKey: nextModelApiKey
+      ? nextModelApiKey
+      : connectionChanged
+        ? ""
+        : current.modelApiKey,
+    modelBaseUrl: nextModelBaseUrl,
     modelName:
       input.modelName?.trim() ??
       (providerChanged ? providerDefaults.modelName : current.modelName),

@@ -1,5 +1,8 @@
 # Forge 技术选型与架构决策
 
+> 状态：本文描述当前已实现架构。未实现的备选方案不作为当前能力。
+> 当前能力和运行方式以仓库根目录 README 为准。
+
 ## 总体判断
 
 Forge 第一版采用 Web Server + Local Agent Bridge 架构，不做桌面 App 优先。Forge 是 Web 控制平面，Local Agent Bridge 是本地常驻 daemon，`forgecli` 是本地命令行客户端，用于启动 daemon、绑定 Forge Server、注册本地 agent 并查看状态。
@@ -11,18 +14,17 @@ Language: TypeScript
 Package Manager: pnpm workspace
 Monorepo Runner: Turborepo
 Frontend: React + Vite
-Routing: TanStack Router
-Server State: TanStack Query
-Styling: Tailwind CSS
-UI: Radix primitives / shadcn-style source components
-Icons: lucide
+Routing: History API + local route helpers
+Server State: React state + typed SDK calls
+Styling: CSS
+UI: local React components + packages/ui
 Backend: Hono
 Schema: Zod
 ORM: Drizzle
-Database: SQLite / Postgres / MySQL 初始化可选
+Database: SQLite
 Realtime: SSE first
 CLI/Bridge: Node.js daemon, binary name forgecli
-Testing: Vitest + Playwright
+Testing: Vitest; Playwright dependency reserved for E2E coverage
 ```
 
 ## Monorepo 结构
@@ -38,7 +40,7 @@ packages/core
   纯领域逻辑：`.wf` 类型、Zod schema、DAG planning、Node Status 状态机、Exit Criteria 类型、Artifact domain 类型。
 
 packages/db
-  Drizzle schema、dialect adapter、migration、repository interface。
+  SQLite、Drizzle schema、migration 和 repository 实现。
 
 packages/sdk
   Agent Connector SDK、Workflow File loader、Artifact Publisher extension point。
@@ -110,23 +112,17 @@ nodes:
 
 ## 数据库策略
 
-Forge 初始化时允许选择数据库：
-
-```text
-Local default: SQLite
-Remote/team: Postgres or MySQL
-```
+当前版本只实现 SQLite。项目记录、工作流定义、节点输出、本地桥接输出和执行配置
+都由 Forge Server 保存到同一个 SQLite 数据库。Postgres、MySQL 和云端产物存储
+尚未实现，也不在当前 UI 中作为可选后端展示。
 
 实现约束：
 
-- 使用 Drizzle。
-- 避免依赖单一数据库方言特性。
+- 使用 Drizzle 和 `better-sqlite3`。
 - ID 使用应用层生成的 text ID。
-- JSON 字段通过兼容封装或 text + Zod parse 处理。
+- JSON 字段通过 text + Zod parse 处理。
 - timestamp 使用统一应用层 helper。
-- 业务层不直接写方言 SQL。
-- SQLite 至少作为本地和测试默认数据库。
-- Postgres/MySQL 通过 CI service 或 docker compose 加入集成测试。
+- SQLite 同时作为本地运行和测试数据库。
 
 ## 实时通信
 
@@ -169,7 +165,7 @@ CLI 命令建议：
 forgecli bridge start
 forgecli bridge stop
 forgecli bridge status
-forgecli bridge bind --server http://localhost:3000
+forgecli bridge bind --server http://localhost:3001
 
 forgecli agent list
 forgecli agent add codex --connector mcp --command "codex mcp-server"
@@ -184,7 +180,7 @@ MVP 必须支持 macOS 和 Linux，Windows 尽量兼容但不阻塞首版。
 
 - 整体风格清爽、专业、低噪音。
 - 不使用重型组件库。
-- 采用 shadcn/ui 风格源码、Radix primitives、Tailwind CSS、lucide icons。
+- 使用仓库内 React 组件和 CSS，避免仅为视觉样式引入大型组件库。
 - Cat Factory View 是 Control Room 的默认交互隐喻，但状态、阻塞、日志、Artifact、审批和重跑控制必须保持清晰。
 
 ## 测试策略
@@ -201,19 +197,20 @@ apps/forgecli:
   Vitest + execa 覆盖 forgecli 参数解析、配置写入、bridge 状态命令。
 
 E2E:
-  Playwright 覆盖 Project 创建、Requirement -> Task Draft -> Task、Workflow Run、SSE 更新和 Control Room 展示。
+  当前没有维护中的 Playwright E2E 套件；加入后应覆盖 Project、Requirement、
+  Task、Workflow Run 和 SSE 的关键路径。
 ```
 
 ## 当前已确认决策
 
 - TypeScript monorepo。
 - Hono + Drizzle + Zod。
-- React + Vite + TanStack Router/Query。
-- SQLite/Postgres/MySQL 初始化可选。
+- React + Vite，使用本地路由 helper、React state 和 typed SDK calls。
+- SQLite 是当前唯一数据库后端。
 - `.wf` YAML-like 文件作为 workflow 核心定义。
 - Workflow engine 放在 `packages/core`，保持纯逻辑。
 - Web 实时用 SSE first。
 - Local Agent Bridge 主动连接 Server。
 - `forgecli` 管理常驻 daemon。
-- UI 风格清爽，组件源码可控。
-- 测试采用 Vitest + Playwright。
+- UI 使用仓库内组件和 CSS。
+- 当前测试采用 Vitest；Playwright E2E 覆盖仍待补充。

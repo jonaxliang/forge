@@ -28,9 +28,7 @@ import {
   updateProject,
   updateRequirement,
   type AgentBinding,
-  type ArtifactStorageMode,
   type DecompositionResult,
-  type DbStrategy,
   type ExecutionSettings,
   type ExecutorType,
   type ModelProviderKind,
@@ -2056,9 +2054,6 @@ export function App({
         ?.name ?? ""
     );
   });
-  const [artifactStorageMode, setArtifactStorageMode] =
-    useState<ArtifactStorageMode>("local-only");
-  const [dbStrategy, setDbStrategy] = useState<DbStrategy>("sqlite");
   const [projectStatus, setProjectStatus] = useState<StatusMessage>({
     kind: "status",
     key: "projectIdle"
@@ -2636,8 +2631,8 @@ export function App({
 
     try {
       const project = await createProject({
-        artifactStorageMode,
-        dbStrategy,
+        artifactStorageMode: "local-only",
+        dbStrategy: "sqlite",
         name: projectName
       });
 
@@ -4044,32 +4039,9 @@ export function App({
           value={projectName}
         />
       </label>
-      <div className="two-field-grid">
-        <label>
-          {t.setup.artifactsLabel}
-          <select
-            data-testid="artifact-storage-select"
-            onChange={(event) =>
-              setArtifactStorageMode(event.target.value as ArtifactStorageMode)
-            }
-            value={artifactStorageMode}
-          >
-            <option value="local-only">{t.options.localOnly}</option>
-            <option value="cloud">{t.options.cloud}</option>
-          </select>
-        </label>
-        <label>
-          {t.setup.databaseLabel}
-          <select
-            data-testid="db-strategy-select"
-            onChange={(event) => setDbStrategy(event.target.value as DbStrategy)}
-            value={dbStrategy}
-          >
-            <option value="sqlite">{t.options.sqlite}</option>
-            <option value="postgres">{t.options.postgres}</option>
-            <option value="mysql">{t.options.mysql}</option>
-          </select>
-        </label>
+      <div className="settings-setup-note" data-testid="current-storage-summary">
+        <strong>{t.setup.storageLabel}</strong>
+        <span>{t.setup.storageDescription}</span>
       </div>
       <button type="submit">{t.setup.createProject}</button>
     </form>
@@ -6565,33 +6537,13 @@ export function App({
                           ))}
                         </select>
                       </label>
-                      <label>
-                        {t.settings.defaultArtifactsLabel}
-                        <select
-                          onChange={(event) =>
-                            setArtifactStorageMode(
-                              event.target.value as ArtifactStorageMode
-                            )
-                          }
-                          value={artifactStorageMode}
-                        >
-                          <option value="local-only">{t.options.localOnly}</option>
-                          <option value="cloud">{t.options.cloud}</option>
-                        </select>
-                      </label>
-                      <label>
-                        {t.settings.defaultDatabaseLabel}
-                        <select
-                          onChange={(event) =>
-                            setDbStrategy(event.target.value as DbStrategy)
-                          }
-                          value={dbStrategy}
-                        >
-                          <option value="sqlite">{t.options.sqlite}</option>
-                          <option value="postgres">{t.options.postgres}</option>
-                          <option value="mysql">{t.options.mysql}</option>
-                        </select>
-                      </label>
+                    </div>
+                    <div
+                      className="settings-setup-note"
+                      data-testid="settings-storage-summary"
+                    >
+                      <strong>{t.settings.storageBackendLabel}: SQLite</strong>
+                      <span>{t.settings.storageBackendDescription}</span>
                     </div>
                   </section>
                 ) : null}
@@ -8199,7 +8151,6 @@ export function App({
           <strong>{t.footer.brand}</strong>
           <span>{t.footer.description}</span>
         </div>
-        <span className="studio-footer-copyright">{t.footer.copyright}</span>
       </footer>
     </MotionShell>
   );

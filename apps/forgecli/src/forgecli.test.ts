@@ -1,14 +1,20 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { runBridgeDaemon } from "./bridge-daemon";
 import { executeCliAgent } from "./connectors";
-import { loadForgeCliState, saveForgeCliState } from "./state";
+import {
+  loadForgeCliState,
+  resolveForgeCliPaths,
+  saveForgeCliState
+} from "./state";
 import { runForgeCli } from "./index";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { force: true, recursive: true })
@@ -26,22 +32,38 @@ async function createHome() {
 describe("forgecli local state", () => {
   it("binds a Forge Server URL into the local config directory", async () => {
     const home = await createHome();
+    const cliHome = join(home, "cli");
+    const authToken = "a-local-forge-auth-token-with-at-least-32-characters";
     const output: string[] = [];
 
+    await mkdir(join(home, ".forge"), { recursive: true });
+    await writeFile(join(home, ".forge", "auth-token"), `${authToken}\n`);
     const exitCode = await runForgeCli(
       ["bridge", "bind", "--server", "http://localhost:3001/"],
       {
-        env: { FORGECLI_HOME: home },
+        env: { FORGECLI_HOME: cliHome, HOME: home },
         stderr: (line) => output.push(line),
         stdout: (line) => output.push(line)
       }
     );
 
-    await expect(loadForgeCliState({ env: { FORGECLI_HOME: home } })).resolves.toMatchObject({
+    await expect(
+      loadForgeCliState({ env: { FORGECLI_HOME: cliHome, HOME: home } })
+    ).resolves.toMatchObject({
       config: {
+        authToken,
         serverUrl: "http://localhost:3001"
       }
     });
+    expect(
+      (
+        await stat(
+          resolveForgeCliPaths({
+            env: { FORGECLI_HOME: cliHome, HOME: home }
+          }).configFile
+        )
+      ).mode & 0o777
+    ).toBe(0o600);
     expect(exitCode).toBe(0);
     expect(output.join("\n")).toContain("bound to http://localhost:3001");
   });
@@ -93,6 +115,64 @@ describe("forgecli local state", () => {
     });
     expect(cliExitCode).toBe(0);
     expect(mcpExitCode).toBe(0);
+  });
+});
+
+describe("Bridge daemon authentication", () => {
+  it("exchanges the server token for a Bridge identity token", async () => {
+    const home = await createHome();
+    const authToken = "a-server-auth-token-with-at-least-32-characters";
+    const bridgeToken = "a-bridge-identity-token";
+    const calls: Array<{ headers: Record<string, string>; url: string }> = [];
+
+    await saveForgeCliState(
+      {
+        agents: [
+          {
+            command: "agent run",
+            connector: "cli",
+            name: "local-agent"
+          }
+        ],
+        config: {
+          authToken,
+          bridgeId: "bridge_local",
+          pollIntervalMs: 1,
+          serverUrl: "http://localhost:3001"
+        }
+      },
+      { env: { FORGECLI_HOME: home } }
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({
+          headers: init?.headers as Record<string, string>,
+          url
+        });
+
+        if (url.endsWith("/api/bridges/register")) {
+          return Response.json({ bridgeToken });
+        }
+
+        if (url.endsWith("/jobs/next")) {
+          return Response.json({ job: null });
+        }
+
+        return Response.json({ ok: true });
+      })
+    );
+
+    await runBridgeDaemon({
+      env: { FORGECLI_HOME: home },
+      once: true
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.headers.authorization).toBe(`Bearer ${authToken}`);
+    expect(calls[1]!.headers.authorization).toBe(`Bearer ${bridgeToken}`);
+    expect(calls[2]!.headers.authorization).toBe(`Bearer ${bridgeToken}`);
   });
 });
 

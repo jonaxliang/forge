@@ -34,8 +34,8 @@ type Messages = {
     workspaceHeading: string;
     projectNameLabel: string;
     projectNamePlaceholder: string;
-    artifactsLabel: string;
-    databaseLabel: string;
+    storageLabel: string;
+    storageDescription: string;
     createProject: string;
   };
   settings: {
@@ -120,8 +120,8 @@ type Messages = {
     projectNameHelp: string;
     noProjectNameHelp: string;
     saveProjectName: string;
-    defaultArtifactsLabel: string;
-    defaultDatabaseLabel: string;
+    storageBackendLabel: string;
+    storageBackendDescription: string;
     executionEyebrow: string;
     executionTitle: string;
     executionDescription: string;
@@ -269,7 +269,6 @@ type Messages = {
   footer: {
     brand: string;
     description: string;
-    copyright: string;
   };
   workspace: {
     generatedWorkLabel: string;
@@ -434,13 +433,6 @@ type Messages = {
       string
     >;
   };
-  options: {
-    localOnly: string;
-    cloud: string;
-    sqlite: string;
-    postgres: string;
-    mysql: string;
-  };
   taskStatus: {
     cancelled: string;
     completed: string;
@@ -541,7 +533,7 @@ const localeStorageKey = "forge.locale";
 const messages: Record<Locale, Messages> = {
   en: {
     nav: {
-      appLabel: "Forge Studio",
+      appLabel: "Forge",
       controlRoom: "Home",
       requirements: "Requirements",
       settings: "Settings",
@@ -550,10 +542,10 @@ const messages: Record<Locale, Messages> = {
       brandAlt: "Forge brand mark"
     },
     hero: {
-      title: "Turn an idea into shipped AI work.",
+      title: "AI work orchestration control plane.",
       eyebrow: "Start with the outcome",
       heading:
-        "Describe the document, code change, research note, or creative work you want finished.",
+        "Describe a document, code change, research note, or other work to organize.",
       nameLabel: "Name this work",
       namePlaceholder: "Draft an onboarding guide",
       bodyLabel: "What should Forge help with?",
@@ -564,17 +556,18 @@ const messages: Record<Locale, Messages> = {
       createRequirement: "Create Requirement"
     },
     setup: {
-      ariaLabel: "Studio setup",
+      ariaLabel: "Project setup",
       workflowTemplateEyebrow: "Workflow Template",
-      workflowTemplateHeading: "Teach Forge the workflow",
+      workflowTemplateHeading: "Configure the workflow",
       workflowSourceLabel: "Workflow template source",
       importWorkflowTemplate: "Import Workflow Template",
-      workspaceEyebrow: "Workspace",
-      workspaceHeading: "Save outputs where you want them",
+      workspaceEyebrow: "Project",
+      workspaceHeading: "Set up a Project",
       projectNameLabel: "Project name",
       projectNamePlaceholder: "Writing and code desk",
-      artifactsLabel: "Artifact",
-      databaseLabel: "Database",
+      storageLabel: "Current storage",
+      storageDescription:
+        "Forge stores Project records and Task Workflow output in the Forge Server SQLite database.",
       createProject: "Create Project"
     },
     settings: {
@@ -680,12 +673,13 @@ const messages: Record<Locale, Messages> = {
         "Rename the active Project shown on the Home page and Project switcher.",
       noProjectNameHelp: "Create or select a Project before editing its name.",
       saveProjectName: "Save Project name",
-      defaultArtifactsLabel: "Default artifact storage",
-      defaultDatabaseLabel: "Default database",
+      storageBackendLabel: "Storage backend",
+      storageBackendDescription:
+        "SQLite is the only implemented backend. Project records and Task Workflow output are stored by the Forge Server.",
       executionEyebrow: "Execution capability",
-      executionTitle: "Model and local Local bridge",
+      executionTitle: "Model and local bridge",
       executionDescription:
-        "Requirement submission needs a configured model provider to plan Tasks. Task Workflows need a local Local bridge URL.",
+        "Requirement submission needs a configured model provider to plan Tasks. Task Workflows need a local bridge URL.",
       modelProviderLabel: "Model provider",
       modelBaseUrlLabel: "Model base URL",
       modelNameLabel: "Model name",
@@ -702,7 +696,7 @@ const messages: Record<Locale, Messages> = {
       agentProxyConfigured: "Local bridge configured",
       agentProxyMissing: "Local bridge not configured",
       executionHelp:
-        "API keys are stored by the Forge server and are never returned to the browser after saving.",
+        "Provider API keys are stored unencrypted in the Forge Server SQLite database and omitted from settings API responses. Protect the database and backups.",
       saveExecutionSettings: "Save execution settings"
     },
     templatePage: {
@@ -812,7 +806,7 @@ const messages: Record<Locale, Messages> = {
       eyebrow: "Workbench",
       firstProjectTitle: "Create your first Project",
       firstProjectBody:
-        "A Project keeps Requirements, Workflow templates, Tasks, and Artifact in one traceable place.",
+        "A Project organizes Requirements, Workflow templates, Tasks, and Artifacts.",
       workflowSetupTitle: "New Requirement",
       workflowSetupBody:
         "Describe the goal first. Forge will use the default Requirement workflow unless you configure templates in Settings.",
@@ -821,7 +815,7 @@ const messages: Record<Locale, Messages> = {
         "Describe the goal first. Workflow templates can be configured separately in Settings.",
       createFirstProject: "Create your first Project",
       createFirstProjectBody:
-        "Set the storage and database defaults once. You can adjust them later in Settings.",
+        "Create a Project record in the Forge Server SQLite database.",
       currentProject: "Current Project",
       noActiveProject: "No Project selected",
       projectsCount: "Projects",
@@ -835,12 +829,14 @@ const messages: Record<Locale, Messages> = {
       importWorkflow: "Import Workflow templates",
       importWorkflowHelp: "Add a .wf template for Requirement or Task execution.",
       newProject: "New Project",
-      newProjectHelp: "Create another Project with its own storage defaults.",
+      newProjectHelp:
+        "Create another Project in the same Forge Server SQLite database.",
       pathLabel: "First run path",
       pathProject: "Create a Project",
-      pathProjectHelp: "Define where Forge stores Artifact and project data.",
+      pathProjectHelp:
+        "Create a Project record in the Forge Server SQLite database.",
       pathRequirement: "Submit a Requirement",
-      pathRequirementHelp: "Describe the outcome Forge should turn into work.",
+      pathRequirementHelp: "Describe the goal to decompose into Tasks.",
       pathReview: "Run Tasks",
       pathReviewHelp: "Start Task Workflows for the generated Tasks.",
       defaultWorkflowHelp:
@@ -858,8 +854,7 @@ const messages: Record<Locale, Messages> = {
     },
     footer: {
       brand: "Forge",
-      description: "AI work orchestration control plane",
-      copyright: "@2026 Forge"
+      description: "AI work orchestration control plane"
     },
     workspace: {
       generatedWorkLabel: "Generated work",
@@ -1046,13 +1041,6 @@ const messages: Record<Locale, Messages> = {
         tasks_generated: "Tasks generated"
       }
     },
-    options: {
-      localOnly: "Local-only",
-      cloud: "Cloud",
-      sqlite: "SQLite",
-      postgres: "Postgres",
-      mysql: "MySQL"
-    },
     taskStatus: {
       cancelled: "Cancelled",
       completed: "Completed",
@@ -1081,7 +1069,7 @@ const messages: Record<Locale, Messages> = {
       decompositionResultSaved: "Decomposition result saved",
       generatingTasks: "Generating Tasks",
       modelNotConfigured:
-        "Requirement saved. Configure a model in Settings before Forge can create Tasks.",
+        "Model planning is not configured. Configure a model in Settings to decompose Requirements.",
       savingRequirement: "Saving Requirement",
       renamedRequirement: "Renamed Requirement",
       clarificationAnswerSaved: "Clarification answers saved",
@@ -1101,7 +1089,7 @@ const messages: Record<Locale, Messages> = {
       modelApiTestFailed: "Model API test failed",
       savingModelSettings: "Saving model API",
       modelSettingsSaved: "Model API saved",
-      savingAgentProxySettings: "Saving local Local bridge",
+      savingAgentProxySettings: "Saving local bridge",
       agentProxySettingsSaved: "Local bridge saved",
       savingSettings: "Saving settings",
       settingsSaved: "Settings saved",
@@ -1141,7 +1129,7 @@ const messages: Record<Locale, Messages> = {
   },
   zh: {
     nav: {
-      appLabel: "Forge Studio",
+      appLabel: "Forge",
       controlRoom: "首页",
       requirements: "需求",
       settings: "设置",
@@ -1150,9 +1138,9 @@ const messages: Record<Locale, Messages> = {
       brandAlt: "Forge 品牌标识"
     },
     hero: {
-      title: "把想法编排成可交付的 AI 工作。",
+      title: "AI 工作编排控制平面。",
       eyebrow: "从目标开始",
-      heading: "描述你想完成的文档、代码变更、研究记录或创意工作。",
+      heading: "描述需要组织的文档、代码变更、研究记录或其他工作。",
       nameLabel: "工作名称",
       namePlaceholder: "起草一份入职指南",
       bodyLabel: "希望 Forge 协助什么？",
@@ -1162,17 +1150,18 @@ const messages: Record<Locale, Messages> = {
       createRequirement: "创建需求"
     },
     setup: {
-      ariaLabel: "工作室设置",
+      ariaLabel: "项目设置",
       workflowTemplateEyebrow: "工作流模板",
-      workflowTemplateHeading: "让 Forge 理解工作流",
+      workflowTemplateHeading: "配置工作流",
       workflowSourceLabel: "模板源码",
       importWorkflowTemplate: "导入工作流模板",
-      workspaceEyebrow: "工作区",
-      workspaceHeading: "按你的方式保存输出",
+      workspaceEyebrow: "项目",
+      workspaceHeading: "创建项目",
       projectNameLabel: "项目名称",
       projectNamePlaceholder: "写作和代码工作台",
-      artifactsLabel: "产物",
-      databaseLabel: "数据库",
+      storageLabel: "当前存储方式",
+      storageDescription:
+        "Forge 将项目记录和任务工作流输出保存在 Forge Server 的 SQLite 数据库中。",
       createProject: "创建项目"
     },
     settings: {
@@ -1270,8 +1259,9 @@ const messages: Record<Locale, Messages> = {
       projectNameHelp: "修改当前项目在首页和项目切换器中显示的名称。",
       noProjectNameHelp: "请先创建或选择一个项目，再修改名称。",
       saveProjectName: "保存项目名称",
-      defaultArtifactsLabel: "默认产物存储",
-      defaultDatabaseLabel: "默认数据库",
+      storageBackendLabel: "存储后端",
+      storageBackendDescription:
+        "SQLite 是当前唯一实现的后端。项目记录和任务工作流输出由 Forge Server 保存。",
       executionEyebrow: "执行能力",
       executionTitle: "模型和本地桥接",
       executionDescription:
@@ -1292,7 +1282,7 @@ const messages: Record<Locale, Messages> = {
       agentProxyConfigured: "本地桥接已配置",
       agentProxyMissing: "本地桥接未配置",
       executionHelp:
-        "API Key 由 Forge Server 保存，保存后不会再明文返回给浏览器。",
+        "模型 API Key 以未加密文本保存在 Forge Server 的 SQLite 数据库中；设置接口不会返回 Key 内容。请保护数据库及其备份。",
       saveExecutionSettings: "保存执行设置"
     },
     templatePage: {
@@ -1409,7 +1399,7 @@ const messages: Record<Locale, Messages> = {
         "先描述目标。工作流模板可以在设置里单独配置。",
       createFirstProject: "创建第一个项目",
       createFirstProjectBody:
-        "先设置产物存储和数据库默认值，后续可以在设置里调整。",
+        "在 Forge Server SQLite 数据库中创建项目记录。",
       currentProject: "当前项目",
       noActiveProject: "未选择项目",
       projectsCount: "项目",
@@ -1423,12 +1413,12 @@ const messages: Record<Locale, Messages> = {
       importWorkflow: "导入工作流模板",
       importWorkflowHelp: "添加用于任务执行的 .wf 模板。",
       newProject: "新建项目",
-      newProjectHelp: "创建另一个拥有独立存储默认值的项目。",
+      newProjectHelp: "在同一个 Forge Server SQLite 数据库中创建另一个项目。",
       pathLabel: "首次使用路径",
       pathProject: "创建项目",
-      pathProjectHelp: "定义 Forge 保存产物和项目数据的位置。",
+      pathProjectHelp: "在 Forge Server SQLite 数据库中创建项目记录。",
       pathRequirement: "创建需求",
-      pathRequirementHelp: "描述 Forge 需要转成工作的目标。",
+      pathRequirementHelp: "描述需要拆解为任务的目标。",
       pathReview: "开始任务",
       pathReviewHelp: "为生成的任务启动任务工作流。",
       defaultWorkflowHelp:
@@ -1446,8 +1436,7 @@ const messages: Record<Locale, Messages> = {
     },
     footer: {
       brand: "Forge",
-      description: "AI 工作编排控制平面",
-      copyright: "@2026 Forge"
+      description: "AI 工作编排控制平面"
     },
     workspace: {
       generatedWorkLabel: "已生成工作",
@@ -1626,13 +1615,6 @@ const messages: Record<Locale, Messages> = {
         tasks_generated: "已生成任务"
       }
     },
-    options: {
-      localOnly: "仅本地",
-      cloud: "云端",
-      sqlite: "SQLite",
-      postgres: "Postgres",
-      mysql: "MySQL"
-    },
     taskStatus: {
       cancelled: "已取消",
       completed: "已完成",
@@ -1661,7 +1643,7 @@ const messages: Record<Locale, Messages> = {
       decompositionResultSaved: "拆解结果已保存",
       generatingTasks: "正在生成任务",
       modelNotConfigured:
-        "需求已保存。请先在设置里完成模型配置，Forge 才能拆解需求。",
+        "模型规划尚未配置。请在设置里配置模型后再拆解需求。",
       savingRequirement: "正在保存需求",
       renamedRequirement: "已改名需求",
       clarificationAnswerSaved: "澄清回答已保存",

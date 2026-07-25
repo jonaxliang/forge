@@ -37,7 +37,7 @@
 }
 
 body {
-  min-width: 320px;
+  min-width: 0;
   margin: 0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(238, 243, 247, 0.94));
@@ -3193,10 +3193,6 @@ h3 {
 .studio-footer span {
   font-size: 12px;
   line-height: 1.4;
-}
-
-.studio-footer-copyright {
-  white-space: nowrap;
 }
 
 .workspace-main {

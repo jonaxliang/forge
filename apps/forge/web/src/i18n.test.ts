@@ -39,7 +39,7 @@ describe("i18n configuration", () => {
     const messages = getMessages("zh");
 
     expect(messages.nav.controlRoom).toBe("首页");
-    expect(messages.hero.title).toBe("把想法编排成可交付的 AI 工作。");
+    expect(messages.hero.title).toBe("AI 工作编排控制平面。");
     expect(messages.hero.createRequirement).toBe("创建需求");
     expect(messages.status.ready).toBe("就绪");
   });

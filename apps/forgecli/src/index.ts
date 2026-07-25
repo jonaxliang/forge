@@ -11,6 +11,7 @@ import {
 import {
   loadForgeCliState,
   normalizeServerUrl,
+  readLocalForgeAuthToken,
   saveForgeCliState,
   type ForgeCliAgent,
   type ForgeCliEnvironment
@@ -63,6 +64,9 @@ async function runBridgeCommand(command: string, args: string[], io: ForgeCliIo)
       options: {
         server: {
           type: "string"
+        },
+        token: {
+          type: "string"
         }
       },
       strict: true
@@ -74,12 +78,23 @@ async function runBridgeCommand(command: string, args: string[], io: ForgeCliIo)
     }
 
     const state = await loadForgeCliState({ env: io.env });
+    const authToken =
+      parsed.values.token?.trim() ||
+      (await readLocalForgeAuthToken({ env: io.env })) ||
+      state.config.authToken;
+
+    if (!authToken) {
+      throw new Error(
+        "Missing Forge API token. Pass --token <token> or set FORGE_AUTH_TOKEN."
+      );
+    }
 
     await saveForgeCliState(
       {
         ...state,
         config: {
           ...state.config,
+          authToken,
           serverUrl
         }
       },
@@ -202,7 +217,7 @@ async function runAgentCommand(command: string, args: string[], io: ForgeCliIo) 
 function printUsage(io: ForgeCliIo) {
   io.stdout("Usage:");
   io.stdout("  forgecli doctor");
-  io.stdout("  forgecli bridge bind --server <url>");
+  io.stdout("  forgecli bridge bind --server <url> [--token <token>]");
   io.stdout("  forgecli bridge start|status|stop|run");
   io.stdout("  forgecli agent add <name> --connector <cli|mcp> --command <command>");
   io.stdout("  forgecli agent list");
