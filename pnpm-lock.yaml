@@ -78,13 +78,13 @@ importers:
         version: link:../../packages/ui
       '@hono/node-server':
         specifier: 2.0.10
-        version: 2.0.10(hono@4.12.27)
+        version: 2.0.10(hono@4.12.34)
       ai:
         specifier: ^6.0.205
         version: 6.0.205(zod@4.4.3)
       hono:
-        specifier: 4.12.27
-        version: 4.12.27
+        specifier: 4.12.34
+        version: 4.12.34
       motion:
         specifier: ^12.40.0
         version: 12.40.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -1390,8 +1390,8 @@ packages:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
 
-  hono@4.12.27:
-    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+  hono@4.12.34:
+    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
 
   ieee754@1.2.1:
@@ -2272,9 +2272,9 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
-  '@hono/node-server@2.0.10(hono@4.12.27)':
+  '@hono/node-server@2.0.10(hono@4.12.34)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -2945,7 +2945,7 @@ snapshots:
 
   has-flag@4.0.0: {}
 
-  hono@4.12.27: {}
+  hono@4.12.34: {}
 
   ieee754@1.2.1: {}
 
